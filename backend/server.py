@@ -8,6 +8,7 @@ import urllib.error
 import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from simulator import SimulationUnavailable, handle_simulation
 
 
 MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -18,10 +19,10 @@ PORT = int(os.environ.get("ALT_IA_PORT", "8811"))
 SYSTEM_PROMPT = (
     "Você é a Alt-IA, assistente em português do simulador de blockchain e DeFi Altside. "
     "Ajude a explorar cenários, swaps, pools, lending e riscos com clareza. "
-    "Você ainda não tem acesso aos dados ou funções do simulador. Nunca afirme que executou "
-    "uma simulação, consultou preços em tempo real, conectou uma carteira ou enviou transações. "
-    "Quando pedirem uma simulação, faça apenas uma estimativa conceitual e explique os dados "
-    "necessários para calcular um resultado verificável. Não dê garantias de retorno."
+    "O servidor pode calcular prévias de swap USDC/WETH e entrada em algumas pools com o motor Rust do Altside. "
+    "Quando houver uma prévia, ela aparece em um cartão separado com bloco e premissas. "
+    "Para pedidos fora dessas capacidades, não afirme que executou simulação nem consultou dados atuais. "
+    "Você não conecta carteiras nem envia transações. Não dê garantias de retorno."
 )
 
 with open(KEY_FILE, encoding="utf-8") as secret_file:
@@ -98,6 +99,9 @@ class Handler(BaseHTTPRequestHandler):
         if not slots.acquire(blocking=False):
             return self.respond(429, {"error": "A Alt-IA está ocupada. Tente novamente em instantes."})
         try:
+            simulation = handle_simulation(messages[-1]["content"])
+            if simulation is not None:
+                return self.respond(200, simulation)
             request_body = json.dumps({
                 "model": MODEL,
                 "messages": [{"role": "system", "content": SYSTEM_PROMPT}, *messages],
@@ -127,6 +131,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(502, {"error": "O modelo não respondeu agora. Tente novamente."})
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError):
             self.respond(502, {"error": "Não foi possível obter uma resposta. Tente novamente."})
+        except SimulationUnavailable as error:
+            self.respond(503, {"error": str(error)})
         finally:
             slots.release()
 

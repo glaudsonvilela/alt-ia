@@ -16,6 +16,22 @@ const sidebarClose = document.querySelector('#sidebar-close');
 const storageKey = 'alt-ia-conversations-v1';
 const activeKey = 'alt-ia-active-v1';
 
+function safeSimulation(value) {
+  if (!value || !['swap', 'pool'].includes(value.kind) || !Array.isArray(value.metrics) || !value.source) return null;
+  const clean = (v, max = 160) => typeof v === 'string' ? v.slice(0, max) : '';
+  const metrics = value.metrics.slice(0, 6).filter((item) => item && typeof item.label === 'string' && typeof item.value === 'string')
+    .map((item) => ({ label: clean(item.label, 60), value: clean(item.value, 80) }));
+  if (!metrics.length || !Number.isSafeInteger(value.source.block_number) || value.source.block_number <= 0) return null;
+  return {
+    kind: value.kind, title: clean(value.title), subtitle: clean(value.subtitle), metrics,
+    source: { engine: 'Altside · Rust', block_number: value.source.block_number,
+      block_timestamp: Number.isSafeInteger(value.source.block_timestamp) ? value.source.block_timestamp : null,
+      captured_at: clean(value.source.captured_at, 40), validity: clean(value.source.validity, 180) },
+    assumptions: Array.isArray(value.assumptions) ? value.assumptions.filter((item) => typeof item === 'string').slice(0, 5).map((item) => clean(item)) : [],
+    url: 'https://app.bigbanana.io/'
+  };
+}
+
 if (site) site.style.opacity = '0';
 
 function readConversations() {
@@ -29,6 +45,7 @@ function readConversations() {
         pinned: item.pinned === true,
         updatedAt: Number(item.updatedAt) || Date.now(),
         messages: item.messages.filter((message) => message && (message.role === 'user' || message.role === 'ai') && typeof message.text === 'string').slice(-100)
+          .map((message) => ({ role: message.role, text: message.text, simulation: message.role === 'ai' ? safeSimulation(message.simulation) : null }))
       }));
   } catch {
     return [];
@@ -147,7 +164,51 @@ function renderHistory() {
   });
 }
 
-function createMessage(role, text) {
+function createSimulationCard(simulation) {
+  const card = document.createElement('section');
+  card.className = 'simulation-card';
+  card.setAttribute('aria-label', 'Prévia calculada pelo Altside');
+  const eyebrow = document.createElement('span');
+  eyebrow.className = 'simulation-eyebrow';
+  eyebrow.textContent = 'PRÉVIA · MOTOR ALTSIDE';
+  const title = document.createElement('h3');
+  title.textContent = simulation.title;
+  const subtitle = document.createElement('p');
+  subtitle.className = 'simulation-subtitle';
+  subtitle.textContent = simulation.subtitle;
+  const grid = document.createElement('dl');
+  grid.className = 'simulation-metrics';
+  simulation.metrics.forEach((metric) => {
+    const cell = document.createElement('div');
+    const label = document.createElement('dt');
+    label.textContent = metric.label;
+    const value = document.createElement('dd');
+    value.textContent = metric.value;
+    cell.append(label, value);
+    grid.append(cell);
+  });
+  const provenance = document.createElement('div');
+  provenance.className = 'simulation-provenance';
+  const block = document.createElement('span');
+  block.textContent = `Bloco #${simulation.source.block_number.toLocaleString('pt-BR')}`;
+  const captured = document.createElement('time');
+  const capturedDate = new Date(simulation.source.captured_at);
+  captured.textContent = Number.isNaN(capturedDate.getTime()) ? 'Captura recente' : `Capturado ${capturedDate.toLocaleString('pt-BR')}`;
+  provenance.append(block, captured);
+  const notes = document.createElement('p');
+  notes.className = 'simulation-notes';
+  notes.textContent = [...simulation.assumptions, simulation.source.validity].filter(Boolean).join(' · ');
+  const link = document.createElement('a');
+  link.className = 'simulation-open';
+  link.href = simulation.url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = 'Abrir simulador Altside ↗';
+  card.append(eyebrow, title, subtitle, grid, provenance, notes, link);
+  return card;
+}
+
+function createMessage(role, text, simulation = null) {
   const row = document.createElement('article');
   row.className = `message-row message-${role}`;
   if (role === 'ai') {
@@ -177,6 +238,7 @@ function createMessage(role, text) {
   const paragraph = document.createElement('p');
   paragraph.textContent = text;
   body.append(paragraph);
+  if (role === 'ai' && simulation) body.append(createSimulationCard(simulation));
   row.append(body);
   return row;
 }
@@ -189,7 +251,7 @@ function renderConversation() {
     if (welcome) chatMessages.append(welcome);
   } else {
     const fragment = document.createDocumentFragment();
-    conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text)));
+    conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation)));
     chatMessages.append(fragment);
   }
   requestAnimationFrame(() => { chatMessages.scrollTop = conversation?.messages.length ? chatMessages.scrollHeight : 0; });
@@ -318,7 +380,7 @@ chatForm?.addEventListener('submit', async (event) => {
     if (!response.ok || typeof data.reply !== 'string') throw new Error(data.error || 'Não foi possível obter uma resposta. Tente novamente.');
     const target = conversations.find((item) => item.id === conversationId);
     if (!target) return;
-    target.messages.push({ role: 'ai', text: data.reply });
+    target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation) });
     target.updatedAt = Date.now();
     persist();
     renderHistory();

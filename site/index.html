@@ -10,8 +10,8 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=21">
-  <script defer src="/app.js?v=21"></script>
+  <link rel="stylesheet" href="/shell.css?v=22">
+  <script defer src="/app.js?v=22"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -71,8 +71,8 @@
             <h1>O que vamos simular hoje?</h1>
             <p>Descreva um cenário de mercado, uma pool ou uma estratégia. A Alt-IA pode ajudar você a explorar possibilidades.</p>
             <div class="prompt-grid" aria-label="Sugestões de mensagem">
-              <button type="button" data-prompt="Simular um swap de ETH para USDC"><span class="prompt-icon orange">↗</span><strong>Simular um swap</strong><small>ETH para USDC</small></button>
-              <button type="button" data-prompt="Comparar duas pools de liquidez"><span class="prompt-icon violet">◈</span><strong>Comparar pools</strong><small>Liquidez e faixas</small></button>
+              <button type="button" data-prompt="Simule swap de 100 USDC para WETH com slippage de 0,2%"><span class="prompt-icon orange">↗</span><strong>Simular um swap</strong><small>100 USDC para WETH</small></button>
+              <button type="button" data-prompt="Simule entrada de 1000 USDC na pool WETH/USDC da Base com faixa de 1200 ticks"><span class="prompt-icon violet">◈</span><strong>Simular uma pool</strong><small>WETH/USDC na Base</small></button>
               <button type="button" data-prompt="Analisar o risco de uma operação de lending"><span class="prompt-icon blue">◎</span><strong>Analisar risco</strong><small>Operação de lending</small></button>
               <button type="button" data-prompt="Explorar uma estratégia DeFi no simulador Altside"><span class="prompt-icon green">✳</span><strong>Explorar estratégia</strong><small>Cenários DeFi</small></button>
             </div>
@@ -84,7 +84,7 @@
             <textarea id="chat-input" rows="1" maxlength="4000" placeholder="Descreva o que você quer simular..."></textarea>
             <div class="composer-footer"><span>Enter para enviar · Shift+Enter para nova linha</span><button type="submit" aria-label="Enviar mensagem">↑</button></div>
           </form>
-          <p class="composer-note">A Alt-IA conversa sobre cenários DeFi. A execução de simulações no Altside ainda não está integrada.</p>
+          <p class="composer-note">Swaps USDC/WETH e entradas em pools selecionadas usam prévias do motor Altside. As prévias não executam transações.</p>
         </div>
       </main>
     </div>

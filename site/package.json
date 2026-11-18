@@ -1,0 +1,16 @@
+{
+  "name": "alt-ia-placeholder",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src.js --bundle --format=iife --target=es2020 --minify --outfile=app.js"
+  },
+  "dependencies": {
+    "geist": "^1.9.2",
+    "motion": "14.14.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

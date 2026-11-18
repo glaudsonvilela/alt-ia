@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">Mascote Alt-IA</title>
+  <g transform="rotate(-8 64 64)">
+    <rect x="13" y="13" width="102" height="102" rx="38" fill="#ad73d8"/>
+    <ellipse cx="47" cy="57" rx="17" ry="27" fill="#fff"/>
+    <ellipse cx="81" cy="57" rx="17" ry="27" fill="#fff"/>
+    <ellipse cx="54" cy="66" rx="8" ry="13" fill="#17151a"/>
+    <ellipse cx="75" cy="66" rx="8" ry="13" fill="#17151a"/>
+  </g>
+</svg>

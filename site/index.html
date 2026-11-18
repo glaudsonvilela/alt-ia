@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#121318">
+  <meta name="description" content="Alt-IA: converse sobre cenários do simulador DeFi Altside.">
+  <meta property="og:title" content="Alt-IA · Agente Altside">
+  <meta property="og:description" content="Um espaço para explorar cenários DeFi com a Alt-IA.">
+  <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
+  <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/style.css?v=4">
+  <link rel="stylesheet" href="/shell.css?v=21">
+  <script defer src="/app.js?v=21"></script>
+  <title>Alt-IA · Agente Altside</title>
+</head>
+<body class="is-loading">
+  <div class="intro" id="intro" aria-label="Animação de abertura da Alt-IA">
+    <div class="intro-seeds" aria-hidden="true"><i class="seed seed-one"></i><i class="seed seed-two"></i><i class="seed seed-three"></i></div>
+    <div class="intro-art" aria-hidden="true">
+      <i class="intro-shape intro-blue"></i><i class="intro-shape intro-orange"></i><i class="intro-shape intro-pink character"><span class="character-eyes"><b></b><b></b></span></i>
+      <i class="intro-shape intro-green character"><span class="character-eyes"><b></b><b></b></span></i><i class="intro-shape intro-yellow"></i><i class="intro-shape intro-sun character"><span class="character-eyes"><b></b><b></b></span></i>
+      <i class="intro-shape intro-violet character"><span class="character-eyes"><b></b><b></b></span></i><i class="intro-shape intro-dot"></i><i class="intro-shape intro-diamond"></i>
+    </div>
+    <div class="intro-core">
+      <div class="intro-title" aria-hidden="true">
+        <div class="intro-line"><span class="intro-eyes eye-pod"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i></span><span class="intro-letter">A</span><span class="intro-letter">L</span><span class="intro-letter">T</span></div>
+        <div class="intro-line intro-line-two"><span class="intro-letter">I</span><span class="intro-letter">A</span></div>
+      </div>
+      <span class="intro-pill">SIMULADOR</span>
+      <p class="intro-caption">Inteligência para explorar possibilidades.</p>
+    </div>
+    <span class="intro-final-star" aria-hidden="true">✦</span>
+    <button class="intro-skip" type="button">Pular animação</button>
+  </div>
+
+  <div class="site" id="inicio">
+    <div class="sidebar-overlay" id="sidebar-overlay" hidden></div>
+    <aside class="sidebar" id="sidebar" aria-label="Barra lateral">
+      <div class="sidebar-brand">
+        <a class="brand" href="#inicio" aria-label="Alt-IA, início"><span class="brand-face eye-pod" aria-hidden="true"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i></span><span>Alt-IA</span></a>
+        <button class="sidebar-close" id="sidebar-close" type="button" aria-label="Fechar menu">×</button>
+      </div>
+      <button class="new-chat" id="new-chat" type="button"><span aria-hidden="true">＋</span> Nova conversa</button>
+      <div class="sidebar-section-label">CONVERSAS</div>
+      <nav class="conversation-history" id="conversation-history" aria-label="Histórico de conversas"></nav>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-bottom">
+        <div class="development-state"><span class="state-symbol" aria-hidden="true">✦</span><div><strong>Alt-IA conectada</strong><span>NVIDIA Nemotron 120B</span></div></div>
+        <a class="simulator-link" href="https://app.bigbanana.io/">Abrir simulador Altside <span aria-hidden="true">↗</span></a>
+        <small>Histórico salvo somente neste navegador.</small>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="workspace-header">
+        <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Abrir menu e histórico" aria-controls="sidebar" aria-expanded="false"><span></span><span></span><span></span></button>
+        <div class="workspace-title"><strong>Alt-IA</strong><span>Agente do simulador Altside</span></div>
+        <span class="model-status"><i aria-hidden="true"></i> Nemotron 120B</span>
+        <a class="header-simulator" href="https://app.bigbanana.io/">Simulador <span aria-hidden="true">↗</span></a>
+      </header>
+
+      <main class="conversation" id="agente" aria-label="Conversa com Alt-IA">
+        <div class="conversation-scroll" id="chat-messages" aria-live="polite" aria-relevant="additions">
+          <div class="welcome" id="welcome">
+            <div class="welcome-showcase" aria-label="Mascote da Alt-IA saltando sobre o letreiro animado">
+              <div class="welcome-character eye-pod" aria-hidden="true"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i><span class="welcome-spark">✦</span></div>
+              <div class="welcome-wordmark" aria-hidden="true"><span>A</span><span>l</span><span>t</span><span>-</span><span>I</span><span>A</span></div>
+            </div>
+            <span class="welcome-kicker">ALT-IA · ALTSIDE</span>
+            <h1>O que vamos simular hoje?</h1>
+            <p>Descreva um cenário de mercado, uma pool ou uma estratégia. A Alt-IA pode ajudar você a explorar possibilidades.</p>
+            <div class="prompt-grid" aria-label="Sugestões de mensagem">
+              <button type="button" data-prompt="Simular um swap de ETH para USDC"><span class="prompt-icon orange">↗</span><strong>Simular um swap</strong><small>ETH para USDC</small></button>
+              <button type="button" data-prompt="Comparar duas pools de liquidez"><span class="prompt-icon violet">◈</span><strong>Comparar pools</strong><small>Liquidez e faixas</small></button>
+              <button type="button" data-prompt="Analisar o risco de uma operação de lending"><span class="prompt-icon blue">◎</span><strong>Analisar risco</strong><small>Operação de lending</small></button>
+              <button type="button" data-prompt="Explorar uma estratégia DeFi no simulador Altside"><span class="prompt-icon green">✳</span><strong>Explorar estratégia</strong><small>Cenários DeFi</small></button>
+            </div>
+          </div>
+        </div>
+        <div class="composer-area">
+          <form class="chat-form" id="chat-form">
+            <label class="sr-only" for="chat-input">Mensagem para a Alt-IA</label>
+            <textarea id="chat-input" rows="1" maxlength="4000" placeholder="Descreva o que você quer simular..."></textarea>
+            <div class="composer-footer"><span>Enter para enviar · Shift+Enter para nova linha</span><button type="submit" aria-label="Enviar mensagem">↑</button></div>
+          </form>
+          <p class="composer-note">A Alt-IA conversa sobre cenários DeFi. A execução de simulações no Altside ainda não está integrada.</p>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -1697,12 +1697,15 @@ let pointerX = window.innerWidth / 2;
 let pointerY = window.innerHeight / 2;
 function updateEyes() {
   pointerFrame = 0;
+  const updates = [];
   document.querySelectorAll('.eye-pod').forEach((face) => {
+    if (!face.getClientRects().length) return;
     const rect = face.getBoundingClientRect();
     const x = Math.max(-3, Math.min(3, (pointerX - rect.left - rect.width / 2) / 80));
     const y = Math.max(-2, Math.min(2, (pointerY - rect.top - rect.height / 2) / 100));
-    face.querySelectorAll('.pupil').forEach((pupil) => { pupil.style.transform = `translate(${x}px, ${y}px)`; });
+    updates.push([face.querySelectorAll('.pupil'), `translate(${x}px, ${y}px)`]);
   });
+  updates.forEach(([pupils, transform]) => pupils.forEach((pupil) => { pupil.style.transform = transform; }));
 }
 window.addEventListener('pointermove', (event) => {
   pointerX = event.clientX;
@@ -1776,11 +1779,7 @@ function startMascotPhysics() {
         puff.style.setProperty('--smoke-grow', `${(1.5 + Math.random() * .8).toFixed(2)}`);
         puff.style.setProperty('--smoke-time', `${(1.3 + Math.random() * .8).toFixed(2)}s`);
       });
-      burned.classList.remove('is-burnt');
-      void burned.offsetWidth;
       burned.classList.add('is-burnt');
-      mascot.classList.remove('is-impact');
-      void mascot.offsetWidth;
       mascot.classList.add('is-impact');
       setTimeout(() => burned.classList.remove('is-burnt'), 2100);
       setTimeout(() => mascot.classList.remove('is-impact'), 680);

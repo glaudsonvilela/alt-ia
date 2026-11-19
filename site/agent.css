@@ -1,12 +1,16 @@
 .agent-window[hidden]{display:none!important}
 .mode-menu{display:grid;gap:6px}
-.mode-menu button{min-height:62px;padding:10px 12px;border-color:#ffffff23;background:#24252d;box-shadow:0 12px 32px #0007}
+.mode-menu button{grid-template-columns:40px minmax(0,1fr) 18px;column-gap:11px;box-sizing:border-box;min-height:64px;padding:10px 12px;border-color:#ffffff23;background:#24252d;box-shadow:0 12px 32px #0007}
 .mode-menu button:hover{border-color:#ffffff50;background:#2c2d37}
 .mode-menu-copy small{color:#a5a3ae;font-size:11px}
-.mode-menu .agent-menu-face,.agent-window-face{display:flex;align-items:center;justify-content:center;gap:3px;background:#d98672;clip-path:polygon(22% 0,78% 0,100% 22%,100% 78%,78% 100%,22% 100%,0 78%,0 22%);border-radius:0}
+.mode-menu .agent-menu-face,.agent-window-face{position:relative;display:grid;place-items:center;border-radius:13px;background:#e9866327;clip-path:none;--face-size:34px}
 .mode-menu #agent-toggle[aria-checked=true] .mode-menu-check{background:#e99a7b;border-color:#e99a7b;color:#2d2221}
-.agent-mini-eye{position:relative;width:11px;height:15px;border-radius:50%;background:#fff}
-.agent-mini-eye::after{content:"";position:absolute;right:1px;bottom:2px;width:5px;height:8px;border-radius:60% 45% 50% 50%;background:#27202a}
+.agent-menu-face::before,.agent-window-face::before{content:"";position:absolute;left:26%;top:4%;width:5px;height:5px;border-radius:50%;background:#a89da49c;filter:blur(1.5px);animation:agent-icon-smoke 2.1s ease-out infinite}
+.agent-menu-face::after,.agent-window-face::after{content:"";position:absolute;right:24%;top:8%;width:4px;height:5px;border-radius:50%;background:#a89da49c;filter:blur(1.5px);animation:agent-icon-smoke 1.7s ease-out -.8s infinite}
+.agent-face-core{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:5%;width:var(--face-size);height:var(--face-size);border-radius:50%;background:radial-gradient(circle at 40% 68%,#ffe0a7 0%,#ffb36c 29%,#ed7948 69%,#bd3d34 100%)}
+.agent-face-eye{position:relative;width:30%;height:47%;border-radius:50%;background:#fff}
+.agent-face-eye::before{content:"";position:absolute;right:17%;bottom:16%;width:49%;height:59%;border-radius:50%;background:#352126}
+.agent-face-eye::after{content:"";position:absolute;right:27%;bottom:16%;width:29%;height:37%;border-radius:60% 50% 55% 55%;background:#ff9b53;clip-path:polygon(50% 0,85% 38%,100% 60%,83% 100%,14% 100%,0 58%,25% 36%);transform-origin:center bottom;animation:agent-eye-fire .6s ease-in-out infinite alternate}
 .agent-mode .welcome-character{background:transparent!important;border-radius:50%!important;--fire:#ef7844}
 .agent-mode .welcome-character::before{content:"";position:absolute;z-index:1;inset:0;border-radius:50%;background:radial-gradient(circle at 43% 69%,#ffe4ad 0%,#ffb66b 30%,var(--fire) 70%,#bd3b2c 100%)}
 .agent-mode .welcome-character::after{content:"";position:absolute;z-index:2;inset:0;border-radius:50%;background:radial-gradient(circle at 39% 72%,#ffce8d 0%,#ff8355 23%,#dd443a 64%,#852734 100%);opacity:0;transition:opacity .18s ease-out;pointer-events:none}
@@ -29,13 +33,13 @@
 .agent-mode .composer-footer button[type=submit]{background:#e99573}
 .agent-mode .mode-badge{border-color:#d78b7470;background:#d78b7416;color:#e5b3a2}
 @keyframes agent-eye-fire{0%{transform:scale(.76,.74) rotate(-9deg);background:#f7c36b}100%{transform:scale(1.1,1.18) rotate(9deg);background:#ff7139}}
+@keyframes agent-icon-smoke{0%{opacity:0;transform:translate(0,2px) scale(.7)}25%{opacity:.45}100%{opacity:0;transform:translate(5px,-13px) scale(1.5)}}
 @keyframes agent-char{0%{color:#fff5e9;text-shadow:0 0 4px #ffb370}12%{color:#ffbd70;text-shadow:0 0 7px #ff873f}32%{color:#ed703d;text-shadow:0 0 3px #ed703d}55%{color:#8c7772;text-shadow:none}78%{color:#504b4c;text-shadow:none}100%{color:#f6f4f8;text-shadow:none}}
 @keyframes agent-smoke{0%{opacity:0;transform:translate(0,3px) scale(.55)}15%{opacity:.58}55%{opacity:.38}100%{opacity:0;transform:translate(var(--smoke-drift,8px),var(--smoke-rise,-55px)) scale(var(--smoke-grow,1.8))}}
 @keyframes agent-letter-smoke{from{opacity:.75;transform:translateY(0) scale(.75)}to{opacity:0;transform:translateY(-30px) translateX(5px) scale(1.8)}}
 .agent-window{position:fixed;z-index:15;top:84px;right:18px;width:min(430px,calc(100vw - 36px));padding:12px;border:1px solid #ffffff24;border-radius:16px;background:#22232b;box-shadow:0 22px 62px #0009;animation:mode-menu-in .25s ease-out both}
 .agent-window-head{display:grid;grid-template-columns:34px 1fr 24px;gap:10px;align-items:center}
-.agent-window-face{width:34px;height:34px;gap:2px}
-.agent-window-face .agent-mini-eye{width:9px;height:13px}.agent-window-face .agent-mini-eye::after{width:4px;height:7px}
+.agent-window-face{width:34px;height:34px;--face-size:28px}
 .agent-window-head strong,.agent-window-head small{display:block}
 .agent-window-head strong{color:#f5f1f5;font-size:12px}
 .agent-window-head small{max-width:340px;margin-top:2px;overflow:hidden;color:#aaa5ae;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
@@ -52,4 +56,4 @@
 .agent-cursor[hidden]{display:none}
 @media(min-width:1250px){.site.agent-mode:has(.agent-window:not([hidden])) .conversation-scroll{padding-right:450px}.site.agent-mode:has(.agent-window:not([hidden])) .composer-area{width:calc(100% - 490px);margin-left:28px}}
 @media(max-width:899px),(pointer:coarse){#agent-toggle{display:none!important}.agent-window{display:none!important}}
-@media(prefers-reduced-motion:reduce){.agent-mode .welcome-character::after{transition:none}.agent-mode .welcome-character .pupil::after,.agent-mode .agent-smoke,.agent-mode .welcome-wordmark span.is-burnt,.agent-mode .welcome-wordmark span.is-burnt::before,.agent-mode .welcome-wordmark span.is-burnt::after{animation:none}}
+@media(prefers-reduced-motion:reduce){.agent-mode .welcome-character::after{transition:none}.agent-mode .welcome-character .pupil::after,.agent-menu-face::before,.agent-menu-face::after,.agent-window-face::before,.agent-window-face::after,.agent-face-eye::after,.agent-mode .agent-smoke,.agent-mode .welcome-wordmark span.is-burnt,.agent-mode .welcome-wordmark span.is-burnt::before,.agent-mode .welcome-wordmark span.is-burnt::after{animation:none}}

@@ -383,7 +383,7 @@ function renderMarketRange() {
 function ensureMarketChart() {
   if (marketChart || !poolPriceCanvas) return;
   marketChart = createChart(poolPriceCanvas, {
-    width: poolPriceCanvas.clientWidth, height: 210,
+    width: poolPriceCanvas.clientWidth, height: poolPriceCanvas.clientHeight,
     layout: { background: { type: ColorType.Solid, color: '#15141e' }, textColor: '#a99eb3', fontSize: 10, attributionLogo: true },
     grid: { vertLines: { color: '#ffffff10' }, horzLines: { color: '#ffffff10' } },
     localization: { locale: 'pt-BR', priceFormatter: formatPrice },
@@ -598,7 +598,7 @@ for (const [button, edge] of [[poolFloorHandle, 'floor'], [poolCeilingHandle, 'c
   button?.addEventListener('pointermove', (event) => {
     if (marketDrag !== edge) return;
     const y = event.clientY - poolPricePlot.getBoundingClientRect().top;
-    const price = marketCandles.coordinateToPrice(Math.max(0, Math.min(210, y)));
+    const price = marketCandles.coordinateToPrice(Math.max(0, Math.min(poolPriceCanvas.clientHeight, y)));
     moveMarketEdge(edge, price);
   });
   const end = () => { if (marketDrag === edge) { marketDrag = null; marketChart.priceScale('right').applyOptions({ autoScale: true }); renderMarketRange(); } };

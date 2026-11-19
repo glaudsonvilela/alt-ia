@@ -24,6 +24,7 @@ const poolSubmit = poolForm?.querySelector('.pool-submit');
 const poolMode = document.querySelector('#pool-mode');
 const poolPeriod = document.querySelector('#pool-period');
 const poolPeriodField = document.querySelector('#pool-period-field');
+const poolModeGrid = document.querySelector('#pool-mode-grid');
 const poolCapital = document.querySelector('#pool-capital');
 const poolCapitalUnit = document.querySelector('#pool-capital-unit');
 const poolRange = document.querySelector('#pool-range');
@@ -609,6 +610,7 @@ function updatePoolMode() {
     ? 'Escolha uma pool e reconstrua o valor de uma faixa com preços históricos do Altside.'
     : 'Escolha a pool e ajuste os parâmetros antes de consultar o motor Altside.';
   poolPeriodField.hidden = !historical;
+  poolModeGrid.classList.toggle('is-history', historical);
   document.querySelector('.pool-slippage-row').hidden = historical;
   document.getElementById('pool-slippage-hint').textContent = historical
     ? 'Reconstituição com preços históricos de fechamento. Taxas recebidas, gas e execução não são calculados.'
@@ -686,6 +688,7 @@ poolDialogClose?.addEventListener('click', () => poolDialog?.close());
 poolDialog?.addEventListener('click', (event) => { if (event.target === poolDialog) poolDialog.close(); });
 poolDialog?.addEventListener('close', () => { chartRequestSeq++; marketRequestSeq++; marketDrag = null; });
 poolNetwork?.addEventListener('change', () => renderPoolChoices());
+poolMode?.addEventListener('change', updatePoolMode);
 poolPeriod?.addEventListener('change', updatePoolMode);
 poolSelect?.addEventListener('change', () => { poolSnapshot = null; selectedRange = null; updatePoolFields(true); loadPoolSnapshot(); loadPoolChart(); });
 poolRange?.addEventListener('change', () => updatePoolFields());

@@ -120,7 +120,8 @@ function readConversations() {
         updatedAt: Number(item.updatedAt) || Date.now(),
         messages: item.messages.filter((message) => message && (message.role === 'user' || message.role === 'ai') && typeof message.text === 'string').slice(-100)
           .map((message) => ({ role: message.role, text: message.text, simulation: message.role === 'ai' ? safeSimulation(message.simulation) : null,
-            news: message.role === 'ai' ? safeNews(message.news) : [],
+            news: message.role === 'ai' && !message.text.startsWith('🗞️ Aqui está um resumo das notícias que mostrei:') ? safeNews(message.news) : [],
+            newsContext: message.role === 'ai' ? safeNews(message.newsContext || message.news) : [],
             mode: message.role === 'ai' && ['news', 'pool', 'historical_pool', 'general'].includes(message.mode) ? message.mode : '',
             newsTopic: message.role === 'ai' && typeof message.newsTopic === 'string' ? message.newsTopic.slice(0, 30) : '',
             poolRequest: message.role === 'ai' ? safePoolRequest(message.poolRequest) : null,
@@ -898,7 +899,7 @@ chatForm?.addEventListener('submit', async (event) => {
   }
   const isFirstMessage = conversation.messages.length === 0;
   const previousAnswer = [...conversation.messages].reverse().find((message) => message.role === 'ai');
-  const previousMode = previousAnswer?.mode || (previousAnswer?.news?.length || previousAnswer?.text?.startsWith('🗞️')
+  const previousMode = previousAnswer?.mode || (previousAnswer?.news?.length || previousAnswer?.newsContext?.length || previousAnswer?.text?.startsWith('🗞️')
     ? 'news' : previousAnswer?.simulation?.kind || 'general');
   const previousPool = previousMode === 'pool' ? previousAnswer : null;
   conversation.messages.push({ role: 'user', text });
@@ -934,7 +935,7 @@ chatForm?.addEventListener('submit', async (event) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: context, chat_context: {
-        mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.news || [] : [],
+        mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.newsContext || previousAnswer?.news || [] : [],
         pool_request: previousMode === 'pool' || previousMode === 'historical_pool' ? previousAnswer?.poolRequest || null : null
       }, ...(simulationRequest ? { simulation_request: simulationRequest } : {}),
         ...(previousPool?.scenarioToken ? { scenario_token: previousPool.scenarioToken } : {}),
@@ -948,6 +949,7 @@ chatForm?.addEventListener('submit', async (event) => {
     const target = conversations.find((item) => item.id === conversationId);
     if (!target) return;
     target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation), news: safeNews(data.news),
+      newsContext: safeNews(data.news_context || data.news),
       mode: ['news', 'pool', 'historical_pool', 'general'].includes(data.mode) ? data.mode : 'general',
       newsTopic: typeof data.news_topic === 'string' ? data.news_topic.slice(0, 30) : '',
       poolRequest: safePoolRequest(data.pool_request),

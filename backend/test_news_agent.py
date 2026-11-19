@@ -12,6 +12,11 @@ class NewsAgentTests(unittest.TestCase):
         self.assertIsNone(plan("Simule a pool HYPE se subir 35%"))
         self.assertEqual(plan("sobre a hyper", "news")["asset"], "HYPE")
         self.assertEqual(plan("sobre bitcoin", "news")["asset"], "BTC")
+        self.assertIsNone(plan("resuma em poucas palavras pra mim", "news", "BTC"))
+        self.assertIsNone(plan("qual notícia é mais importante?", "news", "BTC"))
+        self.assertIsNone(plan("o que isso significa para o bitcoin?", "news", "BTC"))
+        self.assertIsNone(plan("sobre bitcoin", "news", "BTC"))
+        self.assertEqual(plan("mais notícias", "news", "BTC")["asset"], "BTC")
         self.assertIsNone(plan("sobre bitcoin"))
         self.assertIsNone(plan("e se cair 20%?", "news"))
 

@@ -32,28 +32,35 @@ _cache = {}
 _cache_lock = threading.Lock()
 
 
-def plan(text, previous=None):
-    """Resolve an explicit news request or a short follow-up to the last news turn."""
+def plan(text, previous=None, topic=None):
+    """Search only when the user asks for headlines or switches to an asset."""
     explicit = bool(NEWS_WORDS.search(text))
     contextual = previous == "news" and len(text.split()) <= 12 and not OTHER_TASK.search(text)
     if not explicit and not contextual:
         return None
     lowered = text.casefold()
+    fresh = re.search(r"\b(?:mais|outras|novas|[uú]ltimas)\s+(?:not[ií]cias?|manchetes)\b|\b(?:atualiz\w*|mostr\w*|traz\w*|busc\w*|pesquis\w*)\s+(?:as?\s+)?(?:not[ií]cias?|manchetes)\b|\b(?:hoje|resumo do dia)\b", lowered, re.I)
     for symbol, aliases in ASSETS.items():
         lookup = (*aliases, "hyper", "hyperevm") if symbol == "HYPE" else aliases
         if any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", lowered, re.I) for alias in lookup):
+            if previous == "news" and symbol == topic and not fresh:
+                return None
             return {"scope": "asset", "asset": symbol, "aliases": aliases}
     match = re.search(r"\b(?:not[ií]cias?|news|manchetes)\s+(?:de|do|da|sobre|para)\s+(?:(?:a|o)\s+)?(?:(?:moeda|ativo|token)\s+)?([\w-]{2,30})", lowered, re.I)
     if not match and contextual and (NEWS_CONTEXT_REPLY.search(text) or len(text.split()) <= 3):
         match = re.search(r"\b(?:sobre|da|do|de|e|a|o)\s+(?:(?:a|o)\s+)?([\w-]{2,30})", lowered, re.I)
         if not match and len(text.split()) == 1 and len(text.strip()) <= 6:
             match = re.fullmatch(r"([\w-]{2,30})", lowered)
-    if match and match.group(1) not in ("hoje", "ontem", "dia", "mercado", "cripto", "crypto", "defi", "agora", "outra", "outro", "moeda", "ativo", "token", "obrigado", "valeu"):
+    if match and match.group(1) not in ("hoje", "ontem", "dia", "mercado", "cripto", "crypto", "defi", "agora", "outra", "outro", "moeda", "ativo", "token", "obrigado", "valeu", "essa", "essas", "esse", "esses", "isso", "primeira", "segunda", "terceira", "noticia", "notícia", "noticias", "notícias", "resumo"):
         asset = match.group(1).upper()
         return {"scope": "asset", "asset": asset, "aliases": (asset.casefold(),)}
+    if previous == "news" and not fresh:
+        return None
+    if previous == "news" and topic in ASSETS and fresh and re.search(r"\b(?:mais|outras|novas|[uú]ltimas)\b", lowered, re.I):
+        return {"scope": "asset", "asset": topic, "aliases": ASSETS[topic]}
     if explicit:
         return {"scope": "daily"}
-    return {"scope": "need_asset"} if contextual else None
+    return None
 
 
 def _load(path, body=None, ttl=180):
@@ -173,8 +180,8 @@ def _present(plan_value, selected, count, today):
     return {"reply": intro, "follow_up": question, "news": selected[:7], "news_source": "Altside Research Lab", "mode": "news", "news_topic": plan_value.get("asset", "")}
 
 
-def run(text, previous=None):
-    decision = plan(text, previous)
+def run(text, previous=None, topic=None):
+    decision = plan(text, previous, topic)
     if decision is None:
         return None
     if decision["scope"] == "need_asset":

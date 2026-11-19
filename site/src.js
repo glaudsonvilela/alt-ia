@@ -8,6 +8,13 @@ const chatForm = document.querySelector('#chat-form');
 const chatInput = document.querySelector('#chat-input');
 const chatMessages = document.querySelector('#chat-messages');
 const welcome = document.querySelector('#welcome');
+const modePlus = document.querySelector('#mode-plus');
+const modeMenu = document.querySelector('#mode-menu');
+const nerdToggle = document.querySelector('#nerd-toggle');
+const modeBadge = document.querySelector('#mode-badge');
+const nerdGrid = document.querySelector('#nerd-grid');
+const normalGrid = document.querySelector('.prompt-grid');
+const composerNote = document.querySelector('#composer-note');
 const historyNav = document.querySelector('#conversation-history');
 const newChatButton = document.querySelector('#new-chat');
 const sidebar = document.querySelector('#sidebar');
@@ -71,6 +78,13 @@ function safeNews(value) {
   return value.slice(0, 7).filter((item) => item && typeof item.title === 'string' && typeof item.url === 'string' && /^https:\/\/[^\s/]+/.test(item.url))
     .map((item) => ({ title: item.title.slice(0, 230), url: item.url.slice(0, 600), source: String(item.source || 'Fonte').slice(0, 65),
       summary: String(item.summary || '').slice(0, 260), published_at: String(item.published_at || '').slice(0, 40), time_known: item.time_known === true }));
+}
+
+function safeResearch(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 7).filter((item) => item && typeof item.title === 'string' && typeof item.url === 'string'
+    && /^https:\/\/[^\s/]+/.test(item.url)).map((item) => ({ title: item.title.slice(0, 220),
+      url: item.url.slice(0, 700), summary: String(item.summary || '').slice(0, 550), source: String(item.source || '').slice(0, 80) }));
 }
 
 function safePoolRequest(value) {
@@ -169,13 +183,17 @@ function readConversations() {
         id: item.id,
         title: typeof item.title === 'string' ? item.title : 'Nova conversa',
         pinned: item.pinned === true,
+        nerdMode: item.nerdMode === true,
+        nerdTopic: item.nerdTopic === 'strategies' ? 'strategies' : 'research',
         updatedAt: Number(item.updatedAt) || Date.now(),
         messages: item.messages.filter((message) => message && (message.role === 'user' || message.role === 'ai') && typeof message.text === 'string').slice(-100)
           .map((message) => ({ role: message.role, text: message.text, simulation: message.role === 'ai' ? safeSimulation(message.simulation) : null,
             wallet: message.role === 'ai' ? safeWallet(message.wallet) : null,
             news: message.role === 'ai' && !message.text.startsWith('🗞️ Aqui está um resumo das notícias que mostrei:') ? safeNews(message.news) : [],
             newsContext: message.role === 'ai' ? safeNews(message.newsContext || message.news) : [],
-            mode: message.role === 'ai' && ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general'].includes(message.mode) ? message.mode : '',
+            research: message.role === 'ai' ? safeResearch(message.research) : [],
+            nerdQuery: message.role === 'ai' && typeof message.nerdQuery === 'string' ? message.nerdQuery.slice(0, 650) : '',
+            mode: message.role === 'ai' && ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd'].includes(message.mode) ? message.mode : '',
             newsTopic: message.role === 'ai' && typeof message.newsTopic === 'string' ? message.newsTopic.slice(0, 30) : '',
             poolRequest: message.role === 'ai' ? safePoolRequest(message.poolRequest) : null,
             lendingRequest: message.role === 'ai' ? safeLendingRequest(message.lendingRequest) : null,
@@ -192,6 +210,39 @@ const conversations = readConversations();
 let activeId = localStorage.getItem(activeKey);
 if (!conversations.some((item) => item.id === activeId)) {
   activeId = conversations.sort((a, b) => b.updatedAt - a.updatedAt)[0]?.id || null;
+}
+let draftNerdMode = false;
+let draftNerdTopic = 'research';
+
+function currentConversation() { return conversations.find((item) => item.id === activeId); }
+function isNerdMode() { return currentConversation()?.nerdMode ?? draftNerdMode; }
+function nerdTopic() { return currentConversation()?.nerdTopic || draftNerdTopic; }
+
+function applyNerdModeUI() {
+  const active = isNerdMode();
+  const topic = nerdTopic();
+  site?.classList.toggle('nerd-mode', active);
+  if (normalGrid) normalGrid.hidden = active;
+  if (nerdGrid) nerdGrid.hidden = !active;
+  const kicker = welcome?.querySelector('.welcome-kicker');
+  const title = welcome?.querySelector('h1');
+  const description = welcome?.querySelector(':scope > p');
+  if (kicker) kicker.textContent = active ? 'ALT-IA · MODO NERD' : 'ALT-IA · ALTSIDE';
+  if (title) title.textContent = active ? 'Vamos investigar a fundo?' : 'O que vamos simular hoje?';
+  if (description) description.textContent = active
+    ? 'Pesquise um tema ou explore uma estratégia. O agente consulta a web, compara fontes e organiza uma resposta detalhada.'
+    : 'Descreva um cenário de mercado, uma pool ou uma estratégia. A Alt-IA pode ajudar você a explorar possibilidades.';
+  if (chatInput) chatInput.placeholder = active ? (topic === 'strategies' ? 'Descreva a estratégia que quer analisar...' : 'O que você quer pesquisar?') : 'Descreva o que você quer simular...';
+  if (composerNote) composerNote.textContent = active ? 'O agente consulta fontes públicas na web. Confira as referências antes de decidir.'
+    : 'Pools, lending e wallets usam dados do Altside. Nenhuma transação é enviada.';
+  if (modeBadge) { modeBadge.hidden = !active; modeBadge.textContent = `Modo Nerd · ${topic === 'strategies' ? 'Estratégias' : 'Research'}`; }
+  if (nerdToggle) nerdToggle.setAttribute('aria-checked', String(active));
+  nerdGrid?.querySelectorAll('[data-nerd-topic]').forEach((button) => button.classList.toggle('selected', button.dataset.nerdTopic === topic));
+}
+
+function closeModeMenu() {
+  if (modeMenu) modeMenu.hidden = true;
+  modePlus?.setAttribute('aria-expanded', 'false');
 }
 
 function persist() {
@@ -214,12 +265,13 @@ let pendingDeleteId = null;
 const pinIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3h8l-1 6 3 3v2H6v-2l3-3-1-6Z"/><path d="M12 14v7"/></svg>';
 const deleteIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg>';
 const historyLogoSvg = '<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><g transform="rotate(-9 18 18)"><rect x="2" y="2" width="32" height="32" rx="12" fill="#ad73d8"/><ellipse cx="13" cy="17" rx="5.3" ry="8" fill="#fff"/><ellipse cx="23" cy="17" rx="5.3" ry="8" fill="#fff"/><ellipse cx="15" cy="19" rx="2.5" ry="4" fill="#17151a"/><ellipse cx="21" cy="19" rx="2.5" ry="4" fill="#17151a"/></g></svg>';
+const historyNerdSvg = '<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><rect x="2" y="2" width="32" height="32" rx="12" fill="#81a6ed"/><ellipse cx="13" cy="17" rx="4.4" ry="6.6" fill="#fff"/><ellipse cx="23" cy="17" rx="4.4" ry="6.6" fill="#fff"/><circle cx="14.2" cy="18" r="2.1" fill="#172038"/><circle cx="24.2" cy="18" r="2.1" fill="#172038"/><g fill="none" stroke="#25334f" stroke-width="1.8"><rect x="6.7" y="10.7" width="12.5" height="13" rx="3"/><rect x="18.9" y="10.7" width="12.5" height="13" rx="3"/><path d="M19 16h-1"/></g><path d="M15.5 27h5m-4.3 0v2.6m3.5-2.6v2.6" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
 
-function createHistoryLogo() {
+function createHistoryLogo(nerdMode = false) {
   const icon = document.createElement('span');
-  icon.className = 'history-item-icon history-logo';
+  icon.className = `history-item-icon history-logo${nerdMode ? ' history-nerd' : ''}`;
   icon.setAttribute('aria-hidden', 'true');
-  icon.innerHTML = historyLogoSvg;
+  icon.innerHTML = nerdMode ? historyNerdSvg : historyLogoSvg;
   return icon;
 }
 
@@ -241,7 +293,7 @@ function renderHistory() {
     button.className = 'history-item';
     button.setAttribute('aria-current', conversation.id === activeId ? 'page' : 'false');
     button.title = conversation.title;
-    const icon = createHistoryLogo();
+    const icon = createHistoryLogo(conversation.nerdMode);
     const label = document.createElement('span');
     label.className = 'history-item-label';
     label.textContent = conversation.title;
@@ -538,9 +590,52 @@ function createWalletCard(wallet) {
   return card;
 }
 
-function createMessage(role, text, simulation = null, followUp = '', news = [], wallet = null) {
+function appendNerdInline(target, text) {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+  parts.forEach((part) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      const strong = document.createElement('strong');
+      strong.textContent = part.slice(2, -2);
+      target.append(strong);
+    } else if (part.startsWith('`') && part.endsWith('`')) {
+      const code = document.createElement('code');
+      code.textContent = part.slice(1, -1);
+      target.append(code);
+    } else target.append(document.createTextNode(part));
+  });
+}
+
+function renderNerdAnswer(body, text) {
+  const answer = document.createElement('div');
+  answer.className = 'nerd-answer';
+  let list = null;
+  text.split('\n').forEach((raw) => {
+    const line = raw.trim();
+    if (!line) { list = null; return; }
+    const bullet = line.match(/^(?:[-*]\s+|\d+[.)]\s+)(.*)$/);
+    if (bullet) {
+      const ordered = /^\d/.test(line);
+      if (!list || list.tagName !== (ordered ? 'OL' : 'UL')) {
+        list = document.createElement(ordered ? 'ol' : 'ul');
+        answer.append(list);
+      }
+      const item = document.createElement('li');
+      appendNerdInline(item, bullet[1]);
+      list.append(item);
+      return;
+    }
+    list = null;
+    const heading = line.match(/^#{1,3}\s+(.+)$/) || line.match(/^\*\*([^*]+)\*\*$/);
+    const element = document.createElement(heading ? 'h3' : 'p');
+    appendNerdInline(element, heading ? heading[1] : line);
+    answer.append(element);
+  });
+  body.append(answer);
+}
+
+function createMessage(role, text, simulation = null, followUp = '', news = [], wallet = null, research = [], nerdMode = false) {
   const row = document.createElement('article');
-  row.className = `message-row message-${role}`;
+  row.className = `message-row message-${role}${nerdMode && role === 'ai' ? ' message-nerd' : ''}`;
   if (role === 'ai') {
     const avatar = document.createElement('span');
     avatar.className = 'message-avatar eye-pod';
@@ -565,9 +660,12 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
     author.textContent = 'Alt-IA';
     body.append(author);
   }
-  const paragraph = document.createElement('p');
-  paragraph.textContent = text;
-  body.append(paragraph);
+  if (nerdMode && role === 'ai' && research?.length) renderNerdAnswer(body, text);
+  else {
+    const paragraph = document.createElement('p');
+    paragraph.textContent = text;
+    body.append(paragraph);
+  }
   if (role === 'ai' && news?.length) {
     const digest = document.createElement('div');
     digest.className = 'news-digest';
@@ -604,6 +702,28 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
   }
   if (role === 'ai' && simulation) body.append(createSimulationCard(simulation));
   if (role === 'ai' && wallet) body.append(createWalletCard(wallet));
+  if (role === 'ai' && research?.length) {
+    const sources = document.createElement('div');
+    sources.className = 'research-sources';
+    const heading = document.createElement('strong');
+    heading.textContent = 'Fontes consultadas';
+    sources.append(heading);
+    research.forEach((item, index) => {
+      const link = document.createElement('a');
+      link.href = item.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      const number = document.createElement('span');
+      number.textContent = `[${index + 1}]`;
+      const title = document.createElement('span');
+      title.textContent = item.title;
+      const host = document.createElement('small');
+      host.textContent = item.source;
+      link.append(number, title, host);
+      sources.append(link);
+    });
+    body.append(sources);
+  }
   if (role === 'ai' && followUp) {
     const question = document.createElement('p');
     question.className = 'message-follow-up';
@@ -618,11 +738,12 @@ function renderConversation() {
   if (!chatMessages) return;
   chatMessages.replaceChildren();
   const conversation = conversations.find((item) => item.id === activeId);
+  applyNerdModeUI();
   if (!conversation || !conversation.messages.length) {
     if (welcome) chatMessages.append(welcome);
   } else {
     const fragment = document.createDocumentFragment();
-  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet)));
+  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode)));
     chatMessages.append(fragment);
   }
   requestAnimationFrame(() => { chatMessages.scrollTop = conversation?.messages.length ? chatMessages.scrollHeight : 0; });
@@ -654,12 +775,44 @@ window.addEventListener('keydown', (event) => { if (event.key === 'Escape') clos
 newChatButton?.addEventListener('click', () => {
   pendingDeleteId = null;
   activeId = null;
+  draftNerdMode = false;
+  draftNerdTopic = 'research';
+  closeModeMenu();
   persist();
   renderHistory();
   renderConversation();
   closeSidebar();
   chatInput?.focus();
 });
+
+modePlus?.addEventListener('click', () => {
+  const show = modeMenu?.hidden;
+  if (modeMenu) modeMenu.hidden = !show;
+  modePlus.setAttribute('aria-expanded', String(show));
+});
+nerdToggle?.addEventListener('click', () => {
+  const conversation = currentConversation();
+  if (conversation) conversation.nerdMode = !conversation.nerdMode;
+  else draftNerdMode = !draftNerdMode;
+  persist();
+  renderHistory();
+  applyNerdModeUI();
+  closeModeMenu();
+  chatInput?.focus();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!modeMenu?.hidden && !modeMenu.contains(event.target) && !modePlus?.contains(event.target)) closeModeMenu();
+});
+window.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModeMenu(); });
+nerdGrid?.querySelectorAll('[data-nerd-topic]').forEach((button) => button.addEventListener('click', () => {
+  const topic = button.dataset.nerdTopic;
+  const conversation = currentConversation();
+  if (conversation) conversation.nerdTopic = topic;
+  else draftNerdTopic = topic;
+  persist();
+  applyNerdModeUI();
+  chatInput?.focus();
+}));
 
 document.querySelectorAll('[data-prompt]').forEach((suggestion) => {
   suggestion.addEventListener('click', () => {
@@ -1167,7 +1320,8 @@ chatForm?.addEventListener('submit', async (event) => {
   pendingWalletRequest = null;
   let conversation = conversations.find((item) => item.id === activeId);
   if (!conversation) {
-    conversation = { id: crypto.randomUUID(), title: titleFrom(text), pinned: false, updatedAt: Date.now(), messages: [] };
+    conversation = { id: crypto.randomUUID(), title: titleFrom(text), pinned: false, nerdMode: draftNerdMode,
+      nerdTopic: draftNerdTopic, updatedAt: Date.now(), messages: [] };
     conversations.push(conversation);
     activeId = conversation.id;
   }
@@ -1189,8 +1343,8 @@ chatForm?.addEventListener('submit', async (event) => {
   chatMessages.setAttribute('aria-busy', 'true');
   if (isFirstMessage) await revealFirstMessage(conversationId);
   else renderConversation();
-  const pending = createMessage('ai', walletRequest ? 'Consultando a wallet e organizando os dados…'
-    : /\b(news|not[ií]cias?|manchetes)\b/i.test(text) ? 'Buscando notícias…' : 'Pensando…');
+  const pending = createMessage('ai', conversation.nerdMode ? 'Pesquisando fontes e analisando…' : walletRequest ? 'Consultando a wallet e organizando os dados…'
+    : /\b(news|not[ií]cias?|manchetes)\b/i.test(text) ? 'Buscando notícias…' : 'Pensando…', null, '', [], null, [], conversation.nerdMode);
   pending.classList.add('message-pending');
   if (activeId === conversationId) {
     chatMessages.append(pending);
@@ -1209,8 +1363,9 @@ chatForm?.addEventListener('submit', async (event) => {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: context, chat_context: {
+      body: JSON.stringify({ messages: context, nerd_mode: conversation.nerdMode, nerd_topic: conversation.nerdTopic, chat_context: {
         mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.newsContext || previousAnswer?.news || [] : [],
+        nerd_query: previousMode === 'nerd' ? previousAnswer?.nerdQuery || '' : '',
         pool_request: previousMode === 'pool' || previousMode === 'historical_pool' ? previousAnswer?.poolRequest || null : null,
         lending_request: previousMode === 'lending' ? previousAnswer?.lendingRequest || null : null,
         wallet_request: previousMode === 'wallet' ? previousAnswer?.walletRequest || null : null
@@ -1227,8 +1382,9 @@ chatForm?.addEventListener('submit', async (event) => {
     const target = conversations.find((item) => item.id === conversationId);
     if (!target) return;
     target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation), news: safeNews(data.news), wallet: safeWallet(data.wallet),
+      research: safeResearch(data.research), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
       newsContext: safeNews(data.news_context || data.news),
-      mode: ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general'].includes(data.mode) ? data.mode : 'general',
+      mode: ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd'].includes(data.mode) ? data.mode : 'general',
       newsTopic: typeof data.news_topic === 'string' ? data.news_topic.slice(0, 30) : '',
       poolRequest: safePoolRequest(data.pool_request),
       lendingRequest: safeLendingRequest(data.lending_request),
@@ -1300,13 +1456,20 @@ function startMascotPhysics() {
   const letters = [...(wordmark?.querySelectorAll('span') || [])];
   if (!showcase || !mascot || !wordmark || letters.length < 2) return;
 
-  const looks = [
+  const normalLooks = [
     ['#ad73d8', '40% 44% 42% 46%'],
     ['#ff9568', '53% 39% 48% 43% / 46% 52% 43% 55%'],
     ['#77a4ef', '32% 41% 35% 40% / 42% 35% 43% 37%'],
     ['#b08be0', '49% 45% 50% 42% / 41% 54% 43% 52%'],
     ['#65cda5', '43% 52% 46% 51% / 52% 42% 55% 43%'],
     ['#ee91b9', '52% 44% 49% 46% / 44% 53% 42% 55%']
+  ];
+  const nerdLooks = [
+    ['#81a6ed', '38% 42% 38% 44%'],
+    ['#6fc8d9', '48% 41% 49% 44%'],
+    ['#9a91e8', '42% 51% 43% 50%'],
+    ['#80b6ee', '51% 42% 48% 45%'],
+    ['#78c9be', '43% 48% 39% 52%']
   ];
   // Return across the word instead of snapping back to the first letter.
   const stops = [...letters.keys(), ...[...letters.keys()].slice(0, -1).reverse()];
@@ -1327,6 +1490,7 @@ function startMascotPhysics() {
   }
 
   function impact(index, direction) {
+    const looks = isNerdMode() ? nerdLooks : normalLooks;
     const [color, radius] = looks[index % looks.length];
     mascot.style.backgroundColor = color;
     mascot.style.borderRadius = radius;

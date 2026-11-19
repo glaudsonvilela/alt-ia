@@ -27,7 +27,7 @@ ASSETS = {
     "DOGE": ("dogecoin", "doge"), "UNI": ("uniswap", "uni"),
 }
 NEWS_CONTEXT_REPLY = re.compile(r"^\s*(?:e\s+)?(?:sobre|da|do|de|e|a|o|quero\s+saber\s+sobre|me\s+fale\s+de|mostre\s+(?:a|o|de))\b", re.I)
-OTHER_TASK = re.compile(r"\b(simul\w*|swap|pool|capital|faixa|ticks?|slippage|pre[cç]o|quanto|ganh\w*|perd\w*|subir|cair)\b", re.I)
+OTHER_TASK = re.compile(r"\b(simul\w*|swap|pool|capital|faixa|ticks?|slippage|pre[cç]o|quanto|ganh\w*|perd\w*|subir|cair|lending|empr[eé]stim\w*|colateral|garantia|fator\s+de\s+sa[uú]de|liquida[cç][aã]o)\b", re.I)
 _cache = {}
 _cache_lock = threading.Lock()
 

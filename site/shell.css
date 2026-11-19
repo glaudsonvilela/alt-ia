@@ -188,3 +188,18 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 @keyframes pool-spark-twinkle{0%,100%{opacity:.5;transform:scale(.8) rotate(-15deg)}50%{opacity:1;transform:scale(1.2) rotate(12deg)}}
 @media(max-width:540px){.pool-dialog{width:calc(100vw - 22px);max-height:calc(100dvh - 22px);border-radius:22px}.pool-dialog-card{padding:22px 21px 24px}.pool-dialog-art{height:64px}.pool-face{left:50px;width:69px;height:62px}.pool-orbit-one{left:2px}.pool-orbit-two{right:50px}.pool-spark{left:134px}.pool-field-grid{gap:9px}.price-chart-handle{font-size:9px;padding:4px 5px}.price-chart-handle.ceiling{right:52px}}
 @media(max-width:440px){.pool-selection-grid,.pool-mode-grid.is-history{grid-template-columns:1fr}}
+
+.lending-dialog{width:min(520px,calc(100vw - 28px));max-height:calc(100dvh - 28px)}
+.lending-dialog .pool-dialog-card{padding-bottom:30px;background:radial-gradient(circle at 85% 8%,#557ede2b,transparent 38%),linear-gradient(160deg,#25212e,#191b26 65%)}
+.lending-dialog .pool-orbit-two{background:#668cf7}
+.lending-market{display:flex;align-items:center;gap:11px;margin:3px 0 20px;padding:12px 14px;border:1px solid #8da9eb34;border-radius:13px;background:#7089dd12}
+.lending-market-dot{width:10px;height:10px;flex:none;border-radius:50%;background:#829eff;box-shadow:0 0 0 5px #829eff1b}
+.lending-market strong,.lending-market small{display:block}.lending-market strong{color:#eaf0ff;font-size:12px}.lending-market small{margin-top:3px;color:#a9acc3;font-size:10px}
+.lending-field-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.lending-field-grid>div{display:flex;flex-direction:column;gap:7px;min-width:0}.lending-field-grid small{color:#958e9f;font-size:10px;line-height:1.35}
+.lending-stress{margin:16px 0 7px;padding:15px 17px 12px;border:1px solid #ffffff19;border-radius:15px;background:linear-gradient(120deg,#b579de13,#637bea10)}
+.lending-stress label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}.lending-stress output{padding:5px 9px;border-radius:9px;background:#ab81dd2e;color:#f1d8ff;font-variant-numeric:tabular-nums}
+.lending-dialog .lending-stress input[type=range]{height:24px;margin:12px 0 2px;padding:0;border:0;background:transparent;box-shadow:none;accent-color:#c58be6;cursor:pointer}
+.lending-scale{display:flex;justify-content:space-between;color:#938aa2;font-size:10px;font-variant-numeric:tabular-nums}
+.lending-dialog .pool-dialog-hint{margin:5px 0 1px;line-height:1.5}
+@media(max-width:520px){.lending-field-grid{grid-template-columns:1fr;gap:13px}.lending-dialog .pool-dialog-card{padding:20px 20px 23px}.lending-dialog .pool-dialog-art{height:55px}.lending-market{margin-bottom:14px}.lending-stress{margin-top:13px}}

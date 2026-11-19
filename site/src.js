@@ -15,6 +15,13 @@ const sidebarOverlay = document.querySelector('#sidebar-overlay');
 const mobileMenu = document.querySelector('#mobile-menu');
 const sidebarClose = document.querySelector('#sidebar-close');
 const poolDialog = document.querySelector('#pool-dialog');
+const lendingDialog = document.querySelector('#lending-dialog');
+const lendingForm = document.querySelector('#lending-config-form');
+const lendingCollateral = document.querySelector('#lending-collateral');
+const lendingDebt = document.querySelector('#lending-debt');
+const lendingDrop = document.querySelector('#lending-drop');
+const lendingDropValue = document.querySelector('#lending-drop-value');
+const lendingFormError = document.querySelector('#lending-form-error');
 const poolDialogClose = document.querySelector('#pool-dialog-close');
 const poolForm = document.querySelector('#pool-config-form');
 const poolNetwork = document.querySelector('#pool-network');
@@ -76,8 +83,15 @@ function safePoolRequest(value) {
   return result;
 }
 
+function safeLendingRequest(value) {
+  if (!value || value.kind !== 'lending' || typeof value.collateral_weth !== 'string' || typeof value.borrow_usdc !== 'string'
+      || !/^\d+(?:[.,]\d{1,8})?$/.test(value.collateral_weth) || !/^\d+(?:[.,]\d{1,6})?$/.test(value.borrow_usdc)
+      || !Number.isSafeInteger(value.price_drop_pct) || value.price_drop_pct < 0 || value.price_drop_pct > 90) return null;
+  return { kind: 'lending', collateral_weth: value.collateral_weth, borrow_usdc: value.borrow_usdc, price_drop_pct: value.price_drop_pct };
+}
+
 function safeSimulation(value) {
-  if (!value || !['swap', 'pool', 'historical_pool'].includes(value.kind) || !Array.isArray(value.metrics) || !value.source) return null;
+  if (!value || !['swap', 'pool', 'historical_pool', 'lending'].includes(value.kind) || !Array.isArray(value.metrics) || !value.source) return null;
   const isHistorical = value.kind === 'historical_pool';
   const clean = (v, max = 160) => typeof v === 'string' ? v.slice(0, max) : '';
   const metrics = value.metrics.slice(0, 6).filter((item) => item && typeof item.label === 'string' && typeof item.value === 'string')
@@ -122,9 +136,10 @@ function readConversations() {
           .map((message) => ({ role: message.role, text: message.text, simulation: message.role === 'ai' ? safeSimulation(message.simulation) : null,
             news: message.role === 'ai' && !message.text.startsWith('🗞️ Aqui está um resumo das notícias que mostrei:') ? safeNews(message.news) : [],
             newsContext: message.role === 'ai' ? safeNews(message.newsContext || message.news) : [],
-            mode: message.role === 'ai' && ['news', 'pool', 'historical_pool', 'general'].includes(message.mode) ? message.mode : '',
+            mode: message.role === 'ai' && ['news', 'pool', 'historical_pool', 'lending', 'general'].includes(message.mode) ? message.mode : '',
             newsTopic: message.role === 'ai' && typeof message.newsTopic === 'string' ? message.newsTopic.slice(0, 30) : '',
             poolRequest: message.role === 'ai' ? safePoolRequest(message.poolRequest) : null,
+            lendingRequest: message.role === 'ai' ? safeLendingRequest(message.lendingRequest) : null,
             scenarioToken: message.role === 'ai' && typeof message.scenarioToken === 'string' ? message.scenarioToken.slice(0, 12000) : '',
             followUp: message.role === 'ai' && typeof message.followUp === 'string' ? message.followUp.slice(0, 280) : '' }))
       }));
@@ -248,10 +263,11 @@ function renderHistory() {
 function createSimulationCard(simulation) {
   const card = document.createElement('section');
   card.className = 'simulation-card';
-  card.setAttribute('aria-label', simulation.kind === 'historical_pool' ? 'Reconstituição com dados históricos do Altside' : 'Prévia calculada pelo Altside');
+  card.setAttribute('aria-label', simulation.kind === 'historical_pool' ? 'Reconstituição com dados históricos do Altside' : simulation.kind === 'lending' ? 'Risco de lending calculado com dados do Altside' : 'Prévia calculada pelo Altside');
   const eyebrow = document.createElement('span');
   eyebrow.className = 'simulation-eyebrow';
-  eyebrow.textContent = simulation.kind === 'historical_pool' ? 'HISTÓRICO · DADOS ALTSIDE'
+  eyebrow.textContent = simulation.kind === 'lending' ? 'RISCO · AAVE V3'
+    : simulation.kind === 'historical_pool' ? 'HISTÓRICO · DADOS ALTSIDE'
     : simulation.source.engine.startsWith('Alt-IA') ? 'ESTIMATIVA · PREÇO ALTSIDE' : 'PRÉVIA · MOTOR ALTSIDE';
   const title = document.createElement('h3');
   title.textContent = simulation.title;
@@ -465,6 +481,41 @@ document.querySelector('[data-action="news-daily"]')?.addEventListener('click', 
   chatInput.value = 'Resumo das notícias de hoje';
   resizeComposer();
   chatForm?.requestSubmit();
+});
+
+function openLendingDialog(prefill = {}) {
+  if (!lendingDialog) return;
+  lendingFormError.hidden = true;
+  lendingFormError.textContent = '';
+  lendingCollateral.value = typeof prefill.collateral_weth === 'string' ? prefill.collateral_weth : '';
+  lendingDebt.value = typeof prefill.borrow_usdc === 'string' ? prefill.borrow_usdc : '';
+  lendingDrop.value = Number.isInteger(prefill.price_drop_pct) && prefill.price_drop_pct <= 80 ? String(prefill.price_drop_pct) : '20';
+  lendingDropValue.value = `${lendingDrop.value}%`;
+  if (!lendingDialog.open) lendingDialog.showModal();
+  (lendingCollateral.value ? lendingDebt : lendingCollateral).focus();
+}
+
+document.querySelector('[data-action="configure-lending"]')?.addEventListener('click', () => openLendingDialog());
+document.querySelector('#lending-dialog-close')?.addEventListener('click', () => lendingDialog?.close());
+lendingDialog?.addEventListener('click', (event) => { if (event.target === lendingDialog) lendingDialog.close(); });
+lendingDrop?.addEventListener('input', () => { lendingDropValue.value = `${lendingDrop.value}%`; });
+
+lendingForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (isSubmitting) return;
+  const collateral = lendingCollateral.value.trim().replace(',', '.');
+  const debt = lendingDebt.value.trim().replace(',', '.');
+  if (!/^\d+(?:\.\d{1,8})?$/.test(collateral) || Number(collateral) <= 0 || Number(collateral) > 1_000_000
+      || !/^\d+(?:\.\d{1,6})?$/.test(debt) || Number(debt) <= 0 || Number(debt) > 10_000_000_000) {
+    lendingFormError.textContent = 'Informe valores positivos para WETH e USDC.';
+    lendingFormError.hidden = false;
+    return;
+  }
+  pendingSimulationRequest = { kind: 'lending', collateral_weth: collateral, borrow_usdc: debt, price_drop_pct: Number(lendingDrop.value) };
+  chatInput.value = `Simule lending: ${collateral} WETH de garantia, ${debt} USDC emprestados, queda de ${lendingDrop.value}% no WETH`;
+  resizeComposer();
+  lendingDialog.close();
+  chatForm.requestSubmit();
 });
 
 function showPoolError(message) {
@@ -936,7 +987,8 @@ chatForm?.addEventListener('submit', async (event) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: context, chat_context: {
         mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.newsContext || previousAnswer?.news || [] : [],
-        pool_request: previousMode === 'pool' || previousMode === 'historical_pool' ? previousAnswer?.poolRequest || null : null
+        pool_request: previousMode === 'pool' || previousMode === 'historical_pool' ? previousAnswer?.poolRequest || null : null,
+        lending_request: previousMode === 'lending' ? previousAnswer?.lendingRequest || null : null
       }, ...(simulationRequest ? { simulation_request: simulationRequest } : {}),
         ...(previousPool?.scenarioToken ? { scenario_token: previousPool.scenarioToken } : {}),
         ...(previousPool?.simulation ? { scenario_context: {
@@ -950,9 +1002,10 @@ chatForm?.addEventListener('submit', async (event) => {
     if (!target) return;
     target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation), news: safeNews(data.news),
       newsContext: safeNews(data.news_context || data.news),
-      mode: ['news', 'pool', 'historical_pool', 'general'].includes(data.mode) ? data.mode : 'general',
+      mode: ['news', 'pool', 'historical_pool', 'lending', 'general'].includes(data.mode) ? data.mode : 'general',
       newsTopic: typeof data.news_topic === 'string' ? data.news_topic.slice(0, 30) : '',
       poolRequest: safePoolRequest(data.pool_request),
+      lendingRequest: safeLendingRequest(data.lending_request),
       scenarioToken: typeof data.scenario_token === 'string' ? data.scenario_token.slice(0, 12000) : '',
       followUp: typeof data.follow_up === 'string' ? data.follow_up.slice(0, 280) : '' });
     target.updatedAt = Date.now();
@@ -960,6 +1013,7 @@ chatForm?.addEventListener('submit', async (event) => {
     renderHistory();
     if (activeId === conversationId) renderConversation();
     if (data.input_request?.kind === 'pool') requestedConfig = data.input_request;
+    if (data.input_request?.kind === 'lending') requestedConfig = data.input_request;
   } catch (error) {
     if (activeId === conversationId) {
       renderConversation();
@@ -973,7 +1027,10 @@ chatForm?.addEventListener('submit', async (event) => {
     chatForm.querySelector('button[type="submit"]').disabled = false;
     chatMessages.removeAttribute('aria-busy');
     pending.remove();
-    if (requestedConfig && activeId === conversationId) openPoolDialog(requestedConfig);
+    if (requestedConfig && activeId === conversationId) {
+      if (requestedConfig.kind === 'lending') openLendingDialog(requestedConfig);
+      else openPoolDialog(requestedConfig);
+    }
   }
 });
 

@@ -12,9 +12,10 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 from simulator import (SimulationInputError, SimulationUnavailable, handle_simulation, is_quant_pool_question,
-                       in_range_days, parse_price_shock, pool_chart, pool_followup_request, pool_options,
-                       pool_snapshot, replay_pool_context, simulate_in_range_days, simulate_pool_request,
-                       simulate_price_shock)
+                       handle_lending_text, in_range_days, is_lending_question, lending_followup_request,
+                       parse_price_shock, pool_chart, pool_followup_request, pool_options, pool_snapshot,
+                       replay_pool_context, simulate_in_range_days, simulate_lending_request,
+                       simulate_pool_request, simulate_price_shock)
 from scenario_tokens import issue, verify
 from news_agent import run as run_news_agent
 
@@ -93,11 +94,14 @@ def safe_chat_context(value):
     if not isinstance(value, dict) or len(json.dumps(value, ensure_ascii=False)) > 9000:
         raise ValueError("Contexto inválido")
     mode = value.get("mode")
-    if mode not in (None, "news", "pool", "historical_pool", "general"):
+    if mode not in (None, "news", "pool", "historical_pool", "lending", "general"):
         raise ValueError("Modo inválido")
     request = value.get("pool_request")
     if request is not None and (not isinstance(request, dict) or len(json.dumps(request)) > 1200):
         raise ValueError("Pool inválida")
+    lending_request = value.get("lending_request")
+    if lending_request is not None and (not isinstance(lending_request, dict) or len(json.dumps(lending_request)) > 600):
+        raise ValueError("Lending inválido")
     cards = value.get("news") or []
     if not isinstance(cards, list) or len(cards) > 7:
         raise ValueError("Notícias inválidas")
@@ -114,7 +118,7 @@ def safe_chat_context(value):
         clean.append({"title": str(card.get("title", ""))[:230], "summary": str(card.get("summary", ""))[:260],
                       "source": str(card.get("source", parsed.hostname))[:65], "published_at": str(card.get("published_at", ""))[:40],
                       "url": url, "time_known": card.get("time_known") is True})
-    return {"mode": mode, "pool_request": request, "news": clean,
+    return {"mode": mode, "pool_request": request, "lending_request": lending_request, "news": clean,
             "news_topic": str(value.get("news_topic") or "")[:30]}
 
 
@@ -221,6 +225,7 @@ class Handler(BaseHTTPRequestHandler):
             user_text = messages[-1]["content"]
             previous_mode = chat_context.get("mode")
             previous_request = chat_context.get("pool_request")
+            previous_lending = chat_context.get("lending_request")
             previous_news = chat_context.get("news") or []
             if simulation_request is None:
                 try:
@@ -230,37 +235,46 @@ class Handler(BaseHTTPRequestHandler):
                 if news is not None:
                     return self.respond(200, summarize_news(news))
             if (simulation_request is None and previous_mode == "news" and previous_news
-                    and not re.search(r"\b(?:simul\w*|swap|pool|faixa|ticks?|liquidez)\b", user_text, re.I)):
+                    and not re.search(r"\b(?:simul\w*|swap|pool|faixa|ticks?|liquidez|lending|empr[eé]stim\w*|garantia|colateral|fator\s+de\s+sa[uú]de|liquida[cç][aã]o)\b", user_text, re.I)):
                 result = {"reply": "🗞️ Não consegui responder com essas notícias agora. Quer tentar novamente?",
                           "news": previous_news, "mode": "news", "news_topic": chat_context.get("news_topic", "")}
                 return self.respond(200, summarize_news(result, user_request=user_text, conversation=messages))
             if simulation_request is not None:
-                simulation = simulate_pool_request(simulation_request)
-                simulation["pool_request"] = simulation_request
+                if isinstance(simulation_request, dict) and simulation_request.get("kind") == "lending":
+                    simulation = simulate_lending_request(simulation_request)
+                else:
+                    simulation = simulate_pool_request(simulation_request)
+                    simulation["pool_request"] = simulation_request
             else:
                 previous_pool = previous_mode in ("pool", "historical_pool")
-                shock = parse_price_shock(user_text, allow_implicit=previous_pool)
-                if shock is not None:
-                    basis = verify(scenario_token, SCENARIO_SECRET)
-                    if basis is None and scenario_context is not None:
-                        previous = replay_pool_context(scenario_context)
-                        basis = (previous or {}).get("simulation", {}).get("_scenario_basis")
-                    simulation = simulate_price_shock(basis, shock)
-                    if previous_request:
-                        simulation["pool_request"] = previous_request
-                elif previous_pool and (days := in_range_days(user_text)) is not None:
-                    basis = verify(scenario_token, SCENARIO_SECRET)
-                    simulation = simulate_in_range_days(basis, days)
-                    if previous_request:
-                        simulation["pool_request"] = previous_request
-                elif previous_pool and (updated := pool_followup_request(user_text, previous_request)) is not None:
-                    simulation = simulate_pool_request(updated)
-                    simulation["pool_request"] = updated
+                lending_update = lending_followup_request(user_text, previous_lending) if previous_mode == "lending" else None
+                if lending_update is not None:
+                    simulation = simulate_lending_request(lending_update)
+                elif is_lending_question(user_text):
+                    simulation = handle_lending_text(user_text)
                 else:
-                    simulation = handle_simulation(user_text)
-                    if simulation is None and is_quant_pool_question(user_text):
-                        simulation = {"reply": "Para responder com números, preciso da pool, capital, faixa e variação de preço. 📊 Qual pool e cenário você quer calcular?",
-                                      "input_request": {"kind": "pool"}}
+                    shock = parse_price_shock(user_text, allow_implicit=previous_pool)
+                    if shock is not None:
+                        basis = verify(scenario_token, SCENARIO_SECRET)
+                        if basis is None and scenario_context is not None:
+                            previous = replay_pool_context(scenario_context)
+                            basis = (previous or {}).get("simulation", {}).get("_scenario_basis")
+                        simulation = simulate_price_shock(basis, shock)
+                        if previous_request:
+                            simulation["pool_request"] = previous_request
+                    elif previous_pool and (days := in_range_days(user_text)) is not None:
+                        basis = verify(scenario_token, SCENARIO_SECRET)
+                        simulation = simulate_in_range_days(basis, days)
+                        if previous_request:
+                            simulation["pool_request"] = previous_request
+                    elif previous_pool and (updated := pool_followup_request(user_text, previous_request)) is not None:
+                        simulation = simulate_pool_request(updated)
+                        simulation["pool_request"] = updated
+                    else:
+                        simulation = handle_simulation(user_text)
+                        if simulation is None and is_quant_pool_question(user_text):
+                            simulation = {"reply": "Para responder com números, preciso da pool, capital, faixa e variação de preço. 📊 Qual pool e cenário você quer calcular?",
+                                          "input_request": {"kind": "pool"}}
             if simulation is not None:
                 if "mode" not in simulation:
                     simulation["mode"] = (simulation.get("simulation") or {}).get("kind") or (simulation.get("input_request") or {}).get("kind") or "general"

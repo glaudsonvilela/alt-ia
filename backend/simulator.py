@@ -19,6 +19,7 @@ AMOUNT = r"(\d+(?:[.,]\d+)?)"
 SWAP_RE = re.compile(r"\b(?:swap|trocar|troca|converter|convers[aã]o)\b", re.I)
 POOL_RE = re.compile(r"\b(?:pool|pools|liquidez)\b", re.I)
 HISTORY_RE = re.compile(r"\b(?:hist[oó]ric[oa]|passad[oa]|backtest|retroativ[oa]|[uú]ltimos?\s+\d+\s+dias?)\b", re.I)
+LENDING_RE = re.compile(r"\b(?:lending|empr[eé]stim\w*|colateral|garantia|fator\s+de\s+sa[uú]de|liquida[cç][aã]o)\b", re.I)
 TOKEN_RE = re.compile(r"\b(USDC|WETH|ETH|WBTC|BTC|USDT|CBBTC|USDG|KHYPE|UBTC|WHYPE|SOL|HYPE)\b", re.I)
 
 
@@ -67,6 +68,125 @@ def _decimal(text):
     if not number.is_finite() or number <= 0 or number > Decimal("10000000"):
         return None
     return format(number, "f")
+
+
+def is_lending_question(text):
+    return bool(LENDING_RE.search(text))
+
+
+def _lending_number(text, symbol):
+    match = re.search(rf"\b(\d+(?:[.,]\d{{1,18}})?)\s*{symbol}\b", text, re.I)
+    return match.group(1).replace(",", ".") if match else None
+
+
+def _lending_drop(text):
+    match = re.search(r"\b(?:cair|cai|queda|descer|desce)\s+(?:de\s+)?(\d{1,2})\s*%", text, re.I)
+    return int(match.group(1)) if match else None
+
+
+def lending_followup_request(text, previous):
+    if not isinstance(previous, dict) or previous.get("kind") != "lending" or len(text.split()) > 20:
+        return None
+    if re.search(r"\b(?:not[ií]cias?|news|swap|pool|outra\s+rede)\b", text, re.I):
+        return None
+    updated = dict(previous)
+    changed = False
+    for key, symbol in (("collateral_weth", "(?:WETH|ETH)"), ("borrow_usdc", "USDC")):
+        value = _lending_number(text, symbol)
+        if value is not None:
+            updated[key] = value
+            changed = True
+    drop = _lending_drop(text)
+    if drop is not None:
+        updated["price_drop_pct"] = drop
+        changed = True
+    return updated if changed else None
+
+
+def handle_lending_text(text):
+    collateral = _lending_number(text, "(?:WETH|ETH)")
+    debt = _lending_number(text, "USDC")
+    drop = _lending_drop(text)
+    request = {"kind": "lending", "collateral_weth": collateral or "", "borrow_usdc": debt or "",
+               "price_drop_pct": drop if drop is not None else 20}
+    if collateral and debt:
+        return simulate_lending_request(request)
+    return {"reply": "Vamos calcular o risco do empréstimo. 🛟 Informe quanto WETH serviria de garantia e quanto USDC você pegaria emprestado.",
+            "input_request": request, "mode": "lending", "follow_up": "Qual seria a garantia em WETH e a dívida em USDC?"}
+
+
+def simulate_lending_request(request):
+    """Read a canonical Aave V3 position quote from Altside and stress its WETH price."""
+    required = {"kind", "collateral_weth", "borrow_usdc", "price_drop_pct"}
+    if not isinstance(request, dict) or set(request) != required or request.get("kind") != "lending":
+        raise SimulationInputError("Parâmetros de lending inválidos.")
+    collateral, debt, drop = request["collateral_weth"], request["borrow_usdc"], request["price_drop_pct"]
+    for value, maximum, places, label in ((collateral, Decimal("1000000"), 8, "garantia"), (debt, Decimal("10000000000"), 6, "empréstimo")):
+        if not isinstance(value, str) or not re.fullmatch(rf"\d+(?:[.,]\d{{1,{places}}})?", value) or not 0 < Decimal(value.replace(",", ".")) <= maximum:
+            raise SimulationInputError(f"Informe um valor válido para {label}.")
+    if type(drop) is not int or not 0 <= drop <= 90:
+        raise SimulationInputError("A queda do WETH deve ficar entre 0% e 90%.")
+    raw = _json_request("/simulate/lending", {"collateral_weth": collateral.replace(",", "."), "borrow_usdc": debt.replace(",", ".")})
+    source, position, market = raw.get("source") or {}, raw.get("position") or {}, raw.get("market") or {}
+    if (raw.get("simulation") != "aave_v3_weth_collateral_usdc_variable_debt" or raw.get("stateless") is not True
+            or raw.get("persisted") is not False or source.get("canonical") is not True
+            or type(source.get("block_number")) is not int or source["block_number"] <= 0):
+        raise SimulationUnavailable("O Altside não confirmou uma simulação canônica de lending.")
+    try:
+        collateral_amount = Decimal(position["formatted"]["collateral_weth"])
+        debt_amount = Decimal(position["formatted"]["debt_usdc"])
+        current_price = Decimal(market["weth_oracle_price_base_raw"]) / Decimal(market["oracle_base_unit_raw"])
+        liquidation_price = Decimal(position["formatted"]["liquidation_price"])
+        health = Decimal(position["health_factor_wad"]) / Decimal(10**18)
+        available = Decimal(position["available_borrow_base_raw"]) / Decimal(market["oracle_base_unit_raw"])
+        distance = Decimal(position["liquidation_distance_bps"]) / Decimal(100)
+        ltv = Decimal(position["debt_value_base_raw"]) / Decimal(position["collateral_value_base_raw"]) * 100
+        max_borrow = Decimal(position["max_borrow_base_raw"]) / Decimal(market["oracle_base_unit_raw"])
+        if (collateral_amount <= 0 or debt_amount <= 0 or current_price <= 0 or liquidation_price <= 0
+                or health <= 0 or available < 0 or max_borrow <= 0 or not 0 <= distance <= 100
+                or market["weth_ltv_bps"] <= 0 or market["weth_liquidation_threshold_bps"] <= 0):
+            raise ValueError("invalid lending values")
+        if position["risk_level"] not in ("normal", "attention", "critical", "liquidatable") or type(position["can_open_position"]) is not bool:
+            raise ValueError("invalid lending risk")
+    except (KeyError, TypeError, ValueError, InvalidOperation, ZeroDivisionError) as error:
+        raise SimulationUnavailable("O Altside retornou dados incompletos para o lending.") from error
+    selected_health = health * (Decimal(1) - Decimal(drop) / 100)
+    rows = []
+    for pct in sorted({0, 10, 20, 30, 40, drop}):
+        stressed_health = health * (Decimal(1) - Decimal(pct) / 100)
+        liquidatable = stressed_health < 1
+        rows.append({"label": "Agora" if pct == 0 else f"WETH −{pct}%",
+                     "price": f"US$ {_money(current_price * (1 - Decimal(pct) / 100), 2)}",
+                     "value": _money(stressed_health, 2),
+                     "pnl": "Liquidação possível" if liquidatable else "Acima do limite",
+                     "tone": "loss" if liquidatable else "flat"})
+    sim = {"kind": "lending", "title": "Empréstimo WETH → USDC", "subtitle": "Ethereum · Aave V3 · simulação somente leitura",
+           "metrics": [{"label": "Garantia", "value": f"{_money(collateral_amount, 4)} WETH"},
+                       {"label": "Dívida", "value": f"{_money(debt_amount, 2)} USDC"},
+                       {"label": "Fator de saúde", "value": _money(health, 2)},
+                       {"label": "Liquidação perto de", "value": f"US$ {_money(liquidation_price, 2)}/WETH"},
+                       {"label": "Queda até o limite", "value": f"{_money(distance, 2)}%"},
+                       {"label": "Crédito restante", "value": f"≈ US$ {_money(available, 2)}"}],
+           "scenarios": {"unit": "USD", "base_symbol": "WETH", "caption": "📉 Se o preço do WETH cair · dívida em USDC constante",
+                         "headers": ["Cenário", "WETH", "Saúde", "Situação"], "rows": rows,
+                         "note": "Fator de saúde = fator atual × (1 − queda do WETH). Abaixo de 1, a posição pode ser liquidada."},
+           "source": {"engine": "Alt-IA · cenário sobre motor Altside", "block_number": source["block_number"],
+                      "source_label": "Bloco", "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                      "canonical": True, "validity": "Oráculo e parâmetros do bloco consultado; preços, dívida e taxas mudam."},
+           "assumptions": [f"LTV atual: {_money(ltv, 2)}%; limite de empréstimo: ≈ US$ {_money(max_borrow, 2)}.",
+                           f"LTV máximo da garantia: {market['weth_ltv_bps'] / 100:g}%; limiar de liquidação: {market['weth_liquidation_threshold_bps'] / 100:g}%.",
+                           "Cenários alteram só o preço do WETH; preço do USDC e dívida ficam constantes.",
+                           "Juros futuros, mudanças de oráculo, gas e penalidade de liquidação não incluídos."],
+           "url": PUBLIC_URL}
+    if drop:
+        outcome = "pode ser liquidada" if selected_health < 1 else "segue acima do limite de liquidação"
+        reply = f"🛟 Com {_money(collateral_amount, 4)} WETH de garantia e {_money(debt_amount, 2)} USDC de dívida, a saúde atual é {_money(health, 2)}. Se o WETH cair {drop}%, a saúde estimada vira {_money(selected_health, 2)} e a posição {outcome}."
+    else:
+        reply = f"🛟 Com {_money(collateral_amount, 4)} WETH de garantia e {_money(debt_amount, 2)} USDC de dívida, a saúde é {_money(health, 2)}. O preço de liquidação estimado é US$ {_money(liquidation_price, 2)} por WETH."
+    if position["can_open_position"] is False:
+        reply += " ⚠️ Esta posição excede o limite de empréstimo do mercado na entrada."
+    return {"reply": reply, "simulation": sim, "mode": "lending", "lending_request": request,
+            "follow_up": "😊 Quer testar outra dívida ou uma queda maior do WETH?"}
 
 
 def _amount_for(text, token):

@@ -19,6 +19,7 @@ class NewsAgentTests(unittest.TestCase):
         self.assertEqual(plan("mais notícias", "news", "BTC")["asset"], "BTC")
         self.assertIsNone(plan("sobre bitcoin"))
         self.assertIsNone(plan("e se cair 20%?", "news"))
+        self.assertIsNone(plan("simule lending com 10 WETH e 10000 USDC", "news"))
 
     def test_daily_uses_only_todays_dated_public_news(self):
         today = datetime.now(LOCAL_TIME).date()

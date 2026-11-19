@@ -10,8 +10,8 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=37">
-  <script defer src="/app.js?v=41"></script>
+  <link rel="stylesheet" href="/shell.css?v=38">
+  <script defer src="/app.js?v=42"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -73,7 +73,7 @@
             <div class="prompt-grid" aria-label="Sugestões de mensagem">
               <button type="button" data-action="news-daily"><span class="prompt-icon orange">▤</span><strong>News</strong><small>Resumo de hoje</small></button>
               <button type="button" data-action="configure-pool"><span class="prompt-icon violet">◈</span><strong>Simular uma pool</strong><small>Defina capital e faixa</small></button>
-              <button type="button" data-prompt="Analisar o risco de uma operação de lending"><span class="prompt-icon blue">◎</span><strong>Analisar risco</strong><small>Operação de lending</small></button>
+              <button type="button" data-action="configure-lending"><span class="prompt-icon blue">◎</span><strong>Simular lending</strong><small>Garantia e empréstimo</small></button>
               <button type="button" data-action="historical-pool"><span class="prompt-icon green">✳</span><strong>Simular o passado</strong><small>7, 30 ou 90 dias</small></button>
             </div>
           </div>
@@ -84,7 +84,7 @@
             <textarea id="chat-input" rows="1" maxlength="4000" placeholder="Descreva o que você quer simular..."></textarea>
             <div class="composer-footer"><span>Enter para enviar · Shift+Enter para nova linha</span><button type="submit" aria-label="Enviar mensagem">↑</button></div>
           </form>
-          <p class="composer-note">Entradas em pools selecionadas e reconstituições históricas usam dados do Altside. Nenhuma transação é enviada.</p>
+          <p class="composer-note">Pools, histórico e lending usam dados do Altside. Nenhuma transação é enviada.</p>
         </div>
       </main>
     </div>
@@ -128,6 +128,25 @@
         <p id="pool-slippage-hint" class="pool-dialog-hint">Prévia somente leitura. Nenhuma transação é enviada.</p>
         <p class="pool-form-error" id="pool-form-error" role="alert" hidden></p>
         <button class="pool-submit" type="submit"><span id="pool-submit-label">Calcular prévia</span><span class="pool-submit-icon" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><path class="pool-submit-face" d="M9 3.5h14L29 10v12l-6 6.5H9L3 22V10z"/><ellipse cx="11.9" cy="15.2" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="20.1" cy="15.2" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="12.7" cy="16.2" rx="1.1" ry="2.1" fill="#282032"/><ellipse cx="19.3" cy="16.2" rx="1.1" ry="2.1" fill="#282032"/><path d="M13.2 22.2c1.6 1.5 4 1.5 5.6 0" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="1.5"/></svg></span></button>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog class="pool-dialog lending-dialog" id="lending-dialog" aria-labelledby="lending-dialog-title">
+    <div class="pool-dialog-card">
+      <div class="pool-dialog-art" aria-hidden="true"><i class="pool-orbit pool-orbit-one"></i><i class="pool-orbit pool-orbit-two"></i><span class="pool-face eye-pod"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i></span><i class="pool-spark">✦</i></div>
+      <button class="pool-dialog-close" id="lending-dialog-close" type="button" aria-label="Fechar simulação de lending">×</button>
+      <div class="pool-dialog-copy"><span class="pool-dialog-kicker">ALT-IA · LENDING</span><h2 id="lending-dialog-title">Quanto risco cabe aqui?</h2><p>Simule uma posição na Aave V3 com dados do Altside. Sem conectar carteira.</p></div>
+      <div class="lending-market"><span class="lending-market-dot" aria-hidden="true"></span><div><strong>Ethereum · Aave V3</strong><small>WETH como garantia → USDC emprestado</small></div></div>
+      <form id="lending-config-form">
+        <div class="lending-field-grid">
+          <div><label for="lending-collateral">Garantia em WETH</label><input id="lending-collateral" type="text" inputmode="decimal" autocomplete="off" placeholder="Ex.: 10" required><small>Quanto WETH você depositaria</small></div>
+          <div><label for="lending-debt">Empréstimo em USDC</label><input id="lending-debt" type="text" inputmode="decimal" autocomplete="off" placeholder="Ex.: 10000" required><small>Quanto USDC você pegaria</small></div>
+        </div>
+        <div class="lending-stress"><label for="lending-drop">Se o WETH cair <output id="lending-drop-value" for="lending-drop">20%</output></label><input id="lending-drop" type="range" min="0" max="80" step="5" value="20"><div class="lending-scale"><span>0%</span><span>40%</span><span>80%</span></div></div>
+        <p class="pool-dialog-hint">🛟 Veja fator de saúde, preço de liquidação e cenários de queda. Prévia somente leitura.</p>
+        <p class="pool-form-error" id="lending-form-error" role="alert" hidden></p>
+        <button class="pool-submit" type="submit"><span>Calcular risco</span><span class="pool-submit-icon" aria-hidden="true">↗</span></button>
       </form>
     </div>
   </dialog>

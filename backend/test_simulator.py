@@ -38,12 +38,42 @@ SNAPSHOT = {
     "state": {"tick": -201496},
     "price": {"status": "available", "quote_per_base": "1776.5"},
 }
+LENDING = {
+    "simulation": "aave_v3_weth_collateral_usdc_variable_debt", "stateless": True, "persisted": False,
+    "source": {"canonical": True, "block_number": 789},
+    "market": {"oracle_base_unit_raw": "100000000", "weth_oracle_price_base_raw": "200000000000",
+               "usdc_oracle_price_base_raw": "100000000", "weth_ltv_bps": 8100,
+               "weth_liquidation_threshold_bps": 8400},
+    "position": {"formatted": {"collateral_weth": "10.00000000", "debt_usdc": "10000.000000",
+                                "health_factor": "1.6800", "liquidation_price": "1190.476190"},
+                 "health_factor_wad": "1680000000000000000", "available_borrow_base_raw": "620000000000",
+                 "liquidation_distance_bps": 4047, "debt_value_base_raw": "1000000000000",
+                 "collateral_value_base_raw": "2000000000000", "max_borrow_base_raw": "1620000000000",
+                 "risk_level": "normal", "can_open_position": True}
+}
 CHART = {"schema": "altside_pool_chart_v1", "pool_id": CATALOG["pools"][0]["id"], "interval": "1h",
          "source": "geckoterminal", "stale": False, "fetched_at_unix": 1795045000,
          "candles": [{"time": 1795042800, "open": 1780.0, "high": 1790.0, "low": 1770.0, "close": 1784.0}]}
 
 
 class SimulatorTests(unittest.TestCase):
+    def test_lending_uses_canonical_altside_quote_and_stresses_health(self):
+        request = {"kind": "lending", "collateral_weth": "10", "borrow_usdc": "10000", "price_drop_pct": 40}
+        with patch.object(simulator, "_json_request", return_value=LENDING) as engine:
+            result = simulator.simulate_lending_request(request)
+        engine.assert_called_once_with("/simulate/lending", {"collateral_weth": "10", "borrow_usdc": "10000"})
+        self.assertEqual(result["mode"], "lending")
+        self.assertIn("1,01", result["reply"])
+        self.assertEqual(result["simulation"]["metrics"][3]["value"], "US$ 1.190,48/WETH")
+        self.assertEqual(result["simulation"]["scenarios"]["rows"][-1]["label"], "WETH −40%")
+
+    def test_lending_prompt_opens_small_configuration(self):
+        result = simulator.handle_lending_text("Quero simular lending")
+        self.assertEqual(result["input_request"]["kind"], "lending")
+        self.assertEqual(simulator.lending_followup_request("e se WETH cair 25%?", {
+            "kind": "lending", "collateral_weth": "10", "borrow_usdc": "10000", "price_drop_pct": 20,
+        })["price_drop_pct"], 25)
+
     def test_in_range_earnings_are_explicit_fee_scenarios(self):
         basis = {"pool": {"pair": "WETH/USDC", "network": "Base Mainnet", "base_symbol": "WETH", "quote_symbol": "USDC"},
                  "capital": "1000", "source": {"canonical": True, "block_number": 123}}

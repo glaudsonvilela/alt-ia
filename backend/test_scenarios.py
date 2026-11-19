@@ -1,6 +1,9 @@
 import unittest
+from decimal import Decimal
 
 from scenarios import pool_price_scenarios
+from scenario_tokens import issue, verify
+from simulator import parse_price_shock, simulate_price_shock
 
 
 class PoolScenarioTests(unittest.TestCase):
@@ -34,6 +37,25 @@ class PoolScenarioTests(unittest.TestCase):
         self.raw["allocation"]["formatted"]["unused_quote"] = "100"
         with self.assertRaises(ValueError):
             pool_price_scenarios(self.raw, self.pool, "1000")
+
+    def test_quote_token_rise_reverses_pair_price_and_calculates_six_decimals(self):
+        self.pool.update(base_symbol="HYPE", quote_symbol="SOL")
+        result = pool_price_scenarios(self.raw, self.pool, "1000", changes=(0, 35), shock_symbol="SOL")
+        self.assertAlmostEqual(Decimal(result["analysis"]["target_price"]), Decimal(1) / Decimal("1.35"))
+        self.assertEqual(result["rows"][1]["label"], "SOL +35%")
+        self.assertNotEqual(result["rows"][1]["pnl"], "0,000000")
+
+    def test_follow_up_uses_signed_basis_and_rejects_tampering(self):
+        self.pool.update(base_symbol="HYPE", quote_symbol="SOL", id="test", pair="HYPE/SOL", network="Solana", protocol="Orca")
+        basis = {"pool": self.pool, "capital": "1000", "raw": self.raw,
+                 "source": {"block_number": 123, "source_label": "Slot", "captured_at": "2026-01-01T00:00:00Z"}}
+        token = issue(basis, b"secret")
+        self.assertEqual(verify(token, b"secret"), basis)
+        self.assertIsNone(verify(token[:-1] + ("a" if token[-1] != "a" else "b"), b"secret"))
+        shock = parse_price_shock("o que acontece na pool se SOL subir 35%?")
+        result = simulate_price_shock(verify(token, b"secret"), shock)
+        self.assertEqual(result["simulation"]["scenarios"]["rows"][1]["label"], "SOL +35%")
+        self.assertIn("−", result["simulation"]["metrics"][2]["value"])
 
 
 if __name__ == "__main__":

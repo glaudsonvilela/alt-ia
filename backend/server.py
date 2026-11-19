@@ -2,6 +2,7 @@
 
 import json
 import os
+import hashlib
 import threading
 import time
 import urllib.error
@@ -9,7 +10,10 @@ import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
-from simulator import SimulationInputError, SimulationUnavailable, handle_simulation, pool_chart, pool_options, pool_snapshot, simulate_pool_request
+from simulator import (SimulationInputError, SimulationUnavailable, handle_simulation, is_quant_pool_question,
+                       parse_price_shock, pool_chart, pool_options, pool_snapshot, replay_pool_context,
+                       simulate_pool_request, simulate_price_shock)
+from scenario_tokens import issue, verify
 
 
 MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -24,6 +28,7 @@ with open(KEY_FILE, encoding="utf-8") as secret_file:
     API_KEY = secret_file.read().strip()
 if not API_KEY.startswith("nvapi-"):
     raise RuntimeError("Chave NVIDIA ausente ou inválida")
+SCENARIO_SECRET = hashlib.sha256((API_KEY + ":alt-ia-scenario-v1").encode()).digest()
 
 window = deque()
 window_lock = threading.Lock()
@@ -99,6 +104,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             raw_messages = payload["messages"]
             simulation_request = payload.get("simulation_request")
+            scenario_token = payload.get("scenario_token")
+            scenario_context = payload.get("scenario_context")
+            if scenario_token is not None and (not isinstance(scenario_token, str) or len(scenario_token) > 12000):
+                raise ValueError
+            if scenario_context is not None and (not isinstance(scenario_context, dict) or len(json.dumps(scenario_context)) > 5000):
+                raise ValueError
             if not isinstance(raw_messages, list) or not 1 <= len(raw_messages) <= 20:
                 raise ValueError
             messages = []
@@ -123,8 +134,28 @@ class Handler(BaseHTTPRequestHandler):
         if not slots.acquire(blocking=False):
             return self.respond(429, {"error": "A Alt-IA está ocupada. Tente novamente em instantes."})
         try:
-            simulation = simulate_pool_request(simulation_request) if simulation_request is not None else handle_simulation(messages[-1]["content"])
+            user_text = messages[-1]["content"]
+            if simulation_request is not None:
+                simulation = simulate_pool_request(simulation_request)
+            else:
+                shock = parse_price_shock(user_text)
+                if shock is not None:
+                    basis = verify(scenario_token, SCENARIO_SECRET)
+                    if basis is None and scenario_context is not None:
+                        previous = replay_pool_context(scenario_context)
+                        basis = (previous or {}).get("simulation", {}).get("_scenario_basis")
+                    simulation = simulate_price_shock(basis, shock)
+                else:
+                    simulation = handle_simulation(user_text)
+                    if simulation is None and is_quant_pool_question(user_text):
+                        simulation = {"reply": "Para responder com números, preciso da pool, capital, faixa e variação de preço. 📊 Qual pool e cenário você quer calcular?",
+                                      "input_request": {"kind": "pool"}}
             if simulation is not None:
+                sim_card = simulation.get("simulation")
+                if isinstance(sim_card, dict):
+                    basis = sim_card.pop("_scenario_basis", None)
+                    if basis is not None:
+                        simulation["scenario_token"] = issue(basis, SCENARIO_SECRET)
                 return self.respond(200, simulation)
             request_body = json.dumps({
                 "model": MODEL,

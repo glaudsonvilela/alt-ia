@@ -95,6 +95,7 @@ function readConversations() {
         updatedAt: Number(item.updatedAt) || Date.now(),
         messages: item.messages.filter((message) => message && (message.role === 'user' || message.role === 'ai') && typeof message.text === 'string').slice(-100)
           .map((message) => ({ role: message.role, text: message.text, simulation: message.role === 'ai' ? safeSimulation(message.simulation) : null,
+            scenarioToken: message.role === 'ai' && typeof message.scenarioToken === 'string' ? message.scenarioToken.slice(0, 12000) : '',
             followUp: message.role === 'ai' && typeof message.followUp === 'string' ? message.followUp.slice(0, 280) : '' }))
       }));
   } catch {
@@ -826,6 +827,7 @@ chatForm?.addEventListener('submit', async (event) => {
     activeId = conversation.id;
   }
   const isFirstMessage = conversation.messages.length === 0;
+  const previousPool = [...conversation.messages].reverse().find((message) => message.role === 'ai' && message.simulation?.kind === 'pool');
   conversation.messages.push({ role: 'user', text });
   conversation.updatedAt = Date.now();
   conversation.messages = conversation.messages.slice(-100);
@@ -858,13 +860,19 @@ chatForm?.addEventListener('submit', async (event) => {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: context, ...(simulationRequest ? { simulation_request: simulationRequest } : {}) })
+      body: JSON.stringify({ messages: context, ...(simulationRequest ? { simulation_request: simulationRequest } : {}),
+        ...(previousPool?.scenarioToken ? { scenario_token: previousPool.scenarioToken } : {}),
+        ...(previousPool?.simulation ? { scenario_context: {
+          kind: previousPool.simulation.kind, title: previousPool.simulation.title, subtitle: previousPool.simulation.subtitle,
+          metrics: previousPool.simulation.metrics, assumptions: previousPool.simulation.assumptions
+        } } : {}) })
     });
     const data = await response.json();
     if (!response.ok || typeof data.reply !== 'string') throw new Error(data.error || 'Não foi possível obter uma resposta. Tente novamente.');
     const target = conversations.find((item) => item.id === conversationId);
     if (!target) return;
     target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation),
+      scenarioToken: typeof data.scenario_token === 'string' ? data.scenario_token.slice(0, 12000) : '',
       followUp: typeof data.follow_up === 'string' ? data.follow_up.slice(0, 280) : '' });
     target.updatedAt = Date.now();
     persist();

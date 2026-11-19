@@ -20,19 +20,21 @@ def _positive(value):
     return number
 
 
-def _money(value):
-    rounded = value.quantize(Decimal("0.01"))
-    return f"{rounded:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+def _money(value, digits=2):
+    with localcontext() as ctx:
+        ctx.prec = max(60, len(value.as_tuple().digits) + digits + 2)
+        rounded = value.quantize(Decimal(1).scaleb(-digits))
+    return f"{rounded:,.{digits}f}".replace(",", "_").replace(".", ",").replace("_", ".")
 
 
-def _signed(value):
-    if abs(value) < Decimal("0.005"):
-        return "0,00"
-    return ("+" if value > 0 else "−") + _money(abs(value))
+def _signed(value, digits=2):
+    if abs(value) < Decimal(1).scaleb(-digits) / 2:
+        return _money(Decimal(0), digits)
+    return ("+" if value > 0 else "−") + _money(abs(value), digits)
 
 
-def pool_price_scenarios(raw, pool, capital):
-    """Return five price-shock rows in the pool's quote token, or reject bad data."""
+def pool_price_scenarios(raw, pool, capital, changes=CHANGES, shock_symbol=None):
+    """Value a concentrated-liquidity position at observed or hypothetical prices."""
     allocation = (raw.get("allocation") or {}).get("formatted") or {}
     price_data = raw.get("price") or {}
     descriptor = raw.get("position_descriptor") or {}
@@ -94,22 +96,38 @@ def pool_price_scenarios(raw, pool, capital):
         elif abs(difference) > tolerance:
             raise ValueError("allocation does not reconcile")
 
+        digits = 2 if pool["quote_symbol"].upper() in ("USDC", "USDT", "USDG") else 6
         rows = []
-        for change in CHANGES:
-            target = entry * (Decimal(100 + change) / 100)
+        analysis = None
+        for change in changes:
+            change = Decimal(str(change))
+            factor = 1 + change / 100
+            if not factor.is_finite() or factor <= 0:
+                raise ValueError("invalid price shock")
+            target = entry / factor if shock_symbol == pool["quote_symbol"] else entry * factor
             base_unit, quote_unit = unit_amounts(target)
-            value = liquidity * (base_unit * target + quote_unit) + unused + residual_base * target
+            final_base = liquidity * base_unit + residual_base
+            final_quote = liquidity * quote_unit + unused
+            value = final_base * target + final_quote
             pnl = value - initial
             rows.append({
-                "label": "Preço atual" if change == 0 else f"{'Alta' if change > 0 else 'Queda'} {abs(change)}%",
-                "price": _money(target),
-                "value": _money(value),
-                "pnl": _signed(pnl),
-                "tone": "gain" if pnl > Decimal("0.005") else "loss" if pnl < Decimal("-0.005") else "flat",
+                "label": "Preço atual" if change == 0 else (f"{shock_symbol} {'+' if change > 0 else '−'}{format(abs(change), 'f')}%" if shock_symbol else f"{'Alta' if change > 0 else 'Queda'} {format(abs(change), 'f')}%"),
+                "price": _money(target, digits),
+                "value": _money(value, digits),
+                "pnl": _signed(pnl, digits),
+                "tone": "gain" if pnl > 0 else "loss" if pnl < 0 else "flat",
             })
-        return {
+            if shock_symbol is not None:
+                analysis = {"entry_price": str(entry), "target_price": str(target),
+                            "initial": str(initial), "value": str(value), "pnl": str(pnl),
+                            "base_amount": str(final_base), "quote_amount": str(final_quote),
+                            "vs_hold": str(value - ((base + residual_base) * target + quote + unused))}
+        result = {
             "unit": pool["quote_symbol"],
             "base_symbol": pool["base_symbol"],
             "rows": rows,
             "note": "Cenários instantâneos de preço, sem taxas futuras da pool, gás ou impostos. Custos de entrada observados aparecem no valor inicial quando disponíveis; não são previsão nem cotação de saída." if raw.get("entry_costs_included") is True else "Cenários instantâneos de preço, sem taxas futuras da pool, gás, slippage efetivo ou impostos. Não são previsão nem cotação de saída.",
         }
+        if shock_symbol is not None:
+            result["analysis"] = analysis
+        return result

@@ -9,7 +9,7 @@ import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_DOWN, localcontext
 from urllib.parse import quote
-from scenarios import pool_price_scenarios
+from scenarios import _money, pool_price_scenarios
 from historical import PERIOD_INTERVAL, replay_pool_history
 
 
@@ -231,10 +231,7 @@ def _run_pool(pool, amount, range_ticks, bps, explicit_ticks=None):
     }
     if any("None" in metric["value"] for metric in sim["metrics"]):
         raise SimulationUnavailable("O motor retornou uma alocação incompleta.")
-    try:
-        sim["scenarios"] = pool_price_scenarios(raw, pool, amount)
-    except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError):
-        sim["assumptions"].append("Cenários de preço indisponíveis para esta prévia.")
+    _scenario_or_note(sim, raw, pool, amount)
     return {"reply": "Prontinho! 🦀 O motor Altside calculou sua entrada. Veja a alocação e, quando disponível, quanto o capital mudaria em cenários de preço 👇", "simulation": sim,
             "follow_up": f"😊 Quer comparar outra faixa ou outro capital para {base_symbol}?"}
 
@@ -254,6 +251,12 @@ def _range_for_snapshot(pool, current_tick, width, explicit_ticks, limit=887272)
 def _scenario_or_note(sim, raw, pool, amount):
     try:
         sim["scenarios"] = pool_price_scenarios(raw, pool, amount)
+        sim["_scenario_basis"] = {
+            "pool": {key: pool[key] for key in ("id", "pair", "network", "protocol", "base_symbol", "quote_symbol", "base_is_token0", "token0_decimals", "token1_decimals")},
+            "capital": amount,
+            "raw": {key: raw[key] for key in ("allocation", "price", "range", "position_descriptor", "residual_base", "entry_costs_included") if key in raw},
+            "source": sim["source"],
+        }
     except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError):
         sim["assumptions"].append("Cenários de preço indisponíveis para esta prévia.")
 
@@ -454,7 +457,7 @@ def _run_robinhood_pool(pool, amount, range_ticks, bps, explicit_ticks):
             "price": {"quote_per_base": position["current_quote_per_base"]},
             "range": {"tick_lower": position["tick_lower"], "tick_upper": position["tick_upper"]},
         }
-        sim["scenarios"] = pool_price_scenarios(scenario_raw, pool, amount)
+        _scenario_or_note(sim, scenario_raw, pool, amount)
     except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError):
         sim["assumptions"].append("Cenários de preço indisponíveis para esta prévia.")
     return {"reply": "Prontinho! 🦀 O Altside calculou a entrada com USDG na Robinhood Chain. Veja a alocação e os cenários de preço 👇", "simulation": sim,
@@ -625,3 +628,119 @@ def handle_simulation(text):
     if result is not None and not result.get("simulation") and not result["reply"].rstrip().endswith("?"):
         result["reply"] += "\n\n😊 Quer que eu te ajude a montar essa simulação?"
     return result
+
+
+SHOCK_VERB = r"(?:subir|sobe|aumentar|aumenta|valorizar|valoriza|alta|cair|cai|descer|desce|diminuir|diminui|desvalorizar|desvaloriza|queda)"
+SHOCK_NUMBER = r"(\d+(?:[.,]\d{1,2})?)\s*%"
+
+
+def parse_price_shock(text):
+    """Recognize an explicit token movement, never infer a percentage from prose."""
+    token = r"\b(USDC|WETH|ETH|WBTC|BTC|USDT|CBBTC|USDG|KHYPE|UBTC|WHYPE|SOL|HYPE)\b"
+    patterns = (
+        rf"{token}\s+(?:\w+\s+){{0,3}}?({SHOCK_VERB})\s+(?:\w+\s+){{0,2}}?{SHOCK_NUMBER}",
+        rf"\b({SHOCK_VERB})\s+(?:de\s+)?{SHOCK_NUMBER}\s+(?:n[oa]|d[oa]|para|em)\s+{token}",
+    )
+    match = re.search(patterns[0], text, re.I)
+    if match:
+        symbol, verb, amount = match.groups()
+    else:
+        match = re.search(patterns[1], text, re.I)
+        if not match:
+            return None
+        verb, amount, symbol = match.groups()
+    change = Decimal(amount.replace(",", "."))
+    if change <= 0 or change > 1000:
+        raise SimulationInputError("Informe uma variação maior que 0% e de até 1000%.")
+    fall = verb.lower() in ("cair", "cai", "descer", "desce", "diminuir", "diminui", "desvalorizar", "desvaloriza", "queda")
+    if fall and change >= 100:
+        raise SimulationInputError("Uma queda de preço precisa ser menor que 100%.")
+    return symbol.upper(), -change if fall else change
+
+
+def is_quant_pool_question(text):
+    return bool((POOL_RE.search(text) or TOKEN_RE.search(text) or re.search(r"\bsimul", text, re.I))
+                and (re.search(r"\d+(?:[.,]\d+)?\s*%", text)
+                     or re.search(r"\b(?:ganh|perd|lucro|preju[ií]zo|rentabil|quanto|valor|pre[cç]o|dobr)\w*\b", text, re.I)))
+
+
+def simulate_price_shock(basis, shock):
+    if not isinstance(basis, dict):
+        return {"reply": "Para calcular essa mudança, preciso de uma simulação de entrada com pool, capital e faixa. 📊 Qual pool, capital e faixa você quer usar?",
+                "input_request": {"kind": "pool"}}
+    pool, raw, source = basis["pool"], basis["raw"], basis["source"]
+    symbol, change = shock
+    aliases = {"ETH": "WETH", "BTC": "WBTC"}
+    if symbol not in (pool["base_symbol"], pool["quote_symbol"]):
+        alias = aliases.get(symbol)
+        if alias in (pool["base_symbol"], pool["quote_symbol"]):
+            symbol = alias
+        else:
+            raise SimulationInputError(f"{symbol} não pertence à pool {pool['pair']}. Informe uma das duas moedas da pool.")
+    try:
+        scenarios = pool_price_scenarios(raw, pool, basis["capital"], changes=(0, change), shock_symbol=symbol)
+        values = scenarios.pop("analysis")
+        pnl, initial = Decimal(values["pnl"]), Decimal(values["initial"])
+        vs_hold = Decimal(values["vs_hold"])
+    except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError) as error:
+        raise SimulationUnavailable("Não foi possível calcular essa variação com a alocação validada da pool.") from error
+    unit = pool["quote_symbol"]
+    digits = 2 if unit.upper() in ("USDC", "USDT", "USDG") else 6
+    movement = f"{'subir' if change > 0 else 'cair'} {format(abs(change), 'f')}%"
+    scenarios["caption"] = f"📊 {symbol} {movement} · valores em {unit}"
+    quote_shock = symbol == unit
+    conversion = (f"Como {symbol} é a moeda de cotação, o preço de {pool['base_symbol']} em {unit} varia no sentido inverso: "
+                  f"preço final = preço inicial ÷ {format(1 + change / 100, 'f')}.") if symbol == unit else (
+                  f"Preço de {pool['base_symbol']} em {unit}: preço final = preço inicial × {format(1 + change / 100, 'f')}.")
+    external_pct = ((Decimal(values["value"]) * (1 + change / 100) / initial - 1) * 100) if quote_shock else pnl / initial * 100
+    other = pool["base_symbol"] if quote_shock else pool["quote_symbol"]
+    source = {**source, "engine": "Alt-IA · geometria Altside", "validity": "Hipótese sobre a alocação e o preço do bloco/slot da entrada; não é previsão."}
+    sim = {"kind": "pool", "title": f"Se {symbol} {movement}", "subtitle": f"{pool['pair']} · {pool['network']}",
+           "metrics": [{"label": "Capital inicial", "value": f"{_money(initial, digits)} {unit}"},
+                       {"label": "Valor estimado", "value": f"{_money(Decimal(values['value']), digits)} {unit}"},
+                       {"label": "Ganho/perda bruta", "value": f"{'+' if pnl > 0 else '−' if pnl < 0 else ''}{_money(abs(pnl), digits)} {unit}"},
+                       {"label": "Variação do capital", "value": f"{_money(pnl / initial * 100, 2)}%"},
+                       {"label": "Em referência externa", "value": f"{_money(external_pct, 2)}%"},
+                       {"label": "Vs. manter moedas", "value": f"{'+' if vs_hold > 0 else '−' if vs_hold < 0 else ''}{_money(abs(vs_hold), digits)} {unit}"}],
+           "source": source, "scenarios": scenarios,
+           "assumptions": [conversion, f"Hipótese: {other} fica estável em uma referência externa; {symbol} {movement} nessa referência.",
+                           "A variação em referência externa é um índice percentual, sem cotação externa observada.",
+                           "Faixa e capital iguais aos da entrada simulada; posição não é rebalanceada manualmente.",
+                           "Sem taxas futuras, gas, impostos ou custo de saída; resultado ilustrativo."], "url": PUBLIC_URL,
+           "_scenario_basis": basis}
+    return {"reply": f"Calculei a hipótese sobre a última entrada em {pool['pair']}. 📊 O resultado abaixo é em {unit}, com a mesma faixa e o mesmo capital.",
+            "simulation": sim, "follow_up": f"😊 Quer testar outra variação de {symbol} nessa pool?"}
+
+
+def replay_pool_context(context):
+    """Recalculate old browser conversations that predate signed scenario context."""
+    if not isinstance(context, dict) or context.get("kind") != "pool":
+        return None
+    title, subtitle = context.get("title"), context.get("subtitle")
+    if not isinstance(title, str) or not isinstance(subtitle, str) or len(title) > 160 or len(subtitle) > 160:
+        return None
+    candidates = [pool for pool in pool_options() if title == f"Entrada {pool['pair']}" and subtitle == f"{pool['network']} · {pool['protocol']}"]
+    if len(candidates) != 1:
+        return None
+    pool = candidates[0]
+    metrics = context.get("metrics") or []
+    assumptions = context.get("assumptions") or []
+    if not isinstance(metrics, list) or not isinstance(assumptions, list) or len(metrics) > 6 or len(assumptions) > 5:
+        return None
+    capital_value = next((item.get("value") for item in metrics if isinstance(item, dict) and item.get("label") == "Capital"), None)
+    if not isinstance(capital_value, str):
+        return None
+    capital = re.fullmatch(r"(\d+(?:[.,]\d{1,18})?) " + re.escape(pool["quote_symbol"]), capital_value)
+    range_label = next((item for item in assumptions if isinstance(item, str) and item.startswith("Faixa: ")), "")
+    width = re.fullmatch(r"Faixa: (\d{2,6}) ticks", range_label)
+    explicit = re.fullmatch(r"Faixa: (-?\d{1,6}) a (-?\d{1,6}) ticks", range_label)
+    if not capital or not (width or explicit):
+        return None
+    ticks = int(width.group(1)) if width else int(explicit.group(2)) - int(explicit.group(1))
+    slippage_label = next((item for item in assumptions if isinstance(item, str) and item.startswith("Slippage")), "")
+    slip = re.search(r"(\d+(?:[.,]\d+)?)%", slippage_label)
+    bps = int(Decimal(slip.group(1).replace(",", ".")) * 100) if slip else 20
+    request = {"kind": "pool", "pool_id": pool["id"], "capital_quote": capital.group(1), "range_ticks": ticks, "slippage_bps": bps}
+    if explicit:
+        request.update({"tick_lower": int(explicit.group(1)), "tick_upper": int(explicit.group(2))})
+    return simulate_pool_request(request)

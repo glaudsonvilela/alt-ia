@@ -1766,6 +1766,16 @@ function startMascotPhysics() {
     letters.forEach((letter, letterIndex) => letter.classList.toggle('is-lit', letterIndex === index));
     if (isAgentMode()) {
       const burned = letters[index];
+      mascot.querySelectorAll('.agent-smoke').forEach((puff, puffIndex) => {
+        const spread = (puffIndex + .5) / 4;
+        puff.style.setProperty('--smoke-x', `${Math.round(10 + spread * 80 + (Math.random() - .5) * 12)}%`);
+        puff.style.setProperty('--smoke-y', `${Math.round(-8 + Math.random() * 13)}%`);
+        puff.style.setProperty('--smoke-size', `${(11 + Math.random() * 8).toFixed(1)}px`);
+        puff.style.setProperty('--smoke-drift', `${Math.round((Math.random() - .5) * 44)}px`);
+        puff.style.setProperty('--smoke-rise', `-${Math.round(46 + Math.random() * 36)}px`);
+        puff.style.setProperty('--smoke-grow', `${(1.5 + Math.random() * .8).toFixed(2)}`);
+        puff.style.setProperty('--smoke-time', `${(1.3 + Math.random() * .8).toFixed(2)}s`);
+      });
       burned.classList.remove('is-burnt');
       void burned.offsetWidth;
       burned.classList.add('is-burnt');

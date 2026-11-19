@@ -110,6 +110,18 @@ class AgentBrowserTests(unittest.TestCase):
         self.assertEqual(worker.call_count, 1)
         search.assert_called_once_with("slipknot playlist youtube", "research")
 
+    def test_repeated_search_for_music_still_starts_player(self):
+        blank = {"url": "about:blank", "title": "", "text": "", "elements": []}
+        sources = [{"title": "Slipknot Playlist", "url": "https://www.youtube.com/playlist?list=PLRknjXeAnCio"}]
+        with patch.object(agent_browser, "worker_call", return_value=blank) as worker, \
+             patch.object(agent_browser, "search_web", return_value={"sources": sources}) as search, \
+             patch.object(agent_browser, "choose_action", return_value={"action": "search", "query": "Slipknot playlist"}) as model:
+            result = agent_browser.run("abre playlist slipknot", "a" * 48, "nvapi-test")
+        self.assertEqual(result["video"]["kind"], "playlist")
+        self.assertEqual(worker.call_count, 1)
+        self.assertEqual(search.call_count, 1)
+        self.assertEqual(model.call_count, 1)
+
     def test_ai_can_start_player_from_natural_music_request(self):
         blank = {"url": "about:blank", "title": "", "text": "", "elements": []}
         playlist_url = "https://www.youtube.com/playlist?list=PLxA687tYuMWjZQiHa3liNe3z-zcJxikvP"

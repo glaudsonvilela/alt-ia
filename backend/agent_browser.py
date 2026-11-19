@@ -75,16 +75,16 @@ def google_verification(snapshot):
 
 
 def requested_video(task):
-    return bool(re.search(r"\b(?:assistir|assista|tocar|toca|toque|reproduzir|reproduza|ver|abrir|abra|abre|acesse|quero)\b.{0,65}\b(?:v[ií]deo|youtube|m[uú]sica|clipe|playlist)\b", task, re.I))
+    return bool(re.search(r"\b(?:assistir|assista|tocar|toca|toque|reproduzir|reproduza|ver|abrir|abra|abre|acesse|quero|colocar|coloca|coloque|ouvir|escutar)\b.{0,65}\b(?:v[ií]deo|youtube|m[uú]sica|clipe|playlist|som|faixa)\b", task, re.I))
 
 
 def media_search_query(task):
     words = re.findall(r"[\wÀ-ÿ-]+", task)
-    filler = {"abra", "abre", "abrir", "acesse", "acessar", "assista", "assistir", "coloque", "colocar",
-              "quero", "preciso", "toque", "tocar", "reproduza", "reproduzir", "encontre",
+    filler = {"abra", "abre", "abrir", "acesse", "acessar", "assista", "assistir", "coloque", "coloca", "colocar",
+              "quero", "preciso", "toque", "tocar", "reproduza", "reproduzir", "encontre", "ouvir", "escutar",
               "uma", "um", "o", "a", "os", "as", "de", "do", "da", "dos", "das", "no", "na",
               "para", "pra", "por", "mim", "me", "uma", "boa", "bom", "banda", "cantor",
-              "artista", "vídeo", "video", "clipe", "youtube", "que", "eu", "voce", "você"}
+              "artista", "vídeo", "video", "clipe", "som", "faixa", "youtube", "que", "eu", "voce", "você"}
     terms = [word for word in words if word.casefold() not in filler]
     if not terms:
         return ""
@@ -118,6 +118,16 @@ def selected_media(video, steps, commentary=""):
     reply = str(commentary or "").strip()[:180] or fallback
     return {"reply": reply,
             "mode": "agent", "steps": steps, "url": video["url"], "video": video}
+
+
+def playable_search_result(task, sources):
+    terms = [word.casefold() for word in media_search_query(task).split()
+             if word.casefold() not in ("playlist", "youtube")]
+    for source in sources:
+        video = youtube_media(source.get("url", ""), source.get("title", ""), task)
+        if video and (not terms or any(term in video["title"].casefold() for term in terms)):
+            return video
+    return None
 
 
 def youtube_video(url, title=""):
@@ -220,12 +230,16 @@ def run(task, session_id, api_key):
                 steps.append(f"Pesquisou: {query}")
             except (OSError, ValueError, KeyError):
                 pass
-    for _ in range(8):
+    for attempt in range(8):
         if google_verification(snapshot):
             steps.append("O Google bloqueou a busca automatizada; vou usar o serviço de pesquisa da Alt-IA.")
             snapshot = {"url": "about:blank", "title": "", "text": "", "elements": []}
         plan = choose_action(task, snapshot, steps, api_key, search_results)
         action = plan["action"]
+        candidate = playable_search_result(task, search_results) if requested_video(task) else None
+        if candidate and (attempt >= 2 or action == "finish" or (action == "search" and searches >= 1)):
+            steps.append(f"Iniciou o player: {candidate['url']}")
+            return selected_media(candidate, steps)
         if (action == "finish" and not snapshot.get("full_read") and reads < 2
                 and snapshot.get("url", "").startswith("http")
                 and re.search(r"\b(?:resum[aoir]+|leia|ler|conte[uú]do|p[aá]gina inteira)\b", task, re.I)):
@@ -269,6 +283,8 @@ def run(task, session_id, api_key):
                 action = "search"
         if action == "search":
             if searches >= 2:
+                if candidate:
+                    return selected_media(candidate, steps)
                 return {"reply": "Não consegui encontrar um resultado confiável para esse pedido. Tente descrever o que procura com mais detalhes. 🔎",
                         "mode": "agent", "steps": steps, "url": snapshot.get("url")}
             query = str(plan.get("query") or task).strip()[:240]
@@ -338,5 +354,9 @@ def run(task, session_id, api_key):
         if next_snapshot.get("url") == snapshot.get("url") and next_snapshot.get("text") == snapshot.get("text") and action == "click":
             steps.append("O clique não mudou o conteúdo visível; escolha outra ação.")
         snapshot = next_snapshot
+    candidate = playable_search_result(task, search_results) if requested_video(task) else None
+    if candidate:
+        steps.append(f"Iniciou o player: {candidate['url']}")
+        return selected_media(candidate, steps)
     return {"reply": f"Explorei a página, mas preciso de mais um passo para concluir. 🔎 Estou em {snapshot.get('url', 'uma página aberta')}. Quer que eu continue?",
             "mode": "agent", "steps": steps, "url": snapshot.get("url")}

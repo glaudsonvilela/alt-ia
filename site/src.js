@@ -71,7 +71,8 @@ function safeSimulation(value) {
     : null;
   return {
     kind: value.kind, title: clean(value.title), subtitle: clean(value.subtitle), metrics, scenarios,
-    source: { engine: isHistorical ? 'Alt-IA · dados Altside' : 'Altside · Rust', kind: isHistorical ? 'historical_candles' : 'live', block_number: isHistorical ? null : value.source.block_number,
+    source: { engine: isHistorical ? 'Alt-IA · dados Altside' : clean(value.source.engine, 60), kind: isHistorical ? 'historical_candles' : 'live', block_number: isHistorical ? null : value.source.block_number,
+      source_label: value.source.source_label === 'Slot' ? 'Slot' : 'Bloco',
       period_start: isHistorical ? value.source.period_start : null, period_end: isHistorical ? value.source.period_end : null,
       block_timestamp: Number.isSafeInteger(value.source.block_timestamp) ? value.source.block_timestamp : null,
       captured_at: clean(value.source.captured_at, 40), validity: clean(value.source.validity, 180) },
@@ -219,7 +220,8 @@ function createSimulationCard(simulation) {
   card.setAttribute('aria-label', simulation.kind === 'historical_pool' ? 'Reconstituição com dados históricos do Altside' : 'Prévia calculada pelo Altside');
   const eyebrow = document.createElement('span');
   eyebrow.className = 'simulation-eyebrow';
-  eyebrow.textContent = simulation.kind === 'historical_pool' ? 'HISTÓRICO · DADOS ALTSIDE' : 'PRÉVIA · MOTOR ALTSIDE';
+  eyebrow.textContent = simulation.kind === 'historical_pool' ? 'HISTÓRICO · DADOS ALTSIDE'
+    : simulation.source.engine.startsWith('Alt-IA') ? 'ESTIMATIVA · PREÇO ALTSIDE' : 'PRÉVIA · MOTOR ALTSIDE';
   const title = document.createElement('h3');
   title.textContent = simulation.title;
   const subtitle = document.createElement('p');
@@ -276,7 +278,7 @@ function createSimulationCard(simulation) {
   const block = document.createElement('span');
   block.textContent = simulation.source.kind === 'historical_candles'
     ? `Velas ${new Date(simulation.source.period_start * 1000).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}–${new Date(simulation.source.period_end * 1000).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}`
-    : `Bloco #${simulation.source.block_number.toLocaleString('pt-BR')}`;
+    : `${simulation.source.source_label} #${simulation.source.block_number.toLocaleString('pt-BR')}`;
   const captured = document.createElement('time');
   const capturedDate = new Date(simulation.source.captured_at);
   captured.textContent = Number.isNaN(capturedDate.getTime()) ? 'Captura recente' : `Capturado ${capturedDate.toLocaleString('pt-BR')}`;

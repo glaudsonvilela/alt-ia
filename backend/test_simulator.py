@@ -53,8 +53,62 @@ class SimulatorTests(unittest.TestCase):
                   "network": {"name": "Solana Mainnet"}, "capabilities": {"simulation_engine": "orca_entry_preview"}}
         with patch.object(simulator, "_json_request", return_value={"pools": [robinhood, hyper, solana]}):
             options = simulator.pool_options()
-        self.assertEqual([item["simulation_available"] for item in options], [True, False, False])
-        self.assertEqual([item["chart_available"] for item in options], [True, True, False])
+        self.assertEqual([item["simulation_available"] for item in options], [True, True, True])
+        self.assertEqual([item["chart_available"] for item in options], [True, True, True])
+
+    def test_sol_usdc_chart_uses_verified_orca_route(self):
+        solana = {**CATALOG["pools"][0], "id": "svm:solana:orca:whirlpool:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
+                  "base_token": {"symbol": "SOL", "address": "sol"}, "quote_token": {"symbol": "USDC", "address": "usdc"},
+                  "capabilities": {"simulation_engine": "orca_entry_preview"}}
+        chart = {**CHART, "schema": "altside_orca_chart_v1", "pool_id": "orca"}
+        with patch.object(simulator, "_json_request", side_effect=[{"pools": [solana]}, chart]) as request:
+            result = simulator.pool_chart(solana["id"], "1h")
+        self.assertEqual(result["pool_id"], solana["id"])
+        self.assertEqual(request.call_args.args[0], "/markets/orca-chart?interval=1h")
+
+    def test_legacy_pool_calls_read_only_rust_route(self):
+        pool = {**CATALOG["pools"][0], "id": "ethereum:uniswap-v3:weth-usdc-005",
+                "capabilities": {"simulation_engine": "legacy_weth_usdc"}}
+        raw = {"simulation": "uniswap_v3_equal_value_position", "stateless": True, "persisted": False,
+               "source": {"canonical": True, "block_number": 123},
+               "market": {"weth_price_usdc_x6": "2000000000"},
+               "position": {"weth_used_raw": "250000000000000000", "usdc_used_raw": "499000000",
+                            "capital_unused_usdc_x6": "1000000", "tick_lower": -204000, "tick_upper": -202800}}
+        with patch.object(simulator, "_json_request", side_effect=[{"pools": [pool]}, raw]) as request:
+            result = simulator.simulate_pool_request({"kind": "pool", "pool_id": pool["id"],
+                "capital_quote": "1000", "range_ticks": 1200, "slippage_bps": 20})
+        self.assertEqual(request.call_args.args, ("/simulate/pool", {"capital_usdc": 1000, "range_ticks": 600}))
+        self.assertEqual(result["simulation"]["metrics"][1]["value"], "0.25 WETH")
+
+    def test_hyperevm_analytical_preview_is_labeled_as_estimate(self):
+        pool = {**CATALOG["pools"][0], "id": "hyperevm:project-x-v3:khype-usdc-030",
+                "capabilities": {"simulation_engine": "hyperevm_analytical_preview"}}
+        snapshot = {**SNAPSHOT, "pool_id": pool["id"], "price": {"status": "available", "quote_per_base": "1776.5"}}
+        with patch.object(simulator, "_json_request", side_effect=[{"pools": [pool]}, snapshot]):
+            result = simulator.simulate_pool_request({"kind": "pool", "pool_id": pool["id"],
+                "capital_quote": "1000", "range_ticks": 1200, "slippage_bps": 20})
+        self.assertEqual(result["simulation"]["source"]["engine"], "Alt-IA · preço Altside")
+        self.assertEqual(len(result["simulation"]["scenarios"]["rows"]), 5)
+
+    def test_registered_orca_pool_uses_read_only_budget_and_slot(self):
+        pool = {**CATALOG["pools"][0], "id": "svm:solana:orca:whirlpool:31KrYUDzgEQhEgr1JSNVfHAknWACcF97CtUaU8enKQsy",
+                "base_token": {"symbol": "HYPE", "address": "hype"}, "quote_token": {"symbol": "SOL", "address": "sol"},
+                "token0": {"address": "sol", "decimals": 9}, "token1": {"address": "hype", "decimals": 9},
+                "tick_spacing": 64, "capabilities": {"simulation_engine": "orca_entry_preview"}}
+        snapshot = {**SNAPSHOT, "pool_id": pool["id"], "source": {"canonical": True, "slot": 500},
+                    "state": {"tick": 939}, "price": {"status": "available", "quote_per_base": "0.9"}}
+        budget = {"pool_id": pool["id"], "read_only": True, "writes_performed": False,
+                  "commitment": "confirmed", "slot": 501, "age_ms": 1000,
+                  "budget": {"capital_raw": "1000000000", "capital_symbol": "SOL",
+                             "tick_lower": 320, "tick_upper": 1600,
+                             "deposit_a_raw": "510000000", "deposit_b_raw": "530000000",
+                             "residual_a_raw": "1000000", "residual_b_raw": "2000000"}}
+        with patch.object(simulator, "_json_request", side_effect=[{"pools": [pool]}, snapshot, budget]) as request:
+            result = simulator.simulate_pool_request({"kind": "pool", "pool_id": pool["id"],
+                "capital_quote": "1", "range_ticks": 1200, "slippage_bps": 20})
+        self.assertIn("/solana/orca/pools/hype-sol/budget-preview?capital_raw=1000000000", request.call_args.args[0])
+        self.assertEqual(result["simulation"]["source"]["source_label"], "Slot")
+        self.assertEqual(len(result["simulation"]["scenarios"]["rows"]), 5)
 
     def test_historical_prompt_opens_historical_configuration(self):
         with patch.object(simulator, "_json_request", return_value=CATALOG):

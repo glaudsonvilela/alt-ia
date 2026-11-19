@@ -43,7 +43,8 @@ def pool_price_scenarios(raw, pool, capital):
         base = Decimal(str(allocation["base_required"]))
         quote = Decimal(str(allocation["quote_required"]))
         unused = Decimal(str(allocation["unused_quote"]))
-        if any(not value.is_finite() or value < 0 for value in (base, quote, unused)):
+        residual_base = Decimal(str(raw.get("residual_base", "0")))
+        if any(not value.is_finite() or value < 0 for value in (base, quote, unused, residual_base)):
             raise ValueError("invalid allocation")
         tick_lower = range_data["tick_lower"]
         tick_upper = range_data["tick_upper"]
@@ -85,14 +86,19 @@ def pool_price_scenarios(raw, pool, capital):
             raise ValueError("invalid position")
         liquidity = used / divisor
         # The canonical allocation should reconcile with the displayed capital.
-        if abs((used + unused) - initial) > max(Decimal("0.02"), initial * Decimal("0.001")):
+        difference = initial - (used + unused + residual_base * entry)
+        tolerance = max(Decimal("0.02"), initial * Decimal("0.001"))
+        if raw.get("entry_costs_included") is True:
+            if difference < -max(Decimal("0.02"), initial * Decimal("0.02")) or difference > initial * Decimal("0.10"):
+                raise ValueError("allocation does not reconcile")
+        elif abs(difference) > tolerance:
             raise ValueError("allocation does not reconcile")
 
         rows = []
         for change in CHANGES:
             target = entry * (Decimal(100 + change) / 100)
             base_unit, quote_unit = unit_amounts(target)
-            value = liquidity * (base_unit * target + quote_unit) + unused
+            value = liquidity * (base_unit * target + quote_unit) + unused + residual_base * target
             pnl = value - initial
             rows.append({
                 "label": "Preço atual" if change == 0 else f"{'Alta' if change > 0 else 'Queda'} {abs(change)}%",
@@ -105,5 +111,5 @@ def pool_price_scenarios(raw, pool, capital):
             "unit": pool["quote_symbol"],
             "base_symbol": pool["base_symbol"],
             "rows": rows,
-            "note": "Cenários instantâneos de preço, sem taxas futuras da pool, gás, slippage efetivo ou impostos. Não são previsão nem cotação de saída.",
+            "note": "Cenários instantâneos de preço, sem taxas futuras da pool, gás ou impostos. Custos de entrada observados aparecem no valor inicial quando disponíveis; não são previsão nem cotação de saída." if raw.get("entry_costs_included") is True else "Cenários instantâneos de preço, sem taxas futuras da pool, gás, slippage efetivo ou impostos. Não são previsão nem cotação de saída.",
         }

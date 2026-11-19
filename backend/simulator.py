@@ -7,7 +7,7 @@ import re
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, localcontext
 from urllib.parse import quote
 from scenarios import pool_price_scenarios
 from historical import PERIOD_INTERVAL, replay_pool_history
@@ -91,17 +91,18 @@ def _source(raw, kind):
     source = raw.get("source") or {}
     if raw.get("read_only") is not True or source.get("canonical") is not True:
         raise SimulationUnavailable("O motor não confirmou uma prévia canônica de leitura.")
-    block = source.get("block_number")
+    block = source.get("slot", source.get("block_number"))
     if not isinstance(block, int) or block <= 0:
         raise SimulationUnavailable("O motor não informou um bloco de origem válido.")
     captured = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return {
-        "engine": "Altside · Rust",
+        "engine": raw.get("display_engine", "Altside · Rust"),
         "block_number": block,
+        "source_label": "Slot" if "slot" in source else "Bloco",
         "block_timestamp": source.get("block_timestamp") if kind == "pool" else None,
         "captured_at": captured,
         "canonical": True,
-        "validity": "Prévia válida para o bloco consultado; preços e liquidez podem mudar.",
+        "validity": "Prévia válida para o estado consultado; preços e liquidez podem mudar.",
     }
 
 
@@ -110,7 +111,7 @@ def pool_options():
     options = []
     for pool in catalog.get("pools", []):
         engine = pool.get("capabilities", {}).get("simulation_engine")
-        if engine not in ("canonical_entry_preview", "robinhood_usdg_entry_preview", "hyperevm_analytical_preview", "orca_entry_preview"):
+        if engine not in ("canonical_entry_preview", "robinhood_usdg_entry_preview", "hyperevm_analytical_preview", "orca_entry_preview", "legacy_weth_usdc"):
             continue
         try:
             option = {
@@ -124,8 +125,8 @@ def pool_options():
                 "base_is_token0": pool["base_token"]["address"].lower() == pool["token0"]["address"].lower(),
                 "token0_decimals": int(pool["token0"]["decimals"]),
                 "token1_decimals": int(pool["token1"]["decimals"]),
-                "simulation_available": engine in ("canonical_entry_preview", "robinhood_usdg_entry_preview"),
-                "chart_available": engine != "orca_entry_preview",
+                "simulation_available": True,
+                "chart_available": True,
                 "simulation_engine": engine,
             }
         except (KeyError, TypeError, ValueError):
@@ -144,8 +145,12 @@ def pool_chart(pool_id, interval):
         raise SimulationInputError("Pool indisponível para esta prévia.")
     if not pool["chart_available"]:
         raise SimulationUnavailable("O histórico de velas desta rede ainda não está conectado ao Altside.")
-    raw = _json_request(f"/markets/pool-chart?pool_id={quote(pool_id, safe='')}&interval={interval}")
-    if (raw.get("schema") != "altside_pool_chart_v1" or raw.get("pool_id") != pool_id
+    sol_usdc = pool["simulation_engine"] == "orca_entry_preview" and pool["base_symbol"] == "SOL" and pool["quote_symbol"] == "USDC"
+    path = f"/markets/orca-chart?interval={interval}" if sol_usdc else f"/markets/pool-chart?pool_id={quote(pool_id, safe='')}&interval={interval}"
+    raw = _json_request(path)
+    expected_schema = "altside_orca_chart_v1" if sol_usdc else "altside_pool_chart_v1"
+    expected_id = "orca" if sol_usdc else pool_id
+    if (raw.get("schema") != expected_schema or raw.get("pool_id") != expected_id
             or raw.get("interval") != interval or raw.get("source") != "geckoterminal"
             or not isinstance(raw.get("candles"), list) or not 1 <= len(raw["candles"]) <= 300):
         raise SimulationUnavailable("O histórico desta pool ainda está sendo preparado.")
@@ -165,8 +170,8 @@ def pool_chart(pool_id, interval):
             "stale": raw.get("stale") is True, "fetched_at_unix": raw.get("fetched_at_unix"), "source": "GeckoTerminal via Altside"}
 
 
-def pool_snapshot(pool_id):
-    pool = next((item for item in pool_options() if item["id"] == pool_id), None)
+def pool_snapshot(pool_id, known_pool=None):
+    pool = known_pool if known_pool is not None and known_pool["id"] == pool_id else next((item for item in pool_options() if item["id"] == pool_id), None)
     if pool is None:
         raise SimulationInputError("Pool indisponível para esta prévia.")
     raw = _json_request(f"/markets/pools/{quote(pool_id, safe=':')}/snapshot")
@@ -190,8 +195,15 @@ def pool_snapshot(pool_id):
 def _run_pool(pool, amount, range_ticks, bps, explicit_ticks=None):
     if not pool["simulation_available"]:
         raise SimulationUnavailable(f"O motor Altside ainda não oferece prévia de entrada para {pool['network']}.")
-    if pool["simulation_engine"] == "robinhood_usdg_entry_preview":
+    engine = pool["simulation_engine"]
+    if engine == "robinhood_usdg_entry_preview":
         return _run_robinhood_pool(pool, amount, range_ticks, bps, explicit_ticks)
+    if engine == "legacy_weth_usdc":
+        return _run_legacy_pool(pool, amount, range_ticks, bps, explicit_ticks)
+    if engine == "hyperevm_analytical_preview":
+        return _run_analytical_pool(pool, amount, range_ticks, bps, explicit_ticks)
+    if engine == "orca_entry_preview":
+        return _run_orca_pool(pool, amount, range_ticks, bps, explicit_ticks)
     if range_ticks < pool["tick_spacing"] * 2 or range_ticks > 50000:
         raise SimulationInputError(f"A faixa desta pool precisa ter entre {pool['tick_spacing'] * 2} e 50000 ticks.")
     payload = {"capital_quote": amount, "range_ticks": range_ticks, "slippage_bps": bps}
@@ -225,6 +237,176 @@ def _run_pool(pool, amount, range_ticks, bps, explicit_ticks=None):
         sim["assumptions"].append("Cenários de preço indisponíveis para esta prévia.")
     return {"reply": "Prontinho! 🦀 O motor Altside calculou sua entrada. Veja a alocação e, quando disponível, quanto o capital mudaria em cenários de preço 👇", "simulation": sim,
             "follow_up": f"😊 Quer comparar outra faixa ou outro capital para {base_symbol}?"}
+
+
+def _range_for_snapshot(pool, current_tick, width, explicit_ticks, limit=887272):
+    spacing = pool["tick_spacing"]
+    if explicit_ticks is None:
+        lower = (current_tick - width // 2) // spacing * spacing
+        upper = -(-(current_tick + width // 2) // spacing) * spacing
+    else:
+        lower, upper = explicit_ticks
+    if not -limit <= lower < current_tick < upper <= limit or lower % spacing or upper % spacing or upper - lower > 50000:
+        raise SimulationInputError("A faixa precisa conter o preço atual e respeitar os ticks desta pool.")
+    return lower, upper
+
+
+def _scenario_or_note(sim, raw, pool, amount):
+    try:
+        sim["scenarios"] = pool_price_scenarios(raw, pool, amount)
+    except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError):
+        sim["assumptions"].append("Cenários de preço indisponíveis para esta prévia.")
+
+
+def _run_legacy_pool(pool, amount, range_ticks, bps, explicit_ticks):
+    if Decimal(amount) != Decimal(amount).to_integral_value() or Decimal(amount) > 1000000:
+        raise SimulationInputError("Nesta pool, informe capital inteiro em USDC, até 1 milhão.")
+    payload = {"capital_usdc": int(Decimal(amount)), "range_ticks": max(1, range_ticks // 2)}
+    if explicit_ticks is not None:
+        payload.update({"tick_lower": explicit_ticks[0], "tick_upper": explicit_ticks[1]})
+    raw = _json_request("/simulate/pool", payload)
+    source, position, market = raw.get("source") or {}, raw.get("position") or {}, raw.get("market") or {}
+    if (raw.get("simulation") != "uniswap_v3_equal_value_position" or raw.get("stateless") is not True
+            or raw.get("persisted") is not False or source.get("canonical") is not True
+            or type(source.get("block_number")) is not int or source["block_number"] <= 0):
+        raise SimulationUnavailable("O motor retornou uma prévia antiga inválida.")
+    try:
+        base = Decimal(position["weth_used_raw"]) / Decimal(10**18)
+        quote_used = Decimal(position["usdc_used_raw"]) / Decimal(10**6)
+        unused = Decimal(position["capital_unused_usdc_x6"]) / Decimal(10**6)
+        price = Decimal(market["weth_price_usdc_x6"]) / Decimal(10**6)
+        lower, upper = position["tick_lower"], position["tick_upper"]
+        if any(x < 0 for x in (base, quote_used, unused)) or price <= 0 or type(lower) is not int or type(upper) is not int:
+            raise ValueError("invalid legacy allocation")
+    except (KeyError, TypeError, InvalidOperation, ValueError) as error:
+        raise SimulationUnavailable("O motor retornou uma alocação incompleta.") from error
+    sim = {"kind": "pool", "title": f"Entrada {pool['pair']}", "subtitle": f"{pool['network']} · {pool['protocol']}",
+           "metrics": [{"label": "Capital", "value": f"{amount} USDC"},
+                       {"label": "WETH necessário", "value": f"{base:f} WETH"},
+                       {"label": "USDC necessário", "value": f"{quote_used:f} USDC"},
+                       {"label": "Capital não usado", "value": f"{unused:f} USDC"}],
+           "source": _source({"read_only": True, "source": source}, "pool"),
+           "assumptions": [f"Faixa: {lower} a {upper} ticks", "Modelo legado: capital inteiro em USDC; slippage e gas não incluídos."], "url": PUBLIC_URL}
+    synthetic = {"allocation": {"formatted": {"base_required": str(base), "quote_required": str(quote_used), "unused_quote": str(unused)}},
+                 "price": {"quote_per_base": str(price)}, "range": {"tick_lower": lower, "tick_upper": upper}}
+    _scenario_or_note(sim, synthetic, pool, amount)
+    return {"reply": "Prontinho! 🦀 O motor Altside calculou a pool WETH/USDC na Ethereum. Veja a alocação e os cenários 👇",
+            "simulation": sim, "follow_up": "😊 Quer testar outra faixa ou outro capital em USDC?"}
+
+
+def _run_analytical_pool(pool, amount, range_ticks, bps, explicit_ticks):
+    snapshot = pool_snapshot(pool["id"], pool)
+    lower, upper = _range_for_snapshot(pool, snapshot["current_tick"], range_ticks, explicit_ticks)
+    with localcontext() as ctx:
+        ctx.prec = 60
+        capital, price = Decimal(amount), Decimal(str(snapshot["price"]["quote_per_base"]))
+        if not price.is_finite() or price <= 0:
+            raise SimulationUnavailable("O preço atual desta pool não está disponível.")
+        scale = Decimal(10) ** (pool["token0_decimals"] - pool["token1_decimals"])
+        def tick_price(tick):
+            native = Decimal("1.0001") ** tick * scale
+            return native if pool["base_is_token0"] else 1 / native
+        floor, ceiling = sorted((tick_price(lower), tick_price(upper)))
+        if not floor < price < ceiling:
+            raise SimulationUnavailable("O preço atual ficou fora da faixa escolhida. Atualize o gráfico.")
+        root, root_floor, root_ceiling = price.sqrt(), floor.sqrt(), ceiling.sqrt()
+        base_unit = (root_ceiling - root) / (root * root_ceiling)
+        quote_unit = root - root_floor
+        liquidity = capital / (base_unit * price + quote_unit)
+        base = (liquidity * base_unit).quantize(Decimal(1).scaleb(-pool["token0_decimals" if pool["base_is_token0"] else "token1_decimals"]), rounding=ROUND_DOWN)
+        quote_used = (liquidity * quote_unit).quantize(Decimal(1).scaleb(-pool["token1_decimals" if pool["base_is_token0"] else "token0_decimals"]), rounding=ROUND_DOWN)
+        unused = capital - base * price - quote_used
+        if unused < 0 or unused > capital * Decimal("0.001"):
+            raise SimulationUnavailable("A alocação analítica não fechou com o capital informado.")
+    source = {"canonical": True, "block_number": snapshot["block_number"]}
+    sim = {"kind": "pool", "title": f"Entrada {pool['pair']}", "subtitle": f"{pool['network']} · {pool['protocol']}",
+           "metrics": [{"label": "Capital", "value": f"{amount} {pool['quote_symbol']}"},
+                       {"label": f"{pool['base_symbol']} estimado", "value": f"{base:f} {pool['base_symbol']}"},
+                       {"label": f"{pool['quote_symbol']} estimado", "value": f"{quote_used:f} {pool['quote_symbol']}"},
+                       {"label": "Capital não usado", "value": f"{unused:.8f} {pool['quote_symbol']}"}],
+           "source": _source({"read_only": True, "source": source, "display_engine": "Alt-IA · preço Altside"}, "pool"),
+           "assumptions": [f"Faixa: {lower} a {upper} ticks", "Alocação geométrica indicativa com preço do bloco; não é cotação de swap ou execução.",
+                           "Slippage, taxas de entrada, gas e rendimentos futuros não incluídos."], "url": PUBLIC_URL}
+    synthetic = {"allocation": {"formatted": {"base_required": str(base), "quote_required": str(quote_used), "unused_quote": str(unused)}},
+                 "price": {"quote_per_base": str(price)}, "range": {"tick_lower": lower, "tick_upper": upper}}
+    _scenario_or_note(sim, synthetic, pool, amount)
+    return {"reply": "Aqui está a estimativa analítica da pool na HyperEVM. 📊 Ela usa o preço observado pelo Altside e mostra como o valor mudaria nos cenários 👇",
+            "simulation": sim, "follow_up": f"😊 Quer comparar outra faixa para {pool['base_symbol']}?"}
+
+
+def _run_orca_pool(pool, amount, range_ticks, bps, explicit_ticks):
+    capital = Decimal(amount)
+    decimals = pool["token0_decimals"] if not pool["base_is_token0"] else pool["token1_decimals"]
+    if capital.as_tuple().exponent < -decimals:
+        raise SimulationInputError(f"Informe no máximo {decimals} casas decimais em {pool['quote_symbol']}.")
+    sol_usdc = pool["base_symbol"] == "SOL" and pool["quote_symbol"] == "USDC"
+    snapshot = pool_snapshot(pool["id"], pool)
+    if sol_usdc:
+        path = f"/solana/orca/pools/sol-usdc/budget-preview?capital_usdc={amount}&range_ticks={range_ticks}&slippage_bps={bps}"
+        if explicit_ticks:
+            path += f"&tick_lower={explicit_ticks[0]}&tick_upper={explicit_ticks[1]}"
+        raw = _json_request(path)
+        quote_data = raw.get("quote") or {}
+        allocation = quote_data.get("liquidity") or {}
+        if (raw.get("schema") != "altside_solana_orca_budget_preview_v1" or raw.get("pool_id") != pool["id"]
+                or raw.get("read_only") is not True or raw.get("writes_performed") is not False
+                or raw.get("commitment") != "confirmed" or type(raw.get("cache_slot")) is not int
+                or raw["cache_slot"] <= 0 or type(raw.get("cache_age_ms")) is not int
+                or raw["cache_age_ms"] > 15000 or quote_data.get("capital_usdc_raw") != int(capital * 10**6)):
+            raise SimulationUnavailable("A prévia Orca não confirmou dados de leitura válidos.")
+        lower, upper = allocation.get("tick_lower"), allocation.get("tick_upper")
+        base_raw, quote_raw = allocation.get("sol_est_raw"), allocation.get("usdc_est_raw")
+        residual_base_raw, residual_quote_raw = quote_data.get("residual_sol_min_raw"), quote_data.get("unallocated_usdc_raw")
+        source = {"canonical": True, "slot": raw["cache_slot"]}
+    else:
+        suffix = "hype-sol" if pool["base_symbol"] == "HYPE" else "cbbtc-sol"
+        lower, upper = _range_for_snapshot(pool, snapshot["current_tick"], range_ticks, explicit_ticks, 443636)
+        capital_raw = int(capital * (10 ** decimals))
+        path = f"/solana/orca/pools/{suffix}/budget-preview?capital_raw={capital_raw}&tick_lower={lower}&tick_upper={upper}&slippage_bps={bps}"
+        raw = _json_request(path)
+        allocation = raw.get("budget") or {}
+        if (raw.get("pool_id") != pool["id"] or raw.get("read_only") is not True
+                or raw.get("writes_performed") is not False or raw.get("commitment") != "confirmed"
+                or type(raw.get("slot")) is not int or raw["slot"] <= 0
+                or type(raw.get("age_ms")) is not int or raw["age_ms"] > 15000):
+            raise SimulationUnavailable("A prévia Orca não confirmou dados de leitura válidos.")
+        if (allocation.get("capital_raw") != str(capital_raw) or allocation.get("capital_symbol") != pool["quote_symbol"]
+                or allocation.get("tick_lower") != lower or allocation.get("tick_upper") != upper):
+            raise SimulationUnavailable("O capital retornado pela Orca não corresponde ao pedido.")
+        base_raw, quote_raw = allocation.get("deposit_b_raw"), allocation.get("deposit_a_raw")
+        residual_base_raw, residual_quote_raw = allocation.get("residual_b_raw"), allocation.get("residual_a_raw")
+        source = {"canonical": True, "slot": raw["slot"]}
+    if (type(lower) is not int or type(upper) is not int or lower >= upper
+            or (explicit_ticks is not None and (lower, upper) != explicit_ticks)):
+        raise SimulationUnavailable("A Orca retornou uma faixa diferente da solicitada.")
+    try:
+        base_decimals = pool["token0_decimals"] if pool["base_is_token0"] else pool["token1_decimals"]
+        base = Decimal(str(base_raw)) / (10 ** base_decimals)
+        quote_used = Decimal(str(quote_raw)) / (10 ** decimals)
+        residual_base = Decimal(str(residual_base_raw)) / (10 ** base_decimals)
+        residual_quote = Decimal(str(residual_quote_raw)) / (10 ** decimals)
+        if any(x < 0 for x in (base, quote_used, residual_base, residual_quote)):
+            raise ValueError("invalid orca allocation")
+    except (InvalidOperation, TypeError, ValueError) as error:
+        raise SimulationUnavailable("A Orca retornou uma alocação incompleta.") from error
+    price = Decimal(str(snapshot["price"]["quote_per_base"]))
+    if price <= 0 or not price.is_finite():
+        raise SimulationUnavailable("O preço atual desta pool não está disponível.")
+    sim = {"kind": "pool", "title": f"Entrada {pool['pair']}", "subtitle": f"{pool['network']} · {pool['protocol']}",
+           "metrics": [{"label": "Capital", "value": f"{amount} {pool['quote_symbol']}"},
+                       {"label": f"{pool['base_symbol']} estimado", "value": f"{base:f} {pool['base_symbol']}"},
+                       {"label": f"{pool['quote_symbol']} estimado", "value": f"{quote_used:f} {pool['quote_symbol']}"},
+                       {"label": "Saldo residual", "value": f"{residual_quote:f} {pool['quote_symbol']} + {residual_base:f} {pool['base_symbol']}"}],
+           "source": _source({"read_only": True, "source": source}, "pool"),
+           "assumptions": [f"Faixa: {lower} a {upper} ticks", f"Slippage máximo: {bps / 100:g}%",
+                           "Orçamento indicativo da Orca; swap, preço e liquidez podem mudar antes de executar.",
+                           "Gas/rent e taxas futuras de LP não incluídos."], "url": PUBLIC_URL}
+    synthetic = {"allocation": {"formatted": {"base_required": str(base), "quote_required": str(quote_used), "unused_quote": str(residual_quote)}},
+                 "price": {"quote_per_base": str(price)}, "range": {"tick_lower": lower, "tick_upper": upper},
+                 "residual_base": str(residual_base), "entry_costs_included": True}
+    _scenario_or_note(sim, synthetic, pool, amount)
+    return {"reply": "Prontinho! 🌊 O motor Orca do Altside calculou uma prévia de leitura. Veja a composição e os cenários de preço 👇",
+            "simulation": sim, "follow_up": f"😊 Quer comparar outra faixa para {pool['base_symbol']}?"}
 
 
 def _run_robinhood_pool(pool, amount, range_ticks, bps, explicit_ticks):

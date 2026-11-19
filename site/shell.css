@@ -16,7 +16,7 @@ button{cursor:pointer}
 .history-empty{padding:6px 10px;color:#777680;font-size:12px;line-height:1.6}
 .sidebar-spacer{flex:1;min-height:24px}
 .sidebar-bottom{display:flex;flex-direction:column;gap:15px;padding:16px 8px 0;border-top:1px solid var(--stroke)}
-.development-state{display:flex;align-items:center;gap:10px}.state-symbol{display:grid;flex:none;place-items:center;width:34px;height:34px;border-radius:10px;background:#372943;color:#c496f4;font-size:18px}.development-state div{display:flex;flex-direction:column;gap:2px}.development-state strong{font-size:11px;font-weight:600}.development-state div span{color:#92909c;font-size:10px}
+.development-state{display:flex;align-items:center;gap:10px}.state-symbol{display:grid;flex:none;place-items:center;width:34px;height:34px;border-radius:10px;background:#293b58}.state-symbol svg{display:block;width:28px;height:28px}.state-symbol .icon-eyes{transform-box:fill-box;transform-origin:center;animation:prompt-icon-blink 7s infinite}.development-state div{display:flex;flex-direction:column;gap:2px}.development-state strong{font-size:11px;font-weight:600}.development-state div span{color:#92909c;font-size:10px}
 .development-state div a{color:#a9a6b2;font-size:10px;text-decoration:none;transition:color .2s ease}.development-state div a:hover{color:#fff;text-decoration:underline}.development-state div a:focus-visible{outline:2px solid #9bbcff;outline-offset:3px;border-radius:2px}
 .simulator-link{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#d7d4dd;font-size:11px;transition:color .2s}.simulator-link:hover{color:var(--orange)}.sidebar-bottom small{color:#777680;font-size:10px;line-height:1.5}
 .sidebar-overlay{display:none}

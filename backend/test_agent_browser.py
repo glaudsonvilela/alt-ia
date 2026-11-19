@@ -97,6 +97,62 @@ class AgentBrowserTests(unittest.TestCase):
         self.assertEqual(result["reply"], "🎵 Muse para embalar sua sessão!")
         self.assertEqual(result["video"]["kind"], "playlist")
 
+    def test_abre_playlist_uses_player_instead_of_static_browser_preview(self):
+        blank = {"url": "about:blank", "title": "", "text": "", "elements": []}
+        playlist_url = "https://www.youtube.com/watch?v=9gsAz6S_zSw&list=PLxA687tYuMWjZQiHa3liNe3z-zcJxikvP"
+        sources = [{"title": "Slipknot Playlist", "url": playlist_url, "summary": "Slipknot"}]
+        with patch.object(agent_browser, "worker_call", return_value=blank) as worker, \
+             patch.object(agent_browser, "search_web", return_value={"sources": sources}) as search, \
+             patch.object(agent_browser, "choose_action", return_value={"action": "navigate", "url": playlist_url}):
+            result = agent_browser.run("abre playlist slipknot", "a" * 48, "nvapi-test")
+        self.assertEqual(result["video"]["kind"], "playlist")
+        self.assertEqual(result["video"]["id"], "PLxA687tYuMWjZQiHa3liNe3z-zcJxikvP")
+        self.assertEqual(worker.call_count, 1)
+        search.assert_called_once_with("slipknot playlist youtube", "research")
+
+    def test_ai_can_start_player_from_natural_music_request(self):
+        blank = {"url": "about:blank", "title": "", "text": "", "elements": []}
+        playlist_url = "https://www.youtube.com/playlist?list=PLxA687tYuMWjZQiHa3liNe3z-zcJxikvP"
+        sources = [{"title": "Slipknot Playlist", "url": playlist_url, "summary": "Slipknot"}]
+        with patch.object(agent_browser, "worker_call", return_value=blank), \
+             patch.object(agent_browser, "search_web", return_value={"sources": sources}), \
+             patch.object(agent_browser, "choose_action", side_effect=[
+                 {"action": "search", "query": "Slipknot playlist"},
+                 {"action": "play", "url": playlist_url, "kind": "playlist"}]):
+            result = agent_browser.run("coloca um som da banda Slipknot", "a" * 48, "nvapi-test")
+        self.assertEqual(result["video"]["kind"], "playlist")
+        self.assertIn("Iniciou o player", result["steps"][-1])
+
+    def test_page_summary_reads_full_dom_and_ocr_before_answering(self):
+        first = {"url": "https://example.org/article", "title": "Artigo", "text": "Início", "elements": []}
+        full = {**first, "text": "Artigo completo", "ocr": "Texto de uma imagem", "full_read": True}
+        with patch.object(agent_browser, "worker_call", side_effect=[first, full]) as worker, \
+             patch.object(agent_browser, "choose_action", side_effect=[
+                 {"action": "finish", "answer": "Resumo incompleto"},
+                 {"action": "finish", "answer": "Resumo do artigo e da imagem"}]) as model:
+            result = agent_browser.run("Resuma a página inteira", "a" * 48, "nvapi-test")
+        self.assertEqual(result["reply"], "Resumo do artigo e da imagem")
+        self.assertEqual(worker.call_args_list[1].args[1], "/sessions/" + "a" * 48 + "/read")
+        self.assertEqual(model.call_args_list[1].args[1]["ocr"], "Texto de uma imagem")
+
+    def test_ai_can_request_visual_ocr_for_a_page(self):
+        page = {"url": "https://example.org/chart", "title": "Gráfico", "text": "Vendas", "elements": []}
+        read = {**page, "ocr": "Receita 20 milhões", "full_read": True, "visual_read": True}
+        with patch.object(agent_browser, "worker_call", side_effect=[page, read]) as worker, \
+             patch.object(agent_browser, "choose_action", side_effect=[
+                 {"action": "read", "visual": True}, {"action": "finish", "answer": "Receita de 20 milhões."}]):
+            result = agent_browser.run("Interprete o gráfico", "a" * 48, "nvapi-test")
+        self.assertEqual(result["reply"], "Receita de 20 milhões.")
+        self.assertEqual(worker.call_args_list[1].args[1], "/sessions/" + "a" * 48 + "/read?visual=1")
+
+    def test_open_youtube_playlist_can_be_played_on_follow_up(self):
+        page = {"url": "https://www.youtube.com/watch?v=9gsAz6S_zSw&list=PLxA687tYuMWjZQiHa3liNe3z-zcJxikvP",
+                "title": "Slipknot Playlist", "text": "YouTube", "elements": []}
+        with patch.object(agent_browser, "worker_call", return_value=page) as worker:
+            result = agent_browser.run("toque essa playlist", "a" * 48, "nvapi-test")
+        self.assertEqual(result["video"]["kind"], "playlist")
+        self.assertEqual(worker.call_count, 1)
+
     def test_play_video_returns_embedded_video_without_loading_youtube_in_worker(self):
         result_page = {"url": "https://duckduckgo.com/?q=cyberpunk+music", "title": "Pesquisa", "text": "Vídeos",
                        "elements": [{"index": 4, "kind": "a", "label": "Cyberpunk soundtrack", "risky": False,

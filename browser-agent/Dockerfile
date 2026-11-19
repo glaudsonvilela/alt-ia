@@ -1,5 +1,6 @@
 FROM mcr.microsoft.com/playwright:v1.64.1-noble
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-por && rm -rf /var/lib/apt/lists/*
 COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund && useradd --create-home --uid 10101 agent
 COPY server.js ./

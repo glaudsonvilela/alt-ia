@@ -113,13 +113,26 @@ const activeVideoPlayers = [];
 function ensureYouTubeApi() {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (!youtubeApiPromise) youtubeApiPromise = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Player indisponível.')), 12000);
-    window.onYouTubeIframeAPIReady = () => { clearTimeout(timer); resolve(window.YT); };
     const script = document.createElement('script');
+    let settled = false;
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      script.remove();
+      reject(new Error('Player indisponível.'));
+    };
+    const timer = setTimeout(fail, 12000);
+    window.onYouTubeIframeAPIReady = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(window.YT);
+    };
     script.src = 'https://www.youtube.com/iframe_api';
-    script.onerror = () => { clearTimeout(timer); reject(new Error('Player indisponível.')); };
+    script.onerror = fail;
     document.head.append(script);
-  });
+  }).catch((error) => { youtubeApiPromise = null; throw error; });
   return youtubeApiPromise;
 }
 
@@ -1221,7 +1234,7 @@ function showAgentMedia(value) {
   const generation = agentMediaGeneration;
   const frame = document.createElement('iframe');
   frame.src = video.kind === 'playlist'
-    ? `https://www.youtube-nocookie.com/embed/videoseries?list=${video.id}&autoplay=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`
+    ? `https://www.youtube-nocookie.com/embed?listType=playlist&list=${video.id}&autoplay=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`
     : `https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`;
   frame.title = video.title || (video.kind === 'playlist' ? 'Playlist do YouTube' : 'Vídeo do YouTube');
   frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';

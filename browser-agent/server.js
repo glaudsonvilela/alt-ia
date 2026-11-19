@@ -130,6 +130,55 @@ async function snapshot(session) {
     }).filter(Boolean)).catch(() => []),
     status: session.status, updated: session.updated, cursor: session.cursor || null };
 }
+function ocrImage(image) {
+  return new Promise(resolve => {
+    const process = spawn('tesseract', ['stdin', 'stdout', '-l', 'por+eng', '--psm', '11'],
+      { stdio: ['pipe', 'pipe', 'ignore'] });
+    let output = '';
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(output.trim().slice(0, 6000));
+    };
+    const timer = setTimeout(() => { process.kill('SIGKILL'); finish(); }, 5000);
+    process.stdout.on('data', chunk => { if (output.length < 6000) output += chunk.toString('utf8'); });
+    process.on('error', finish);
+    process.on('close', finish);
+    process.stdin.on('error', () => {});
+    process.stdin.end(image);
+  });
+}
+async function readPage(session, visual = false) {
+  const page = session.page;
+  const base = await snapshot(session);
+  const dom = await page.evaluate(() => {
+    const text = document.body?.innerText || '';
+    return { text: text.slice(0, 60000), totalChars: text.length,
+      height: Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0, innerHeight) };
+  }).catch(() => ({ text: base.text, totalChars: base.text.length, height: 720 }));
+  const useOcr = visual || dom.text.length < 1600;
+  const pageHeight = Math.min(12000, dom.height);
+  const last = Math.max(0, pageHeight - 720);
+  const positions = dom.text.length < 1600 ? [0, last / 2, last] : [0, last];
+  const ocrParts = [];
+  if (useOcr && page.url().startsWith('http')) {
+    if (!session.cdp) session.cdp = await session.context.newCDPSession(page);
+    for (const y of [...new Set(positions.map(value => Math.round(value)))]) {
+      try {
+        const frame = await session.cdp.send('Page.captureScreenshot', {
+          format: 'jpeg', quality: 55, captureBeyondViewport: true, fromSurface: true,
+          clip: { x: 0, y, width: 1280, height: 720, scale: .75 },
+        });
+        const recognized = await ocrImage(Buffer.from(frame.data, 'base64'));
+        if (recognized) ocrParts.push(recognized);
+      } catch { /* DOM text remains available when a visual region cannot be read. */ }
+    }
+  }
+  return { ...base, text: dom.text, ocr: ocrParts.join('\n'), full_read: true, visual_read: useOcr,
+    truncated: dom.totalChars > 60000 || dom.height > 12000 };
+}
 async function moveCursor(page, x, y) {
   await page.evaluate(({ x, y }) => {
     let cursor = document.getElementById('alt-ia-agent-cursor');
@@ -198,6 +247,8 @@ http.createServer(async (req, res) => {
     if (req.method === 'DELETE' && parts.length === 2) { await closeSession(parts[1]); return json(res, 200, { closed: true }); }
     if (req.method === 'GET' && parts[2] === 'status') return json(res, 200, await sessionStatus(session));
     if (req.method === 'GET' && parts[2] === 'snapshot') return json(res, 200, await snapshot(session));
+    if (req.method === 'GET' && parts[2] === 'read') return json(res, 200,
+      await readPage(session, new URL(req.url, 'http://worker').searchParams.has('visual')));
     if (req.method === 'GET' && parts[2] === 'image') {
       if (!session.image || session.image.updated !== session.updated || session.image.page !== session.page) {
         const page = session.page;

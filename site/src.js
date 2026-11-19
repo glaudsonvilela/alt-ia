@@ -222,6 +222,8 @@ function applyNerdModeUI() {
   const active = isNerdMode();
   const topic = nerdTopic();
   site?.classList.toggle('nerd-mode', active);
+  const mascot = welcome?.querySelector('.welcome-character');
+  if (mascot) mascot.style.backgroundColor = active ? '#81a6ed' : '#ad73d8';
   if (normalGrid) normalGrid.hidden = active;
   if (nerdGrid) nerdGrid.hidden = !active;
   const kicker = welcome?.querySelector('.welcome-kicker');
@@ -238,6 +240,7 @@ function applyNerdModeUI() {
   if (modeBadge) { modeBadge.hidden = !active; modeBadge.textContent = `Modo Nerd · ${topic === 'strategies' ? 'Estratégias' : 'Research'}`; }
   if (nerdToggle) nerdToggle.setAttribute('aria-checked', String(active));
   nerdGrid?.querySelectorAll('[data-nerd-topic]').forEach((button) => button.classList.toggle('selected', button.dataset.nerdTopic === topic));
+  chatMessages?.querySelectorAll('.message-ai').forEach((row) => row.classList.toggle('message-nerd', active));
 }
 
 function closeModeMenu() {
@@ -790,15 +793,102 @@ modePlus?.addEventListener('click', () => {
   if (modeMenu) modeMenu.hidden = !show;
   modePlus.setAttribute('aria-expanded', String(show));
 });
-nerdToggle?.addEventListener('click', () => {
-  const conversation = currentConversation();
-  if (conversation) conversation.nerdMode = !conversation.nerdMode;
-  else draftNerdMode = !draftNerdMode;
-  persist();
-  renderHistory();
-  applyNerdModeUI();
+
+function modeMascot() {
+  const mascot = welcome?.isConnected
+    ? welcome.querySelector('.welcome-character')
+    : [...(chatMessages?.querySelectorAll('.message-ai .message-avatar') || [])].at(-1);
+  if (!mascot) return null;
+  const rect = mascot.getBoundingClientRect();
+  return rect.bottom > 0 && rect.top < innerHeight ? mascot : null;
+}
+
+function burstMascot(mascot, nerdMode) {
+  if (!mascot) return;
+  const rect = mascot.getBoundingClientRect();
+  const burst = document.createElement('span');
+  burst.className = 'mode-mascot-burst';
+  burst.style.left = `${rect.left + rect.width / 2}px`;
+  burst.style.top = `${rect.top + rect.height / 2}px`;
+  const colors = nerdMode ? ['#91b6f7', '#c2d8ff', '#66cadb'] : ['#b584de', '#f2a6c8', '#d9b1f2'];
+  for (let index = 0; index < 9; index += 1) {
+    const angle = (index / 9) * Math.PI * 2 - Math.PI / 2;
+    const distance = 29 + (index % 3) * 8;
+    const piece = document.createElement('i');
+    piece.style.setProperty('--dx', `${Math.cos(angle) * distance}px`);
+    piece.style.setProperty('--dy', `${Math.sin(angle) * distance}px`);
+    piece.style.setProperty('--turn', `${index % 2 ? 75 : -75}deg`);
+    piece.style.backgroundColor = colors[index % colors.length];
+    burst.append(piece);
+  }
+  document.body.append(burst);
+  setTimeout(() => burst.remove(), 580);
+}
+
+let modeSwitching = false;
+nerdToggle?.addEventListener('click', async () => {
+  if (modeSwitching) return;
+  modeSwitching = true;
+  nerdToggle.disabled = true;
   closeModeMenu();
-  chatInput?.focus();
+  const startingId = activeId;
+  const oldMode = isNerdMode();
+  const mascot = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? null : modeMascot();
+  const pop = mascot?.animate([
+    { offset: 0, scale: '1 1', opacity: 1 },
+    { offset: .44, scale: '1.24 1.2', opacity: 1 },
+    { offset: .7, scale: '1.36 1.35', opacity: 1 },
+    { offset: 1, scale: '.08 .08', opacity: 0 },
+  ], { duration: 285, easing: 'cubic-bezier(.3,0,.65,1)', fill: 'forwards' });
+  let landing;
+  const welcomeItems = welcome?.isConnected
+    ? [welcome.querySelector('.welcome-kicker'), welcome.querySelector('h1'), welcome.querySelector(':scope > p'), oldMode ? nerdGrid : normalGrid].filter(Boolean)
+    : [];
+  const leaving = welcomeItems.length ? animate(welcomeItems, { opacity: [1, 0], y: [0, -9], filter: ['blur(0px)', 'blur(4px)'] }, { duration: 0.2, ease: 'easeIn' }) : null;
+  const noteLeaving = composerNote ? animate(composerNote, { opacity: [1, 0], y: [0, -5] }, { duration: 0.18, ease: 'easeIn' }) : null;
+  const badgeLeaving = oldMode && modeBadge ? animate(modeBadge, { opacity: [1, 0], scale: [1, .88] }, { duration: 0.18, ease: 'easeIn' }) : null;
+  try {
+    await Promise.all([leaving?.finished, noteLeaving?.finished, badgeLeaving?.finished, pop?.finished].filter(Boolean));
+    leaving?.cancel();
+    noteLeaving?.cancel();
+    badgeLeaving?.cancel();
+    if (activeId !== startingId) return;
+    burstMascot(mascot, oldMode);
+    const conversation = currentConversation();
+    if (conversation) conversation.nerdMode = !conversation.nerdMode;
+    else draftNerdMode = !draftNerdMode;
+    persist();
+    renderHistory();
+    applyNerdModeUI();
+    if (mascot?.isConnected) {
+      landing = mascot.animate([
+        { offset: 0, translate: '0 -90px', scale: '.78 1.16', opacity: 0 },
+        { offset: .45, translate: '0 0', scale: '1.17 .79', opacity: 1 },
+        { offset: .68, translate: '0 -19px', scale: '.94 1.08', opacity: 1 },
+        { offset: .85, translate: '0 0', scale: '1.06 .92', opacity: 1 },
+        { offset: 1, translate: '0 0', scale: '1 1', opacity: 1 },
+      ], { duration: 620, easing: 'ease-out', fill: 'forwards' });
+    }
+    pop?.cancel();
+    const nextItems = welcome?.isConnected
+      ? [welcome.querySelector('.welcome-kicker'), welcome.querySelector('h1'), welcome.querySelector(':scope > p'), isNerdMode() ? nerdGrid : normalGrid].filter(Boolean)
+      : [];
+    const entering = nextItems.length ? animate(nextItems, { opacity: [0, 1], y: [14, 0], filter: ['blur(5px)', 'blur(0px)'] }, { duration: 0.43, ease: 'easeOut' }) : null;
+    const noteEntering = composerNote ? animate(composerNote, { opacity: [0, 1], y: [7, 0] }, { duration: 0.34, ease: 'easeOut' }) : null;
+    const badgeEntering = isNerdMode() && modeBadge ? animate(modeBadge, { opacity: [0, 1], scale: [.85, 1] }, { duration: 0.4, ease: 'easeOut' }) : null;
+    const formPulse = chatForm ? animate(chatForm, { scale: [1, .985, 1] }, { duration: 0.45, ease: 'easeOut' }) : null;
+    await Promise.all([entering?.finished, noteEntering?.finished, badgeEntering?.finished, formPulse?.finished, landing?.finished].filter(Boolean));
+    entering?.cancel();
+    noteEntering?.cancel();
+    badgeEntering?.cancel();
+    formPulse?.cancel();
+  } finally {
+    pop?.cancel();
+    landing?.cancel();
+    modeSwitching = false;
+    nerdToggle.disabled = false;
+    chatInput?.focus();
+  }
 });
 document.addEventListener('pointerdown', (event) => {
   if (!modeMenu?.hidden && !modeMenu.contains(event.target) && !modePlus?.contains(event.target)) closeModeMenu();
@@ -811,6 +901,8 @@ nerdGrid?.querySelectorAll('[data-nerd-topic]').forEach((button) => button.addEv
   else draftNerdTopic = topic;
   persist();
   applyNerdModeUI();
+  animate(button, { scale: [1, .96, 1] }, { duration: 0.35, ease: 'easeOut' });
+  if (modeBadge && !modeBadge.hidden) animate(modeBadge, { opacity: [.45, 1], y: [5, 0] }, { duration: 0.3, ease: 'easeOut' });
   chatInput?.focus();
 }));
 
@@ -1481,6 +1573,7 @@ function startMascotPhysics() {
   let landingY = 0;
   let startTime = performance.now();
   let lastLook = -1;
+  let pauseStarted = 0;
 
   function measure() {
     const wordmarkLeft = (showcase.clientWidth - wordmark.offsetWidth) / 2;
@@ -1522,7 +1615,16 @@ function startMascotPhysics() {
     if (!welcome?.isConnected || document.hidden) {
       startTime = now;
       lastLook = -1;
+      pauseStarted = 0;
       return;
+    }
+    if (modeSwitching) {
+      if (!pauseStarted) pauseStarted = now;
+      return;
+    }
+    if (pauseStarted) {
+      startTime += now - pauseStarted;
+      pauseStarted = 0;
     }
     const elapsed = (now - startTime) % cycleMs;
     const segment = Math.floor(elapsed / beatMs);

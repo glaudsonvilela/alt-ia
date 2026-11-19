@@ -343,6 +343,8 @@ function applyNerdModeUI() {
   if (agentToggle) agentToggle.setAttribute('aria-checked', String(agent));
   nerdGrid?.querySelectorAll('[data-nerd-topic]').forEach((button) => button.classList.toggle('selected', button.dataset.nerdTopic === topic));
   chatMessages?.querySelectorAll('.message-ai').forEach((row) => row.classList.toggle('message-nerd', active));
+  syncAgentMediaSurface();
+  requestAnimationFrame(positionAgentDock);
 }
 
 function closeModeMenu() {
@@ -813,7 +815,7 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
     const player = document.createElement('div');
     player.className = 'agent-video';
     const frame = document.createElement('iframe');
-    frame.src = `https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`;
+    frame.src = `https://www.youtube-nocookie.com/embed/${video.id}?autoplay=0&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`;
     frame.title = video.title || 'Vídeo do YouTube';
     frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     frame.referrerPolicy = 'strict-origin-when-cross-origin';
@@ -833,7 +835,7 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
     caption.append(title, hint, link);
     player.append(caption);
     body.append(player);
-    setTimeout(() => { if (frame.isConnected) void startVideoPlayer(frame, hint); }, 0);
+    hint.textContent = 'Toque para assistir aqui';
   }
   if (role === 'ai' && research?.length) {
     const sources = document.createElement('div');
@@ -930,6 +932,8 @@ let agentOwnerId = null;
 let agentPipWindow = null;
 let agentPipStatus = null;
 let agentPipImage = null;
+let agentPipMedia = null;
+let agentPipPlayback = null;
 let agentPipHasReply = false;
 let agentDockBusy = false;
 const agentDock = document.createElement('aside');
@@ -943,7 +947,68 @@ agentDockSidekick.innerHTML = '<span class="agent-face-core"><i class="agent-fac
 const agentDockHead = document.createElement('button');
 agentDockHead.type = 'button';
 agentDockHead.textContent = '◉  Agente ativo · abrir conversa';
-agentDockHead.addEventListener('click', () => {
+agentDockHead.title = 'Arraste para mover · clique para abrir conversa';
+const agentDockPositionKey = 'alt-ia-agent-dock-position';
+let agentDockPosition = null;
+try {
+  const saved = JSON.parse(localStorage.getItem(agentDockPositionKey) || 'null');
+  if (Number.isFinite(saved?.x) && Number.isFinite(saved?.y)) agentDockPosition = saved;
+} catch { /* Keep the default position. */ }
+let agentDockDrag = null;
+let agentDockSuppressClick = false;
+function positionAgentDock() {
+  if (!agentDockPosition || agentDock.hidden || agentDockDrag) return;
+  const rect = agentDock.getBoundingClientRect();
+  const minX = Math.min(56, Math.max(12, innerWidth - rect.width));
+  const maxX = Math.max(minX, innerWidth - rect.width - 12);
+  const maxY = Math.max(12, innerHeight - rect.height - 12);
+  agentDock.style.right = 'auto';
+  agentDock.style.bottom = 'auto';
+  agentDock.style.left = `${minX + Math.min(1, Math.max(0, agentDockPosition.x)) * (maxX - minX)}px`;
+  agentDock.style.top = `${12 + Math.min(1, Math.max(0, agentDockPosition.y)) * (maxY - 12)}px`;
+}
+agentDockHead.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  const rect = agentDock.getBoundingClientRect();
+  agentDockDrag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+    left: rect.left, top: rect.top, width: rect.width, height: rect.height, moved: false };
+  agentDockHead.setPointerCapture(event.pointerId);
+});
+agentDockHead.addEventListener('pointermove', (event) => {
+  const drag = agentDockDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  const dx = event.clientX - drag.startX;
+  const dy = event.clientY - drag.startY;
+  if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+  drag.moved = true;
+  agentDock.classList.add('is-dragging');
+  const minX = Math.min(56, Math.max(12, innerWidth - drag.width));
+  const maxX = Math.max(minX, innerWidth - drag.width - 12);
+  const maxY = Math.max(12, innerHeight - drag.height - 12);
+  const x = Math.min(maxX, Math.max(minX, drag.left + dx));
+  const y = Math.min(maxY, Math.max(12, drag.top + dy));
+  agentDock.style.right = 'auto';
+  agentDock.style.bottom = 'auto';
+  agentDock.style.left = `${x}px`;
+  agentDock.style.top = `${y}px`;
+  agentDockPosition = { x: maxX > minX ? (x - minX) / (maxX - minX) : 0,
+    y: maxY > 12 ? (y - 12) / (maxY - 12) : 0 };
+});
+function endAgentDockDrag(event) {
+  if (!agentDockDrag || agentDockDrag.pointerId !== event.pointerId) return;
+  if (agentDockDrag.moved) {
+    agentDockSuppressClick = true;
+    try { localStorage.setItem(agentDockPositionKey, JSON.stringify(agentDockPosition)); } catch { /* Position stays in memory. */ }
+    setTimeout(() => { agentDockSuppressClick = false; }, 0);
+  }
+  agentDockDrag = null;
+  agentDock.classList.remove('is-dragging');
+}
+agentDockHead.addEventListener('pointerup', endAgentDockDrag);
+agentDockHead.addEventListener('pointercancel', endAgentDockDrag);
+window.addEventListener('resize', () => requestAnimationFrame(positionAgentDock));
+agentDockHead.addEventListener('click', (event) => {
+  if (agentDockSuppressClick) { event.preventDefault(); return; }
   if (agentOwnerId && conversations.some((item) => item.id === agentOwnerId)) {
     activeId = agentOwnerId; persist(); renderHistory(); renderConversation();
   }
@@ -957,6 +1022,9 @@ agentDockSpeech.textContent = 'Estou por aqui. O que exploramos agora? 🔎';
 const agentDockMedia = document.createElement('div');
 agentDockMedia.className = 'agent-dock-media';
 agentDockMedia.hidden = true;
+const agentDockPlayback = document.createElement('small');
+agentDockPlayback.className = 'agent-mini-playback';
+agentDockPlayback.hidden = true;
 const agentDockForm = document.createElement('form');
 const agentDockInput = document.createElement('input');
 agentDockInput.type = 'text';
@@ -975,20 +1043,15 @@ agentDockForm.addEventListener('submit', (event) => {
   agentDockInput.value = '';
   void sendAgentDockTask(task);
 });
-agentDock.append(agentDockSidekick, agentDockHead, agentDockSpeech, agentDockMedia, agentDockImage, agentDockForm);
+agentDock.append(agentDockSidekick, agentDockHead, agentDockSpeech, agentDockMedia, agentDockPlayback, agentDockImage, agentDockForm);
 document.body.append(agentDock);
 
 function updateAgentDockMedia(video) {
   const media = safeVideo(video);
-  agentDockMedia.replaceChildren();
   agentDockMedia.hidden = !media;
-  if (!media) return;
-  const icon = document.createElement('span');
-  icon.textContent = '▶';
-  const title = document.createElement('strong');
-  title.textContent = media.title || (media.kind === 'playlist' ? 'Playlist do YouTube' : 'Vídeo do YouTube');
-  agentDockMedia.append(icon, title);
-  agentDockImage.removeAttribute('src');
+  agentDockPlayback.hidden = !media;
+  if (media) agentDockImage.removeAttribute('src');
+  requestAnimationFrame(positionAgentDock);
 }
 
 async function sendAgentDockTask(task) {
@@ -1013,11 +1076,11 @@ async function sendAgentDockTask(task) {
     const data = await agentRequest('run', { task });
     resultMedia = data.video;
     replyText = data.reply;
-    updateAgentDockMedia(resultMedia);
-    conversation.messages.push({ role: 'ai', text: data.reply, mode: 'agent', video: safeVideo(data.video) });
+    conversation.messages.push({ role: 'ai', text: data.reply, speech: String(data.speech || '').slice(0, 220), mode: 'agent', video: safeVideo(data.video) });
     agentPipHasReply = true;
-    if (agentPipStatus) agentPipStatus.textContent = data.reply.slice(0, 180);
-    agentDockSpeech.textContent = data.reply.slice(0, 180);
+    const speech = String(data.speech || data.reply).slice(0, 220);
+    if (agentPipStatus) agentPipStatus.textContent = speech;
+    agentDockSpeech.textContent = speech;
   } catch (error) {
     replyText = error.message || 'Não consegui concluir. Tente novamente.';
     conversation.messages.push({ role: 'ai', text: error.message || 'Não consegui concluir. Tente novamente.', mode: 'agent' });
@@ -1049,12 +1112,12 @@ agentCompanionChannel.addEventListener('message', async ({ data }) => {
 
 function openAgentPip() {
   if (!window.documentPictureInPicture || (agentPipWindow && !agentPipWindow.closed)) return;
-  void window.documentPictureInPicture.requestWindow({ width: 320, height: 235 }).then((pip) => {
+  void window.documentPictureInPicture.requestWindow({ width: 380, height: 415 }).then((pip) => {
     agentPipWindow = pip;
     pip.document.title = 'Alt-IA · Agente';
     const css = pip.document.createElement('link');
     css.rel = 'stylesheet';
-    css.href = '/agent-pip.css?v=2';
+    css.href = '/agent-pip.css?v=3';
     pip.document.head.append(css);
     const head = pip.document.createElement('header');
     const face = pip.document.createElement('span');
@@ -1065,8 +1128,16 @@ function openAgentPip() {
     const image = pip.document.createElement('img');
     image.alt = 'Navegador temporário';
     agentPipImage = image;
+    const media = pip.document.createElement('div');
+    media.className = 'pip-media';
+    media.hidden = true;
+    agentPipMedia = media;
+    const playback = pip.document.createElement('small');
+    playback.className = 'pip-playback';
+    playback.hidden = true;
+    agentPipPlayback = playback;
     const status = pip.document.createElement('p');
-    status.textContent = 'Iniciando navegador…';
+    status.textContent = agentDockSpeech.textContent || 'Estou explorando a página…';
     agentPipStatus = status;
     const form = pip.document.createElement('form');
     const input = pip.document.createElement('input');
@@ -1086,11 +1157,13 @@ function openAgentPip() {
       input.value = '';
       void sendAgentDockTask(task);
     });
-    pip.document.body.append(head, image, status, form);
+    pip.document.body.append(head, status, media, playback, image, form);
     pip.addEventListener('pagehide', () => {
       agentPipWindow = null;
       agentPipStatus = null;
       agentPipImage = null;
+      agentPipMedia = null;
+      agentPipPlayback = null;
       applyNerdModeUI();
     });
     applyNerdModeUI();
@@ -1167,7 +1240,7 @@ async function stopAgentSession() {
 }
 async function refreshAgentWindow(force = false) {
   if (!agentStarted || agentRefreshing || (document.hidden && !agentPipWindow)) return;
-  const playing = agentScreen?.classList.contains('is-playing');
+  const playing = Boolean(agentCurrentVideo);
   const now = Date.now();
   if (!force && now - agentLastStatePollAt < (playing ? 30000 : agentWasRunning ? 5000 : 20000)) return;
   agentLastStatePollAt = now;
@@ -1177,10 +1250,10 @@ async function refreshAgentWindow(force = false) {
     const state = await response.json();
     if (!response.ok) throw new Error(state.error || 'Sessão encerrada.');
     agentWasRunning = Boolean(state.running);
-    if (agentStatus && !agentScreen?.classList.contains('is-playing')) agentStatus.textContent = state.running ? 'Navegando e analisando…' : state.status || 'Pronto';
+    if (agentStatus && !playing) agentStatus.textContent = state.running ? 'Navegando e analisando…' : state.status || 'Pronto';
     if (agentPipStatus && (state.running || !agentPipHasReply) && !agentDockBusy) agentPipStatus.textContent = state.running ? 'Navegando e analisando…' : state.status || 'Pronto';
     if (state.running && !agentPipHasReply && state.title) agentDockSpeech.textContent = `Estou vendo “${state.title.slice(0, 90)}” e conferindo os detalhes. 🔎`;
-    if (agentUrl && !agentScreen?.classList.contains('is-playing')) agentUrl.textContent = state.url === 'about:blank' ? 'Sessão isolada · dados apagados ao encerrar' : state.url;
+    if (agentUrl && !playing) agentUrl.textContent = state.url === 'about:blank' ? 'Sessão isolada · dados apagados ao encerrar' : state.url;
     const shotKey = `${state.url}:${state.updated}`;
     if (!playing && state.url && state.url !== 'about:blank' && (force || shotKey !== agentLastShotKey)) {
       const imageUrl = `/api/agent/image?t=${Date.now()}`;
@@ -1210,13 +1283,64 @@ window.addEventListener('pagehide', () => {
 const agentScreen = document.querySelector('.agent-screen');
 let agentMediaPlayer = null;
 let agentMediaGeneration = 0;
+let agentMediaSurface = null;
+let agentPlaybackSeconds = 0;
+function agentVideoUrl(video, seconds = 0) {
+  const start = seconds > 1 ? `&start=${Math.floor(seconds)}` : '';
+  return video.kind === 'playlist'
+    ? `https://www.youtube-nocookie.com/embed?listType=playlist&list=${video.id}&autoplay=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}${start}`
+    : `https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(location.origin)}${start}`;
+}
+function syncAgentMediaSurface() {
+  if (!agentCurrentVideo) return;
+  const surface = document.hidden && agentPipMedia ? 'pip' : isAgentMode() ? 'main' : 'dock';
+  if (surface === agentMediaSurface) return;
+  if (agentMediaPlayer) {
+    try { agentPlaybackSeconds = Math.max(agentPlaybackSeconds, agentMediaPlayer.getCurrentTime() || 0); } catch { /* Player still loading. */ }
+    try { agentMediaPlayer.destroy(); } catch { /* Player already stopped. */ }
+  }
+  agentMediaPlayer = null;
+  agentMediaGeneration += 1;
+  agentMedia?.replaceChildren();
+  agentDockMedia.replaceChildren();
+  agentPipMedia?.replaceChildren();
+  agentMediaSurface = surface;
+  agentScreen?.classList.toggle('is-playing', surface === 'main');
+  updateAgentDockMedia(agentCurrentVideo);
+  if (agentPipMedia) agentPipMedia.hidden = surface !== 'pip';
+  if (agentPipPlayback) agentPipPlayback.hidden = surface !== 'pip';
+  if (surface === 'pip') agentPipImage?.removeAttribute('src');
+  const host = surface === 'main' ? agentMedia : surface === 'pip' ? agentPipMedia : agentDockMedia;
+  const hint = surface === 'main' ? agentStatus : surface === 'pip' ? agentPipPlayback : agentDockPlayback;
+  if (!host) return;
+  const frame = host.ownerDocument.createElement('iframe');
+  frame.src = agentVideoUrl(agentCurrentVideo, agentPlaybackSeconds);
+  frame.title = agentCurrentVideo.title || (agentCurrentVideo.kind === 'playlist' ? 'Playlist do YouTube' : 'Vídeo do YouTube');
+  frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+  frame.referrerPolicy = 'strict-origin-when-cross-origin';
+  frame.allowFullscreen = true;
+  host.append(frame);
+  if (hint) hint.textContent = 'Iniciando vídeo…';
+  const generation = agentMediaGeneration;
+  void startVideoPlayer(frame, hint, false).then((player) => {
+    if (generation === agentMediaGeneration) agentMediaPlayer = player;
+    else { try { player?.destroy(); } catch { /* Player already stopped. */ } }
+  });
+}
 function stopAgentMedia() {
   agentMediaGeneration += 1;
   agentCurrentVideo = null;
+  agentMediaSurface = null;
+  agentPlaybackSeconds = 0;
   agentCompanionChannel.postMessage({ type: 'media', video: null });
   if (agentMediaPlayer) { try { agentMediaPlayer.destroy(); } catch { /* Player already stopped. */ } }
   agentMediaPlayer = null;
   agentMedia?.replaceChildren();
+  agentDockMedia.replaceChildren();
+  agentPipMedia?.replaceChildren();
+  updateAgentDockMedia(null);
+  if (agentPipMedia) agentPipMedia.hidden = true;
+  if (agentPipPlayback) agentPipPlayback.hidden = true;
   agentScreen?.classList.remove('is-playing');
   if (agentPrivacy) agentPrivacy.textContent = 'Clique e digite na tela. O conteúdo pedido ao agente é enviado à IA.';
 }
@@ -1226,29 +1350,13 @@ function showAgentMedia(value) {
   stopAgentMedia();
   agentCurrentVideo = video;
   agentCompanionChannel.postMessage({ type: 'media', video });
-  updateAgentDockMedia(video);
   if (isAgentMode() && agentWindow) {
     agentWindow.hidden = false;
     site?.classList.add('agent-session-open');
   }
-  const generation = agentMediaGeneration;
-  const frame = document.createElement('iframe');
-  frame.src = video.kind === 'playlist'
-    ? `https://www.youtube-nocookie.com/embed?listType=playlist&list=${video.id}&autoplay=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`
-    : `https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`;
-  frame.title = video.title || (video.kind === 'playlist' ? 'Playlist do YouTube' : 'Vídeo do YouTube');
-  frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
-  frame.referrerPolicy = 'strict-origin-when-cross-origin';
-  frame.allowFullscreen = true;
-  agentMedia.append(frame);
-  agentScreen.classList.add('is-playing');
-  if (agentStatus) agentStatus.textContent = video.kind === 'playlist' ? 'Iniciando playlist…' : 'Iniciando vídeo…';
+  syncAgentMediaSurface();
   if (agentUrl) agentUrl.textContent = video.url;
   if (agentPrivacy) agentPrivacy.textContent = 'Vídeo na janela. Se o navegador bloquear o som, toque no vídeo para ativar.';
-  void startVideoPlayer(frame, agentStatus, false).then((player) => {
-    if (generation === agentMediaGeneration) agentMediaPlayer = player;
-    else { try { player?.destroy(); } catch { /* Player already stopped. */ } }
-  });
 }
 let agentInputQueue = Promise.resolve();
 function queueAgentInput(path, payload) {
@@ -2028,7 +2136,8 @@ chatForm?.addEventListener('submit', async (event) => {
     if (!response.ok || typeof data.reply !== 'string') throw new Error(data.error || 'Não foi possível obter uma resposta. Tente novamente.');
     const target = conversations.find((item) => item.id === conversationId);
     if (!target) return;
-    target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation), news: safeNews(data.news), wallet: safeWallet(data.wallet),
+    target.messages.push({ role: 'ai', text: data.reply, speech: typeof data.speech === 'string' ? data.speech.slice(0, 220) : '',
+      simulation: safeSimulation(data.simulation), news: safeNews(data.news), wallet: safeWallet(data.wallet),
       research: safeResearch(data.research), video: safeVideo(data.video), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
       newsContext: safeNews(data.news_context || data.news),
       mode: ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd', 'agent'].includes(data.mode) ? data.mode : 'general',
@@ -2042,11 +2151,12 @@ chatForm?.addEventListener('submit', async (event) => {
     persist();
     renderHistory();
     if (activeId === conversationId) renderConversation();
-    if (agentForRequest && activeId === conversationId) showAgentMedia(data.video);
+    if (agentForRequest) showAgentMedia(data.video);
     if (agentForRequest) {
       agentPipHasReply = true;
-      agentDockSpeech.textContent = data.reply.slice(0, 180);
-      if (agentPipStatus) agentPipStatus.textContent = data.reply.slice(0, 180);
+      const speech = String(data.speech || data.reply).slice(0, 220);
+      agentDockSpeech.textContent = speech;
+      if (agentPipStatus) agentPipStatus.textContent = speech;
     }
     if (data.input_request?.kind === 'pool') requestedConfig = data.input_request;
     if (data.input_request?.kind === 'lending') requestedConfig = data.input_request;

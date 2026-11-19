@@ -5,6 +5,11 @@ import agent_browser
 
 
 class AgentBrowserTests(unittest.TestCase):
+    def setUp(self):
+        self.speech_patch = patch.object(agent_browser, "generate_speech", return_value="Slipknot mistura peso e melodia. 🎸")
+        self.speech_patch.start()
+        self.addCleanup(self.speech_patch.stop)
+
     def test_cookie_cannot_be_forged(self):
         key = "nvapi-test"
         session_id = "a" * 48
@@ -121,6 +126,16 @@ class AgentBrowserTests(unittest.TestCase):
         self.assertEqual(worker.call_count, 1)
         self.assertEqual(search.call_count, 1)
         self.assertEqual(model.call_count, 1)
+        self.assertIn("Slipknot", result["speech"])
+
+    def test_model_speech_uses_observed_page_context(self):
+        page = {"url": "https://example.org/filme", "title": "Filme", "text": "Trailer e elenco", "elements": []}
+        with patch.object(agent_browser, "worker_call", return_value=page), \
+             patch.object(agent_browser, "choose_action", return_value={
+                 "action": "finish", "answer": "Encontrei o trailer e o elenco.",
+                 "speech": "Esse elenco já promete uma história intensa. 🎬"}):
+            result = agent_browser.run("Veja esta página", "a" * 48, "nvapi-test")
+        self.assertEqual(result["speech"], "Esse elenco já promete uma história intensa. 🎬")
 
     def test_ai_can_start_player_from_natural_music_request(self):
         blank = {"url": "about:blank", "title": "", "text": "", "elements": []}

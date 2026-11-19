@@ -476,14 +476,39 @@ document.querySelectorAll('[data-prompt]').forEach((suggestion) => {
   });
 });
 
-document.querySelector('[data-action="news-daily"]')?.addEventListener('click', () => {
+function pulseShortcut(trigger) {
+  if (!trigger) return;
+  trigger.classList.remove('is-launching');
+  void trigger.offsetWidth;
+  trigger.classList.add('is-launching');
+  window.setTimeout(() => trigger.classList.remove('is-launching'), 650);
+}
+
+function showShortcutDialog(dialog, trigger) {
+  if (!dialog || dialog.open) return;
+  if (trigger) {
+    const rect = trigger.getBoundingClientRect();
+    const dx = Math.max(-140, Math.min(140, (rect.left + rect.width / 2 - innerWidth / 2) * .42));
+    const dy = Math.max(-150, Math.min(150, (rect.top + rect.height / 2 - innerHeight / 2) * .42));
+    dialog.style.setProperty('--launch-dx', `${dx.toFixed(1)}px`);
+    dialog.style.setProperty('--launch-dy', `${dy.toFixed(1)}px`);
+    pulseShortcut(trigger);
+  } else {
+    dialog.style.setProperty('--launch-dx', '0px');
+    dialog.style.setProperty('--launch-dy', '34px');
+  }
+  dialog.showModal();
+}
+
+document.querySelector('[data-action="news-daily"]')?.addEventListener('click', (event) => {
   if (!chatInput || isSubmitting) return;
+  pulseShortcut(event.currentTarget);
   chatInput.value = 'Resumo das notícias de hoje';
   resizeComposer();
   chatForm?.requestSubmit();
 });
 
-function openLendingDialog(prefill = {}) {
+function openLendingDialog(prefill = {}, trigger = null) {
   if (!lendingDialog) return;
   lendingFormError.hidden = true;
   lendingFormError.textContent = '';
@@ -491,11 +516,11 @@ function openLendingDialog(prefill = {}) {
   lendingDebt.value = typeof prefill.borrow_usdc === 'string' ? prefill.borrow_usdc : '';
   lendingDrop.value = Number.isInteger(prefill.price_drop_pct) && prefill.price_drop_pct <= 80 ? String(prefill.price_drop_pct) : '20';
   lendingDropValue.value = `${lendingDrop.value}%`;
-  if (!lendingDialog.open) lendingDialog.showModal();
+  showShortcutDialog(lendingDialog, trigger);
   (lendingCollateral.value ? lendingDebt : lendingCollateral).focus();
 }
 
-document.querySelector('[data-action="configure-lending"]')?.addEventListener('click', () => openLendingDialog());
+document.querySelector('[data-action="configure-lending"]')?.addEventListener('click', (event) => openLendingDialog({}, event.currentTarget));
 document.querySelector('#lending-dialog-close')?.addEventListener('click', () => lendingDialog?.close());
 lendingDialog?.addEventListener('click', (event) => { if (event.target === lendingDialog) lendingDialog.close(); });
 lendingDrop?.addEventListener('input', () => { lendingDropValue.value = `${lendingDrop.value}%`; });
@@ -767,10 +792,10 @@ function renderPoolChoices(preferredPoolId) {
   loadPoolChart();
 }
 
-async function openPoolDialog(prefill = {}) {
+async function openPoolDialog(prefill = {}, trigger = null) {
   if (!poolDialog) return;
   showPoolError('');
-  if (!poolDialog.open) poolDialog.showModal();
+  showShortcutDialog(poolDialog, trigger);
   if (!poolOptions) {
     poolNetwork.replaceChildren(new Option('Carregando redes…', ''));
     poolNetwork.disabled = true;
@@ -807,8 +832,8 @@ async function openPoolDialog(prefill = {}) {
   poolSelect.focus();
 }
 
-document.querySelector('[data-action="configure-pool"]')?.addEventListener('click', () => openPoolDialog());
-document.querySelector('[data-action="historical-pool"]')?.addEventListener('click', () => openPoolDialog({ kind: 'historical_pool' }));
+document.querySelector('[data-action="configure-pool"]')?.addEventListener('click', (event) => openPoolDialog({}, event.currentTarget));
+document.querySelector('[data-action="historical-pool"]')?.addEventListener('click', (event) => openPoolDialog({ kind: 'historical_pool' }, event.currentTarget));
 poolDialogClose?.addEventListener('click', () => poolDialog?.close());
 poolDialog?.addEventListener('click', (event) => { if (event.target === poolDialog) poolDialog.close(); });
 poolDialog?.addEventListener('close', () => { chartRequestSeq++; marketRequestSeq++; marketDrag = null; });

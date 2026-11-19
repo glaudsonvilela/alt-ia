@@ -67,6 +67,16 @@ class AgentBrowserTests(unittest.TestCase):
         self.assertEqual(result["reply"], "Página aberta.")
         self.assertEqual(worker.call_args_list[1].args[1], "/sessions/" + "a" * 48 + "/navigate")
 
+    def test_google_verification_stops_search_loop(self):
+        blank = {"url": "about:blank", "title": "", "text": "", "elements": []}
+        challenge = {"url": "https://www.google.com/sorry/index?continue=/search", "title": "Google", "text": "Verify", "elements": []}
+        with patch.object(agent_browser, "worker_call", side_effect=[blank, challenge]) as worker, \
+             patch.object(agent_browser, "choose_action", return_value={"action": "navigate", "url": "https://www.google.com/search?q=bitcoin"}) as choose:
+            result = agent_browser.run("Pesquise bitcoin", "a" * 48, "nvapi-test")
+        self.assertIn("Google pediu uma verificação", result["reply"])
+        self.assertEqual(worker.call_count, 2)
+        self.assertEqual(choose.call_count, 1)
+
     def test_play_video_returns_embedded_video_without_loading_youtube_in_worker(self):
         result_page = {"url": "https://duckduckgo.com/?q=cyberpunk+music", "title": "Pesquisa", "text": "Vídeos",
                        "elements": [{"index": 4, "kind": "a", "label": "Cyberpunk soundtrack", "risky": False,

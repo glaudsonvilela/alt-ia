@@ -10,8 +10,8 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=30">
-  <script defer src="/app.js?v=30"></script>
+  <link rel="stylesheet" href="/shell.css?v=32">
+  <script defer src="/app.js?v=32"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -74,7 +74,7 @@
               <button type="button" data-prompt="Simule swap de 100 USDC para WETH com slippage de 0,2%"><span class="prompt-icon orange">↗</span><strong>Simular um swap</strong><small>100 USDC para WETH</small></button>
               <button type="button" data-action="configure-pool"><span class="prompt-icon violet">◈</span><strong>Simular uma pool</strong><small>Defina capital e faixa</small></button>
               <button type="button" data-prompt="Analisar o risco de uma operação de lending"><span class="prompt-icon blue">◎</span><strong>Analisar risco</strong><small>Operação de lending</small></button>
-              <button type="button" data-prompt="Explorar uma estratégia DeFi no simulador Altside"><span class="prompt-icon green">✳</span><strong>Explorar estratégia</strong><small>Cenários DeFi</small></button>
+              <button type="button" data-action="historical-pool"><span class="prompt-icon green">✳</span><strong>Simular o passado</strong><small>7, 30 ou 90 dias</small></button>
             </div>
           </div>
         </div>
@@ -84,7 +84,7 @@
             <textarea id="chat-input" rows="1" maxlength="4000" placeholder="Descreva o que você quer simular..."></textarea>
             <div class="composer-footer"><span>Enter para enviar · Shift+Enter para nova linha</span><button type="submit" aria-label="Enviar mensagem">↑</button></div>
           </form>
-          <p class="composer-note">Swaps USDC/WETH e entradas em pools selecionadas usam prévias do motor Altside. As prévias não executam transações.</p>
+          <p class="composer-note">Entradas em pools selecionadas e reconstituições históricas usam dados do Altside. Nenhuma transação é enviada.</p>
         </div>
       </main>
     </div>
@@ -96,8 +96,15 @@
       <button class="pool-dialog-close" id="pool-dialog-close" type="button" aria-label="Fechar configuração">×</button>
       <div class="pool-dialog-copy"><span class="pool-dialog-kicker">ALT-IA · SIMULAÇÃO</span><h2 id="pool-dialog-title">Desenhe sua entrada.</h2><p>Escolha a pool e ajuste os parâmetros antes de consultar o motor Altside.</p></div>
       <form id="pool-config-form">
-        <label for="pool-select">Pool</label>
-        <select id="pool-select" required><option value="">Carregando pools…</option></select>
+        <div class="pool-selection-grid">
+          <div><label for="pool-network">Rede</label><select id="pool-network" required><option value="">Carregando redes…</option></select></div>
+          <div><label for="pool-select">Pool</label><select id="pool-select" required><option value="">Carregando pools…</option></select></div>
+        </div>
+        <div class="pool-mode-grid" id="pool-mode-grid">
+          <div><label for="pool-mode">Tipo de simulação</label><select id="pool-mode"><option value="live">Entrada agora</option><option value="history">Dados passados</option></select></div>
+          <div id="pool-period-field" hidden><label for="pool-period">Período histórico</label><select id="pool-period"><option value="7">Últimos 7 dias</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option></select></div>
+        </div>
+        <p class="pool-availability" id="pool-availability" role="status" hidden></p>
         <div class="range-chart" id="range-chart" aria-label="Gráfico de preço e seleção da faixa">
           <div class="range-chart-top"><span class="range-chart-title">Sua faixa de preço</span><span class="range-chart-block" id="range-chart-block">Consultando pool…</span></div>
           <div class="range-chart-price" id="range-chart-price">Aguardando preço atual</div>
@@ -109,7 +116,7 @@
             <button class="price-chart-handle ceiling" id="pool-ceiling-handle" type="button" aria-label="Arrastar preço máximo" hidden>↕ Teto</button>
             <div class="price-chart-status" id="pool-chart-status">Carregando histórico real da pool…</div>
           </div>
-          <div class="range-chart-note">Arraste piso e teto no gráfico ou ajuste os ticks abaixo · dados Altside/GeckoTerminal</div>
+          <div class="range-chart-note" id="range-chart-note">Arraste piso e teto no gráfico ou ajuste os ticks abaixo · dados Altside/GeckoTerminal</div>
           <div class="price-chart-credits"><a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts™</a><a href="/lightweight-charts-NOTICE.txt" target="_blank" rel="noreferrer">Licença e créditos</a></div>
         </div>
         <div class="pool-field-grid">
@@ -120,7 +127,7 @@
         <div class="pool-slippage-row"><label for="pool-slippage">Slippage máximo</label><div class="pool-slippage-input"><input id="pool-slippage" type="text" inputmode="decimal" value="0,2" aria-describedby="pool-slippage-hint" required><span>%</span></div></div>
         <p id="pool-slippage-hint" class="pool-dialog-hint">Prévia somente leitura. Nenhuma transação é enviada.</p>
         <p class="pool-form-error" id="pool-form-error" role="alert" hidden></p>
-        <button class="pool-submit" type="submit">Calcular prévia <span class="pool-submit-icon" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><path class="pool-submit-face" d="M9 3.5h14L29 10v12l-6 6.5H9L3 22V10z"/><ellipse cx="11.9" cy="15.2" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="20.1" cy="15.2" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="12.7" cy="16.2" rx="1.1" ry="2.1" fill="#282032"/><ellipse cx="19.3" cy="16.2" rx="1.1" ry="2.1" fill="#282032"/><path d="M13.2 22.2c1.6 1.5 4 1.5 5.6 0" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="1.5"/></svg></span></button>
+        <button class="pool-submit" type="submit"><span id="pool-submit-label">Calcular prévia</span><span class="pool-submit-icon" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><path class="pool-submit-face" d="M9 3.5h14L29 10v12l-6 6.5H9L3 22V10z"/><ellipse cx="11.9" cy="15.2" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="20.1" cy="15.2" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="12.7" cy="16.2" rx="1.1" ry="2.1" fill="#282032"/><ellipse cx="19.3" cy="16.2" rx="1.1" ry="2.1" fill="#282032"/><path d="M13.2 22.2c1.6 1.5 4 1.5 5.6 0" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="1.5"/></svg></span></button>
       </form>
     </div>
   </dialog>

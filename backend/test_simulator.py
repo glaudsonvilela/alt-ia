@@ -44,6 +44,30 @@ CHART = {"schema": "altside_pool_chart_v1", "pool_id": CATALOG["pools"][0]["id"]
 
 
 class SimulatorTests(unittest.TestCase):
+    def test_multichain_catalog_marks_live_and_history_capabilities(self):
+        robinhood = {**CATALOG["pools"][0], "id": "robinhood:uniswap-v3:weth-usdg-001",
+                     "network": {"name": "Robinhood Chain Mainnet"}, "capabilities": {"simulation_engine": "robinhood_usdg_entry_preview"}}
+        hyper = {**CATALOG["pools"][0], "id": "hyperevm:project-x-v3:khype-usdc-030",
+                 "network": {"name": "HyperEVM Mainnet"}, "capabilities": {"simulation_engine": "hyperevm_analytical_preview"}}
+        solana = {**CATALOG["pools"][0], "id": "svm:solana:orca:whirlpool:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
+                  "network": {"name": "Solana Mainnet"}, "capabilities": {"simulation_engine": "orca_entry_preview"}}
+        with patch.object(simulator, "_json_request", return_value={"pools": [robinhood, hyper, solana]}):
+            options = simulator.pool_options()
+        self.assertEqual([item["simulation_available"] for item in options], [True, False, False])
+        self.assertEqual([item["chart_available"] for item in options], [True, True, False])
+
+    def test_historical_prompt_opens_historical_configuration(self):
+        with patch.object(simulator, "_json_request", return_value=CATALOG):
+            result = simulator.handle_simulation("Simule o histórico de 30 dias da pool WETH/USDC na Base")
+        self.assertEqual(result["input_request"], {"kind": "historical_pool", "pool_id": CATALOG["pools"][0]["id"], "period_days": 30})
+
+    def test_historical_request_uses_altside_candles(self):
+        with patch.object(simulator, "_json_request", return_value=CATALOG), patch.object(simulator, "pool_chart", return_value=CHART) as chart, patch.object(simulator, "replay_pool_history", return_value={"kind": "historical_pool"}) as replay:
+            result = simulator.simulate_pool_request({"kind": "historical_pool", "pool_id": CATALOG["pools"][0]["id"], "capital_quote": "1000", "range_ticks": 1200, "period_days": 7})
+        chart.assert_called_once_with(CATALOG["pools"][0]["id"], "1h")
+        replay.assert_called_once()
+        self.assertEqual(result["simulation"]["kind"], "historical_pool")
+
     def test_swap_calls_engine_with_explicit_amount(self):
         with patch.object(simulator, "_json_request", return_value=SWAP) as request:
             result = simulator.handle_simulation("Simule swap de 100 USDC para WETH com slippage de 0,2%")

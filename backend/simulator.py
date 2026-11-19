@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 from scenarios import pool_price_scenarios
+from historical import PERIOD_INTERVAL, replay_pool_history
 
 
 ALTSIDE_BASE = os.environ.get("ALTSIDE_API_BASE_URL", "https://app.bigbanana.io").rstrip("/")
@@ -17,6 +18,7 @@ PUBLIC_URL = "https://app.bigbanana.io/"
 AMOUNT = r"(\d+(?:[.,]\d+)?)"
 SWAP_RE = re.compile(r"\b(?:swap|trocar|troca|converter|convers[aã]o)\b", re.I)
 POOL_RE = re.compile(r"\b(?:pool|pools|liquidez)\b", re.I)
+HISTORY_RE = re.compile(r"\b(?:hist[oó]ric[oa]|passad[oa]|backtest|retroativ[oa]|[uú]ltimos?\s+\d+\s+dias?)\b", re.I)
 TOKEN_RE = re.compile(r"\b(USDC|WETH|ETH|WBTC|BTC|USDT|CBBTC|USDG|KHYPE|UBTC|WHYPE|SOL|HYPE)\b", re.I)
 
 
@@ -107,7 +109,8 @@ def pool_options():
     catalog = _json_request("/markets/pools")
     options = []
     for pool in catalog.get("pools", []):
-        if pool.get("capabilities", {}).get("simulation_engine") != "canonical_entry_preview":
+        engine = pool.get("capabilities", {}).get("simulation_engine")
+        if engine not in ("canonical_entry_preview", "robinhood_usdg_entry_preview", "hyperevm_analytical_preview", "orca_entry_preview"):
             continue
         try:
             option = {
@@ -121,11 +124,14 @@ def pool_options():
                 "base_is_token0": pool["base_token"]["address"].lower() == pool["token0"]["address"].lower(),
                 "token0_decimals": int(pool["token0"]["decimals"]),
                 "token1_decimals": int(pool["token1"]["decimals"]),
+                "simulation_available": engine in ("canonical_entry_preview", "robinhood_usdg_entry_preview"),
+                "chart_available": engine != "orca_entry_preview",
+                "simulation_engine": engine,
             }
         except (KeyError, TypeError, ValueError):
             continue
         if (option["tick_spacing"] > 0 and 0 <= option["token0_decimals"] <= 36 and 0 <= option["token1_decimals"] <= 36
-                and re.fullmatch(r"[a-z0-9:.-]{1,120}", option["id"])):
+                and re.fullmatch(r"[A-Za-z0-9:.-]{1,120}", option["id"])):
             options.append(option)
     return options[:20]
 
@@ -133,8 +139,11 @@ def pool_options():
 def pool_chart(pool_id, interval):
     if interval not in ("15m", "1h", "4h", "1d"):
         raise SimulationInputError("Intervalo do gráfico inválido.")
-    if not any(item["id"] == pool_id for item in pool_options()):
+    pool = next((item for item in pool_options() if item["id"] == pool_id), None)
+    if pool is None:
         raise SimulationInputError("Pool indisponível para esta prévia.")
+    if not pool["chart_available"]:
+        raise SimulationUnavailable("O histórico de velas desta rede ainda não está conectado ao Altside.")
     raw = _json_request(f"/markets/pool-chart?pool_id={quote(pool_id, safe='')}&interval={interval}")
     if (raw.get("schema") != "altside_pool_chart_v1" or raw.get("pool_id") != pool_id
             or raw.get("interval") != interval or raw.get("source") != "geckoterminal"
@@ -163,7 +172,7 @@ def pool_snapshot(pool_id):
     raw = _json_request(f"/markets/pools/{quote(pool_id, safe=':')}/snapshot")
     source, state, price = raw.get("source") or {}, raw.get("state") or {}, raw.get("price") or {}
     tick = state.get("tick")
-    block = source.get("block_number")
+    block = source.get("slot") if pool["simulation_engine"] == "orca_entry_preview" else source.get("block_number")
     if (raw.get("snapshot_type") != "altside_selected_pool_live_snapshot" or raw.get("pool_id") != pool_id
             or source.get("canonical") is not True or type(tick) is not int or type(block) is not int or block <= 0):
         raise SimulationUnavailable("O motor não retornou um estado canônico válido para esta pool.")
@@ -172,12 +181,17 @@ def pool_snapshot(pool_id):
         "current_tick": tick,
         "tick_spacing": pool["tick_spacing"],
         "block_number": block,
+        "source_label": "Slot" if pool["simulation_engine"] == "orca_entry_preview" else "Bloco",
         "price": {"quote_per_base": price.get("quote_per_base") if price.get("status") == "available" else None,
                   "base_symbol": pool["base_symbol"], "quote_symbol": pool["quote_symbol"]},
     }
 
 
 def _run_pool(pool, amount, range_ticks, bps, explicit_ticks=None):
+    if not pool["simulation_available"]:
+        raise SimulationUnavailable(f"O motor Altside ainda não oferece prévia de entrada para {pool['network']}.")
+    if pool["simulation_engine"] == "robinhood_usdg_entry_preview":
+        return _run_robinhood_pool(pool, amount, range_ticks, bps, explicit_ticks)
     if range_ticks < pool["tick_spacing"] * 2 or range_ticks > 50000:
         raise SimulationInputError(f"A faixa desta pool precisa ter entre {pool['tick_spacing'] * 2} e 50000 ticks.")
     payload = {"capital_quote": amount, "range_ticks": range_ticks, "slippage_bps": bps}
@@ -213,13 +227,69 @@ def _run_pool(pool, amount, range_ticks, bps, explicit_ticks=None):
             "follow_up": f"😊 Quer comparar outra faixa ou outro capital para {base_symbol}?"}
 
 
+def _run_robinhood_pool(pool, amount, range_ticks, bps, explicit_ticks):
+    capital = Decimal(amount)
+    if capital > Decimal("1000000") or capital.as_tuple().exponent < -6:
+        raise SimulationInputError("Na Robinhood Chain, informe até 1 milhão de USDG com no máximo 6 casas decimais.")
+    if bps > 100:
+        raise SimulationInputError("Na Robinhood Chain, o slippage máximo é 1%.")
+    payload = {"capital_usdg": amount, "range_ticks": range_ticks, "slippage_bps": bps}
+    if explicit_ticks is not None:
+        payload.update({"tick_lower": explicit_ticks[0], "tick_upper": explicit_ticks[1]})
+    raw = _json_request(f"/simulate/pools/{quote(pool['id'], safe=':')}/entry", payload)
+    if (raw.get("simulation_type") != "robinhood_prefunded_usdg_entry_preview"
+            or raw.get("pool_id") != pool["id"] or raw.get("transactions_submitted") is not False
+            or raw.get("wallet_balance_changed") is not False):
+        raise SimulationUnavailable("O motor retornou uma prévia inesperada para a Robinhood Chain.")
+    position = raw.get("position") or {}
+    leftover = raw.get("leftover") or {}
+    swap = raw.get("pool_swap") or {}
+    try:
+        amounts = [Decimal(value) if isinstance(value, str) else Decimal("NaN") for value in
+                   (position.get("weth"), position.get("usdg"), leftover.get("expected"), swap.get("pool_fee_usdg"), position.get("current_quote_per_base"))]
+    except InvalidOperation as error:
+        raise SimulationUnavailable("O motor retornou valores incompletos para esta prévia.") from error
+    if (any(not value.is_finite() or value < 0 for value in amounts) or amounts[-1] <= 0
+            or type(position.get("tick_lower")) is not int or type(position.get("tick_upper")) is not int):
+        raise SimulationUnavailable("O motor retornou valores incompletos para esta prévia.")
+    sim = {
+        "kind": "pool", "title": f"Entrada {pool['pair']}",
+        "subtitle": f"{pool['network']} · {pool['protocol']}",
+        "metrics": [
+            {"label": "Capital", "value": f"{amount} USDG"},
+            {"label": "WETH necessário", "value": f"{position['weth']} WETH"},
+            {"label": "USDG necessário", "value": f"{position['usdg']} USDG"},
+            {"label": "Capital não usado", "value": f"{leftover['expected']} USDG"},
+            {"label": "Taxa da troca", "value": f"{swap['pool_fee_usdg']} USDG"},
+        ],
+        "source": _source(raw, "pool"),
+        "assumptions": [f"Faixa: {position.get('tick_lower')} a {position.get('tick_upper')} ticks", f"Slippage: {bps / 100:g}%", "Capital em USDG já disponível na Robinhood Chain. Gas e taxas futuras não incluídos."],
+        "url": PUBLIC_URL,
+    }
+    try:
+        scenario_raw = {
+            "allocation": {"formatted": {"base_required": position["weth"], "quote_required": position["usdg"], "unused_quote": leftover["expected"]}},
+            "price": {"quote_per_base": position["current_quote_per_base"]},
+            "range": {"tick_lower": position["tick_lower"], "tick_upper": position["tick_upper"]},
+        }
+        sim["scenarios"] = pool_price_scenarios(scenario_raw, pool, amount)
+    except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError):
+        sim["assumptions"].append("Cenários de preço indisponíveis para esta prévia.")
+    return {"reply": "Prontinho! 🦀 O Altside calculou a entrada com USDG na Robinhood Chain. Veja a alocação e os cenários de preço 👇", "simulation": sim,
+            "follow_up": "😊 Quer testar outra faixa ou outro capital em USDG?"}
+
+
 def simulate_pool_request(request):
+    if isinstance(request, dict) and request.get("kind") == "historical_pool":
+        return simulate_historical_pool_request(request)
     required = {"kind", "pool_id", "capital_quote", "range_ticks", "slippage_bps"}
     if not isinstance(request, dict) or not required <= set(request) or set(request) - required not in (set(), {"tick_lower", "tick_upper"}) or request.get("kind") != "pool":
         raise SimulationInputError("Parâmetros da simulação inválidos.")
     pool = next((option for option in pool_options() if option["id"] == request["pool_id"]), None)
     if pool is None:
         raise SimulationInputError("Pool indisponível para esta prévia.")
+    if not pool["simulation_available"]:
+        raise SimulationUnavailable(f"O motor Altside ainda não oferece prévia de entrada para {pool['network']}.")
     amount = request["capital_quote"]
     if not isinstance(amount, str) or not re.fullmatch(r"\d+(?:[.,]\d{1,18})?", amount):
         raise SimulationInputError("Informe um capital decimal válido.")
@@ -239,6 +309,33 @@ def simulate_pool_request(request):
             raise SimulationInputError("Os limites da faixa não são válidos para esta pool.")
         explicit_ticks = (lower, upper)
     return _run_pool(pool, amount, ticks, bps, explicit_ticks)
+
+
+def simulate_historical_pool_request(request):
+    required = {"kind", "pool_id", "capital_quote", "range_ticks", "period_days"}
+    if not isinstance(request, dict) or set(request) != required:
+        raise SimulationInputError("Parâmetros do histórico inválidos.")
+    pool = next((option for option in pool_options() if option["id"] == request["pool_id"]), None)
+    if pool is None or not pool["chart_available"]:
+        raise SimulationUnavailable("O histórico desta pool ainda não está conectado ao Altside.")
+    amount = request["capital_quote"]
+    if not isinstance(amount, str) or not re.fullmatch(r"\d+(?:[.,]\d{1,18})?", amount):
+        raise SimulationInputError("Informe um capital decimal válido.")
+    amount = _decimal(amount)
+    if amount is None:
+        raise SimulationInputError("Informe um capital maior que zero e até 10 milhões.")
+    ticks, period_days = request["range_ticks"], request["period_days"]
+    if type(ticks) is not int or ticks < pool["tick_spacing"] * 2 or ticks > 50000:
+        raise SimulationInputError("A faixa histórica é inválida para esta pool.")
+    if type(period_days) is not int or period_days not in PERIOD_INTERVAL:
+        raise SimulationInputError("Escolha um período histórico de 7, 30 ou 90 dias.")
+    chart = pool_chart(pool["id"], PERIOD_INTERVAL[period_days][0])
+    try:
+        simulation = replay_pool_history(chart, pool, amount, ticks, period_days)
+    except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError) as error:
+        raise SimulationUnavailable("Não há velas históricas suficientes para reconstruir este período com segurança.") from error
+    return {"reply": "Aqui está uma simulação ilustrativa com os preços passados da pool. 📊 A tabela mostra como o valor teria mudado; taxas e custos não estão incluídos.",
+            "simulation": simulation, "follow_up": "😊 Quer comparar outro período, capital ou faixa?"}
 
 
 def _swap(text):
@@ -282,28 +379,47 @@ def _swap(text):
             "follow_up": f"😊 Quer testar outro valor ou informar um preço de saída para {token_out}?"}
 
 
-def _pool(text):
+def _pool(text, historical=False):
+    period_match = re.search(r"\b(7|30|90)\s*dias?\b", text, re.I) if historical else None
+    historical_prefill = {"period_days": int(period_match.group(1))} if period_match else {}
     if re.search(r"\b(comparar|compare|comparação)\b", text, re.I):
         return {"reply": "Vamos por partes 😊 Posso calcular uma pool por vez. Diga o par, a rede e o capital; depois comparamos a segunda."}
     pools = pool_options()
     tokens = {"WETH" if m.group(1).upper() == "ETH" else m.group(1).upper() for m in TOKEN_RE.finditer(text)}
     if len(tokens) < 2:
-        return {"reply": "Vamos simular! 🦀 Escolha a pool, o capital e a faixa na janela que abriu.", "input_request": {"kind": "pool"}}
+        return {"reply": "Vamos simular com dados passados! 📊 Escolha a pool, o período, o capital e a faixa na janela." if historical else "Vamos simular! 🦀 Escolha a pool, o capital e a faixa na janela que abriu.",
+                "input_request": {"kind": "historical_pool" if historical else "pool", **historical_prefill}}
     candidates = [p for p in pools if {p["base_symbol"].upper(), p["quote_symbol"].upper()} == tokens]
     lower = text.lower()
     if "base" in lower:
         candidates = [p for p in candidates if p["network"].lower().startswith("base")]
-    elif "ethereum" in lower or "mainnet" in lower:
+    elif "ethereum" in lower:
         candidates = [p for p in candidates if "ethereum" in p["network"].lower()]
+    elif "robinhood" in lower:
+        candidates = [p for p in candidates if "robinhood" in p["network"].lower()]
+    elif "hyper" in lower:
+        candidates = [p for p in candidates if "hyper" in p["network"].lower()]
+    elif "solana" in lower:
+        candidates = [p for p in candidates if "solana" in p["network"].lower()]
     if "aerodrome" in lower:
         candidates = [p for p in candidates if "aerodrome" in p["protocol"].lower()]
     if "uniswap" in lower:
         candidates = [p for p in candidates if "uniswap" in p["protocol"].lower()]
     if not candidates:
-        return {"reply": "Ainda não encontrei esse par entre as pools que posso calcular. 🔎 Escolha uma das opções na janela de simulação.", "input_request": {"kind": "pool"}}
+        return {"reply": "Ainda não encontrei esse par entre as pools disponíveis. 🔎 Escolha uma das opções na janela de simulação.",
+                "input_request": {"kind": "historical_pool" if historical else "pool", **historical_prefill}}
     if len(candidates) > 1:
-        return {"reply": "Achei mais de uma pool para esse par. 😊 Escolha o protocolo na janela de simulação.", "input_request": {"kind": "pool"}}
+        return {"reply": "Achei mais de uma pool para esse par. 😊 Escolha a rede e o protocolo na janela de simulação.",
+                "input_request": {"kind": "historical_pool" if historical else "pool", **historical_prefill}}
     pool = candidates[0]
+    if historical:
+        if not pool["chart_available"]:
+            return {"reply": f"Encontrei {pool['pair']} na {pool['network']}, mas o Altside ainda não fornece velas históricas dessa pool. 🔎 Quer escolher outra rede?"}
+        return {"reply": f"Encontrei o histórico de {pool['pair']} na {pool['network']}. 📊 Escolha período, capital e faixa para eu reconstruir o resultado.",
+                "input_request": {"kind": "historical_pool", "pool_id": pool["id"], **historical_prefill}}
+    if not pool["simulation_available"]:
+        return {"reply": f"Encontrei {pool['pair']} na {pool['network']}. 🔎 O preço ao vivo está disponível, mas a prévia de entrada desta pool ainda não foi conectada à Alt-IA.",
+                "input_request": {"kind": "pool", "pool_id": pool["id"]}}
     quote_symbol = pool["quote_symbol"]
     amount = _amount_for(text, quote_symbol)
     tick_match = re.search(r"(\d{2,6})\s*ticks?\b", text, re.I)
@@ -320,6 +436,8 @@ def handle_simulation(text):
     result = None
     if SWAP_RE.search(text):
         result = _swap(text)
+    elif HISTORY_RE.search(text) and (POOL_RE.search(text) or len(TOKEN_RE.findall(text)) >= 2 or re.search(r"\bsimul", text, re.I)):
+        result = _pool(text, historical=True)
     elif POOL_RE.search(text) and re.search(r"\b(simular|simule|simulação|entrar|entrada|investir|alocar|comparar|compare)\b", text, re.I):
         result = _pool(text)
     if result is not None and not result.get("simulation") and not result["reply"].rstrip().endswith("?"):

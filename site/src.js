@@ -17,7 +17,14 @@ const sidebarClose = document.querySelector('#sidebar-close');
 const poolDialog = document.querySelector('#pool-dialog');
 const poolDialogClose = document.querySelector('#pool-dialog-close');
 const poolForm = document.querySelector('#pool-config-form');
+const poolNetwork = document.querySelector('#pool-network');
 const poolSelect = document.querySelector('#pool-select');
+const poolAvailability = document.querySelector('#pool-availability');
+const poolSubmit = poolForm?.querySelector('.pool-submit');
+const poolMode = document.querySelector('#pool-mode');
+const poolPeriod = document.querySelector('#pool-period');
+const poolPeriodField = document.querySelector('#pool-period-field');
+const poolModeGrid = document.querySelector('#pool-mode-grid');
 const poolCapital = document.querySelector('#pool-capital');
 const poolCapitalUnit = document.querySelector('#pool-capital-unit');
 const poolRange = document.querySelector('#pool-range');
@@ -47,21 +54,25 @@ let marketDrag = null;
 let marketHasData = false;
 
 function safeSimulation(value) {
-  if (!value || !['swap', 'pool'].includes(value.kind) || !Array.isArray(value.metrics) || !value.source) return null;
+  if (!value || !['swap', 'pool', 'historical_pool'].includes(value.kind) || !Array.isArray(value.metrics) || !value.source) return null;
+  const isHistorical = value.kind === 'historical_pool';
   const clean = (v, max = 160) => typeof v === 'string' ? v.slice(0, max) : '';
   const metrics = value.metrics.slice(0, 6).filter((item) => item && typeof item.label === 'string' && typeof item.value === 'string')
     .map((item) => ({ label: clean(item.label, 60), value: clean(item.value, 80) }));
-  if (!metrics.length || !Number.isSafeInteger(value.source.block_number) || value.source.block_number <= 0) return null;
+  if (!metrics.length || (isHistorical
+    ? value.source.kind !== 'historical_candles' || !Number.isSafeInteger(value.source.period_start) || !Number.isSafeInteger(value.source.period_end)
+    : !Number.isSafeInteger(value.source.block_number) || value.source.block_number <= 0)) return null;
   const scenario = value.scenarios;
   const scenarios = scenario && typeof scenario.unit === 'string' && typeof scenario.base_symbol === 'string' && Array.isArray(scenario.rows)
-    ? { unit: clean(scenario.unit, 12), base_symbol: clean(scenario.base_symbol, 12), note: clean(scenario.note, 280),
+    ? { unit: clean(scenario.unit, 12), base_symbol: clean(scenario.base_symbol, 12), caption: clean(scenario.caption, 120), note: clean(scenario.note, 280),
         rows: scenario.rows.slice(0, 7).filter((row) => row && ['gain', 'loss', 'flat'].includes(row.tone)
           && ['label', 'price', 'value', 'pnl'].every((key) => typeof row[key] === 'string'))
           .map((row) => ({ label: clean(row.label, 30), price: clean(row.price, 30), value: clean(row.value, 30), pnl: clean(row.pnl, 30), tone: row.tone })) }
     : null;
   return {
     kind: value.kind, title: clean(value.title), subtitle: clean(value.subtitle), metrics, scenarios,
-    source: { engine: 'Altside · Rust', block_number: value.source.block_number,
+    source: { engine: isHistorical ? 'Alt-IA · dados Altside' : 'Altside · Rust', kind: isHistorical ? 'historical_candles' : 'live', block_number: isHistorical ? null : value.source.block_number,
+      period_start: isHistorical ? value.source.period_start : null, period_end: isHistorical ? value.source.period_end : null,
       block_timestamp: Number.isSafeInteger(value.source.block_timestamp) ? value.source.block_timestamp : null,
       captured_at: clean(value.source.captured_at, 40), validity: clean(value.source.validity, 180) },
     assumptions: Array.isArray(value.assumptions) ? value.assumptions.filter((item) => typeof item === 'string').slice(0, 5).map((item) => clean(item)) : [],
@@ -205,10 +216,10 @@ function renderHistory() {
 function createSimulationCard(simulation) {
   const card = document.createElement('section');
   card.className = 'simulation-card';
-  card.setAttribute('aria-label', 'Prévia calculada pelo Altside');
+  card.setAttribute('aria-label', simulation.kind === 'historical_pool' ? 'Reconstituição com dados históricos do Altside' : 'Prévia calculada pelo Altside');
   const eyebrow = document.createElement('span');
   eyebrow.className = 'simulation-eyebrow';
-  eyebrow.textContent = 'PRÉVIA · MOTOR ALTSIDE';
+  eyebrow.textContent = simulation.kind === 'historical_pool' ? 'HISTÓRICO · DADOS ALTSIDE' : 'PRÉVIA · MOTOR ALTSIDE';
   const title = document.createElement('h3');
   title.textContent = simulation.title;
   const subtitle = document.createElement('p');
@@ -232,10 +243,10 @@ function createSimulationCard(simulation) {
     const table = document.createElement('table');
     table.className = 'simulation-scenarios';
     const caption = document.createElement('caption');
-    caption.textContent = `📊 Se o preço de ${simulation.scenarios.base_symbol} mudar · valores em ${simulation.scenarios.unit}`;
+    caption.textContent = simulation.scenarios.caption || `📊 Se o preço de ${simulation.scenarios.base_symbol} mudar · valores em ${simulation.scenarios.unit}`;
     const head = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    ['Cenário', 'Preço', 'Valor final', 'Ganho/perda'].forEach((label) => {
+    [simulation.kind === 'historical_pool' ? 'Data' : 'Cenário', 'Preço', 'Valor', 'Ganho/perda'].forEach((label) => {
       const heading = document.createElement('th');
       heading.scope = 'col';
       heading.textContent = label;
@@ -263,7 +274,9 @@ function createSimulationCard(simulation) {
   const provenance = document.createElement('div');
   provenance.className = 'simulation-provenance';
   const block = document.createElement('span');
-  block.textContent = `Bloco #${simulation.source.block_number.toLocaleString('pt-BR')}`;
+  block.textContent = simulation.source.kind === 'historical_candles'
+    ? `Velas ${new Date(simulation.source.period_start * 1000).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}–${new Date(simulation.source.period_end * 1000).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}`
+    : `Bloco #${simulation.source.block_number.toLocaleString('pt-BR')}`;
   const captured = document.createElement('time');
   const capturedDate = new Date(simulation.source.captured_at);
   captured.textContent = Number.isNaN(capturedDate.getTime()) ? 'Captura recente' : `Capturado ${capturedDate.toLocaleString('pt-BR')}`;
@@ -407,6 +420,7 @@ function rangePrices() {
   return { floor: Math.min(first, last), ceiling: Math.max(first, last) };
 }
 function renderMarketRange() {
+  if (poolMode?.value === 'history') return;
   if (!marketCandles || !marketChart || !marketHasData || !poolSnapshot || !selectedRange) return;
   const bounds = rangePrices();
   if (!bounds) return;
@@ -483,6 +497,10 @@ async function loadPoolChart() {
   poolChartStatus.textContent = 'Carregando velas reais da pool…';
   document.getElementById('pool-chart-source').textContent = 'Histórico da pool';
   if (!pool) return;
+  if (!pool.chart_available) {
+    poolChartStatus.textContent = 'O histórico de velas desta rede ainda não está conectado ao Altside.';
+    return;
+  }
   ensureMarketChart();
   marketChart.applyOptions({ width: poolPriceCanvas.clientWidth });
   for (const line of Object.values(marketLines)) marketCandles.removePriceLine(line);
@@ -493,7 +511,10 @@ async function loadPoolChart() {
     const data = await response.json();
     if (!response.ok || data.pool_id !== pool.id || data.interval !== marketInterval || !Array.isArray(data.candles) || !data.candles.length) throw new Error(data.error || 'Histórico indisponível.');
     if (requestSeq !== marketRequestSeq || !poolDialog.open) return;
-    marketCandles.setData(data.candles);
+    const candles = poolMode.value === 'history'
+      ? data.candles.filter((item) => item.time >= data.candles.at(-1).time - Number(poolPeriod.value) * 86400)
+      : data.candles;
+    marketCandles.setData(candles);
     marketHasData = true;
     marketChart.timeScale().fitContent();
     poolChartStatus.hidden = true;
@@ -510,7 +531,9 @@ function renderSelectedRange() {
   poolRange.value = String(selectedRange.upper - selectedRange.lower);
   const bounds = rangePrices();
   const pool = selectedPool();
-  poolRangeHint.textContent = bounds && pool
+  poolRangeHint.textContent = poolMode?.value === 'history'
+    ? `Faixa de ${poolRange.value} ticks centrada no primeiro preço histórico do período. Custos e taxas futuras não entram no resultado.`
+    : bounds && pool
     ? `Piso ${formatPrice(bounds.floor)} · teto ${formatPrice(bounds.ceiling)} ${pool.quote_symbol}. Limites alinhados aos ticks da pool.`
     : 'Limites ajustados ao espaçamento de ticks da pool.';
   renderMarketRange();
@@ -542,12 +565,12 @@ async function loadPoolSnapshot() {
     if (!response.ok || data.pool_id !== pool.id || !Number.isInteger(data.current_tick) || !Number.isInteger(data.tick_spacing)) throw new Error(data.error || 'Estado da pool indisponível.');
     if (requestSeq !== chartRequestSeq || !poolDialog.open) return;
     poolSnapshot = data;
-    document.getElementById('range-chart-block').textContent = `Bloco ${data.block_number.toLocaleString('pt-BR')}`;
+    document.getElementById('range-chart-block').textContent = `${data.source_label === 'Slot' ? 'Slot' : 'Bloco'} ${data.block_number.toLocaleString('pt-BR')}`;
     const price = Number(data.price?.quote_per_base);
     document.getElementById('range-chart-price').textContent = Number.isFinite(price) && price > 0
-      ? `Preço indicativo · 1 ${pool.base_symbol} ≈ ${price.toLocaleString('pt-BR', { maximumFractionDigits: 6 })} ${pool.quote_symbol}`
+      ? `${poolMode.value === 'history' ? 'Preço agora' : 'Preço indicativo'} · 1 ${pool.base_symbol} ≈ ${price.toLocaleString('pt-BR', { maximumFractionDigits: 6 })} ${pool.quote_symbol}`
       : 'Preço indicativo indisponível · ajuste pela escala de ticks';
-    centerRange(Number(poolRange.value) || 1200);
+    if (poolMode.value !== 'history') centerRange(Number(poolRange.value) || 1200);
     rangeChart.classList.add('is-ready');
   } catch (error) {
     if (requestSeq !== chartRequestSeq || !poolDialog.open) return;
@@ -559,16 +582,64 @@ async function loadPoolSnapshot() {
 function updatePoolFields(ensureMinimum = false) {
   const pool = selectedPool();
   if (!pool) return;
+  const historical = poolMode.value === 'history';
+  const available = historical ? pool.chart_available : pool.simulation_available;
+  poolSubmit.disabled = !available;
+  poolAvailability.hidden = available;
+  poolAvailability.textContent = available ? '' : historical
+    ? `🔎 ${pool.network}: o histórico de velas desta pool ainda não está conectado ao Altside.`
+    : `🔎 ${pool.network}: preço ao vivo disponível. A prévia de entrada desta pool ainda não está conectada à Alt-IA.`;
   poolCapitalUnit.textContent = pool.quote_symbol;
   const minimum = pool.tick_spacing * 2;
   poolRange.min = String(minimum);
   if (ensureMinimum && (!Number.isInteger(Number(poolRange.value)) || Number(poolRange.value) < minimum)) poolRange.value = String(Math.max(1200, minimum));
   const ticks = Number(poolRange.value);
   const approximateHalfWidth = (Math.pow(1.0001, ticks / 2) - 1) * 100;
-  poolRangeHint.textContent = Number.isFinite(approximateHalfWidth)
+  poolRangeHint.textContent = historical
+    ? `Faixa de ${ticks} ticks centrada no primeiro preço histórico do período. Custos e taxas futuras não entram no resultado.`
+    : Number.isFinite(approximateHalfWidth)
     ? `Faixa aproximada de ±${approximateHalfWidth.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% em torno do preço atual. Mínimo: ${minimum} ticks.`
     : `Mínimo para esta pool: ${minimum} ticks.`;
-  if (poolSnapshot && Number.isInteger(ticks) && ticks >= minimum && ticks <= 50000) centerRange(ticks);
+  if (!historical && poolSnapshot && Number.isInteger(ticks) && ticks >= minimum && ticks <= 50000) centerRange(ticks);
+}
+
+function updatePoolMode() {
+  const historical = poolMode.value === 'history';
+  document.getElementById('pool-dialog-title').textContent = historical ? 'Explore o que passou.' : 'Desenhe sua entrada.';
+  document.querySelector('.pool-dialog-copy p').textContent = historical
+    ? 'Escolha uma pool e reconstrua o valor de uma faixa com preços históricos do Altside.'
+    : 'Escolha a pool e ajuste os parâmetros antes de consultar o motor Altside.';
+  poolPeriodField.hidden = !historical;
+  poolModeGrid.classList.toggle('is-history', historical);
+  document.querySelector('.pool-slippage-row').hidden = historical;
+  document.getElementById('pool-slippage-hint').textContent = historical
+    ? 'Reconstituição com preços históricos de fechamento. Taxas recebidas, gas e execução não são calculados.'
+    : 'Prévia somente leitura. Nenhuma transação é enviada.';
+  document.getElementById('range-chart-note').textContent = historical
+    ? 'Veja os preços passados. A faixa histórica é centrada na primeira vela e sua largura vem do campo de ticks.'
+    : 'Arraste piso e teto no gráfico ou ajuste os ticks abaixo · dados Altside/GeckoTerminal';
+  document.getElementById('pool-submit-label').textContent = historical ? 'Simular período histórico' : 'Calcular prévia';
+  if (historical) {
+    marketInterval = ({ '7': '1h', '30': '4h', '90': '1d' })[poolPeriod.value];
+    document.querySelectorAll('#pool-chart-intervals [data-interval]').forEach((button) => {
+      button.classList.toggle('active', button.dataset.interval === marketInterval);
+      button.setAttribute('aria-pressed', button.dataset.interval === marketInterval ? 'true' : 'false');
+    });
+  }
+  document.querySelectorAll('#pool-chart-intervals [data-interval]').forEach((button) => { button.disabled = historical; });
+  updatePoolFields();
+  loadPoolChart();
+}
+
+function renderPoolChoices(preferredPoolId) {
+  const candidates = poolOptions.filter((pool) => pool.network === poolNetwork.value);
+  poolSelect.replaceChildren(...candidates.map((pool) => new Option(`${pool.pair} · ${pool.protocol}`, pool.id)));
+  poolSelect.value = candidates.some((pool) => pool.id === preferredPoolId) ? preferredPoolId : (candidates[0]?.id || '');
+  poolSnapshot = null;
+  selectedRange = null;
+  updatePoolFields(true);
+  loadPoolSnapshot();
+  loadPoolChart();
 }
 
 async function openPoolDialog(prefill = {}) {
@@ -576,46 +647,55 @@ async function openPoolDialog(prefill = {}) {
   showPoolError('');
   if (!poolDialog.open) poolDialog.showModal();
   if (!poolOptions) {
+    poolNetwork.replaceChildren(new Option('Carregando redes…', ''));
+    poolNetwork.disabled = true;
     poolSelect.replaceChildren(new Option('Carregando pools…', ''));
     poolSelect.disabled = true;
     try {
       const response = await fetch('/api/pool-options', { cache: 'no-store' });
       const data = await response.json();
       if (!response.ok || !Array.isArray(data.pools)) throw new Error(data.error || 'Não foi possível carregar as pools.');
-      poolOptions = data.pools.filter((pool) => pool && typeof pool.id === 'string' && typeof pool.pair === 'string' && typeof pool.quote_symbol === 'string' && Number.isInteger(pool.tick_spacing) && pool.tick_spacing > 0 && typeof pool.base_is_token0 === 'boolean' && Number.isInteger(pool.token0_decimals) && Number.isInteger(pool.token1_decimals));
+      poolOptions = data.pools.filter((pool) => pool && typeof pool.id === 'string' && typeof pool.pair === 'string' && typeof pool.network === 'string' && typeof pool.protocol === 'string' && typeof pool.quote_symbol === 'string' && typeof pool.simulation_available === 'boolean' && typeof pool.chart_available === 'boolean' && Number.isInteger(pool.tick_spacing) && pool.tick_spacing > 0 && typeof pool.base_is_token0 === 'boolean' && Number.isInteger(pool.token0_decimals) && Number.isInteger(pool.token1_decimals));
       if (!poolOptions.length) throw new Error('Não há pools disponíveis para prévia agora.');
     } catch (error) {
       poolOptions = null;
       showPoolError(error.message || 'Não foi possível carregar as pools.');
+      poolNetwork.replaceChildren(new Option('Redes indisponíveis', ''));
       poolSelect.replaceChildren(new Option('Pools indisponíveis', ''));
       return;
     } finally {
+      poolNetwork.disabled = false;
       poolSelect.disabled = false;
     }
   }
-  poolSelect.replaceChildren(...poolOptions.map((pool) => new Option(`${pool.pair} · ${pool.network} · ${pool.protocol}`, pool.id)));
   const defaultPool = poolOptions.find((pool) => pool.pair === 'WETH/USDC' && pool.network.toLowerCase().startsWith('base')) || poolOptions[0];
-  poolSelect.value = poolOptions.some((pool) => pool.id === prefill.pool_id) ? prefill.pool_id : defaultPool.id;
+  const selected = poolOptions.find((pool) => pool.id === prefill.pool_id) || defaultPool;
+  poolNetwork.replaceChildren(...[...new Set(poolOptions.map((pool) => pool.network))].map((network) => new Option(network, network)));
+  poolNetwork.value = selected.network;
+  poolMode.value = prefill.kind === 'historical_pool' ? 'history' : 'live';
+  poolPeriod.value = [7, 30, 90].includes(prefill.period_days) ? String(prefill.period_days) : '7';
   poolCapital.value = typeof prefill.capital_quote === 'string' ? prefill.capital_quote : '';
   poolRange.value = Number.isInteger(prefill.range_ticks) ? String(prefill.range_ticks) : '1200';
   poolSlippage.value = Number.isInteger(prefill.slippage_bps) ? String(prefill.slippage_bps / 100).replace('.', ',') : '0,2';
-  poolSnapshot = null;
-  selectedRange = null;
-  updatePoolFields(true);
-  loadPoolSnapshot();
-  loadPoolChart();
+  renderPoolChoices(selected.id);
+  updatePoolMode();
   poolSelect.focus();
 }
 
 document.querySelector('[data-action="configure-pool"]')?.addEventListener('click', () => openPoolDialog());
+document.querySelector('[data-action="historical-pool"]')?.addEventListener('click', () => openPoolDialog({ kind: 'historical_pool' }));
 poolDialogClose?.addEventListener('click', () => poolDialog?.close());
 poolDialog?.addEventListener('click', (event) => { if (event.target === poolDialog) poolDialog.close(); });
 poolDialog?.addEventListener('close', () => { chartRequestSeq++; marketRequestSeq++; marketDrag = null; });
+poolNetwork?.addEventListener('change', () => renderPoolChoices());
+poolMode?.addEventListener('change', updatePoolMode);
+poolPeriod?.addEventListener('change', updatePoolMode);
 poolSelect?.addEventListener('change', () => { poolSnapshot = null; selectedRange = null; updatePoolFields(true); loadPoolSnapshot(); loadPoolChart(); });
 poolRange?.addEventListener('change', () => updatePoolFields());
 document.querySelectorAll('#pool-chart-intervals [data-interval]').forEach((button) => {
   button.setAttribute('aria-pressed', button.dataset.interval === marketInterval ? 'true' : 'false');
   button.addEventListener('click', () => {
+    if (poolMode.value === 'history') return;
     if (button.dataset.interval === marketInterval) return;
     marketInterval = button.dataset.interval;
     document.querySelectorAll('#pool-chart-intervals [data-interval]').forEach((item) => {
@@ -675,16 +755,23 @@ poolForm?.addEventListener('submit', (event) => {
   const slippageText = poolSlippage.value.trim().replace(',', '.');
   const slippage = Number(slippageText);
   if (!pool) return showPoolError('Escolha uma pool.');
+  const historical = poolMode.value === 'history';
+  if (historical && !pool.chart_available) return showPoolError(`O histórico da ${pool.network} ainda não está conectado.`);
+  if (!historical && !pool.simulation_available) return showPoolError(`A prévia de entrada da ${pool.network} ainda não está conectada.`);
   if (!/^\d+(?:\.\d{1,18})?$/.test(capital) || Number(capital) <= 0 || Number(capital) > 10_000_000) return showPoolError('Informe um capital válido, maior que zero e até 10 milhões.');
   if (!Number.isInteger(ticks) || ticks < pool.tick_spacing * 2 || ticks > 50000) return showPoolError(`A faixa precisa ter entre ${pool.tick_spacing * 2} e 50000 ticks.`);
-  if (!/^\d+(?:\.\d{1,2})?$/.test(slippageText) || slippage < 0 || slippage > 5) return showPoolError('O slippage deve estar entre 0% e 5%, com até duas casas decimais.');
+  if (!historical && (!/^\d+(?:\.\d{1,2})?$/.test(slippageText) || slippage < 0 || slippage > (pool.simulation_engine === 'robinhood_usdg_entry_preview' ? 1 : 5))) return showPoolError(`O slippage deve estar entre 0% e ${pool.simulation_engine === 'robinhood_usdg_entry_preview' ? 1 : 5}%, com até duas casas decimais.`);
   showPoolError('');
-  pendingSimulationRequest = { kind: 'pool', pool_id: pool.id, capital_quote: capital, range_ticks: ticks, slippage_bps: Math.round(slippage * 100) };
-  if (poolSnapshot?.pool_id === pool.id && selectedRange && selectedRange.upper - selectedRange.lower === ticks) {
+  pendingSimulationRequest = historical
+    ? { kind: 'historical_pool', pool_id: pool.id, capital_quote: capital, range_ticks: ticks, period_days: Number(poolPeriod.value) }
+    : { kind: 'pool', pool_id: pool.id, capital_quote: capital, range_ticks: ticks, slippage_bps: Math.round(slippage * 100) };
+  if (!historical && poolSnapshot?.pool_id === pool.id && selectedRange && selectedRange.upper - selectedRange.lower === ticks) {
     pendingSimulationRequest.tick_lower = selectedRange.lower;
     pendingSimulationRequest.tick_upper = selectedRange.upper;
   }
-  chatInput.value = `Simule entrada de ${capital} ${pool.quote_symbol} na pool ${pool.pair} da ${pool.network} (${pool.protocol}), faixa de ${ticks} ticks e slippage de ${slippage.toLocaleString('pt-BR')}%`;
+  chatInput.value = historical
+    ? `Simule os últimos ${poolPeriod.value} dias da pool ${pool.pair} na ${pool.network} com ${capital} ${pool.quote_symbol} e faixa de ${ticks} ticks`
+    : `Simule entrada de ${capital} ${pool.quote_symbol} na pool ${pool.pair} da ${pool.network} (${pool.protocol}), faixa de ${ticks} ticks e slippage de ${slippage.toLocaleString('pt-BR')}%`;
   resizeComposer();
   poolDialog.close();
   chatForm.requestSubmit();

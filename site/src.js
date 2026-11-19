@@ -11,6 +11,13 @@ const welcome = document.querySelector('#welcome');
 const modePlus = document.querySelector('#mode-plus');
 const modeMenu = document.querySelector('#mode-menu');
 const nerdToggle = document.querySelector('#nerd-toggle');
+const agentToggle = document.querySelector('#agent-toggle');
+const agentIntro = document.querySelector('#agent-intro');
+const agentWindow = document.querySelector('#agent-window');
+const agentStatus = document.querySelector('#agent-status');
+const agentUrl = document.querySelector('#agent-url');
+const agentImage = document.querySelector('#agent-image');
+const agentCursor = document.querySelector('#agent-cursor');
 const modeBadge = document.querySelector('#mode-badge');
 const nerdGrid = document.querySelector('#nerd-grid');
 const normalGrid = document.querySelector('.prompt-grid');
@@ -184,6 +191,7 @@ function readConversations() {
         title: typeof item.title === 'string' ? item.title : 'Nova conversa',
         pinned: item.pinned === true,
         nerdMode: item.nerdMode === true,
+        agentMode: item.agentMode === true,
         nerdTopic: item.nerdTopic === 'strategies' ? 'strategies' : 'research',
         updatedAt: Number(item.updatedAt) || Date.now(),
         messages: item.messages.filter((message) => message && (message.role === 'user' || message.role === 'ai') && typeof message.text === 'string').slice(-100)
@@ -212,33 +220,44 @@ if (!conversations.some((item) => item.id === activeId)) {
   activeId = conversations.sort((a, b) => b.updatedAt - a.updatedAt)[0]?.id || null;
 }
 let draftNerdMode = false;
+let draftAgentMode = false;
 let draftNerdTopic = 'research';
+const agentDesktop = window.matchMedia('(min-width: 900px) and (pointer: fine)');
 
 function currentConversation() { return conversations.find((item) => item.id === activeId); }
 function isNerdMode() { return currentConversation()?.nerdMode ?? draftNerdMode; }
+function isAgentMode() { return agentDesktop.matches && (currentConversation()?.agentMode ?? draftAgentMode); }
 function nerdTopic() { return currentConversation()?.nerdTopic || draftNerdTopic; }
 
 function applyNerdModeUI() {
-  const active = isNerdMode();
+  const agent = isAgentMode();
+  const active = isNerdMode() && !agent;
   const topic = nerdTopic();
   site?.classList.toggle('nerd-mode', active);
+  site?.classList.toggle('agent-mode', agent);
   const mascot = welcome?.querySelector('.welcome-character');
-  if (mascot) mascot.style.backgroundColor = active ? '#81a6ed' : '#ad73d8';
-  if (normalGrid) normalGrid.hidden = active;
+  if (mascot) {
+    mascot.style.backgroundColor = active ? '#81a6ed' : '#ad73d8';
+    if (agent) mascot.style.setProperty('--fire', '#ef7844');
+  }
+  if (normalGrid) normalGrid.hidden = active || agent;
   if (nerdGrid) nerdGrid.hidden = !active;
+  if (agentIntro) agentIntro.hidden = !agent;
+  if (agentWindow) agentWindow.hidden = !(agent && agentStarted);
   const kicker = welcome?.querySelector('.welcome-kicker');
   const title = welcome?.querySelector('h1');
   const description = welcome?.querySelector(':scope > p');
-  if (kicker) kicker.textContent = active ? 'ALT-IA · MODO NERD' : 'ALT-IA · ALTSIDE';
-  if (title) title.textContent = active ? 'Vamos investigar a fundo?' : 'O que vamos simular hoje?';
-  if (description) description.textContent = active
+  if (kicker) kicker.textContent = agent ? 'ALT-IA · MODO AGENTE' : active ? 'ALT-IA · MODO NERD' : 'ALT-IA · ALTSIDE';
+  if (title) title.textContent = agent ? 'Vamos explorar juntos?' : active ? 'Vamos investigar a fundo?' : 'O que vamos simular hoje?';
+  if (description) description.textContent = agent ? 'Peça para explorar um site. A janela aparece quando o agente começa a navegar.' : active
     ? 'Pesquise um tema ou explore uma estratégia. O agente consulta a web, compara fontes e organiza uma resposta detalhada.'
     : 'Descreva um cenário de mercado, uma pool ou uma estratégia. A Alt-IA pode ajudar você a explorar possibilidades.';
-  if (chatInput) chatInput.placeholder = active ? (topic === 'strategies' ? 'Descreva a estratégia que quer analisar...' : 'O que você quer pesquisar?') : 'Descreva o que você quer simular...';
-  if (composerNote) composerNote.textContent = active ? 'O agente consulta fontes públicas na web. Confira as referências antes de decidir.'
+  if (chatInput) chatInput.placeholder = agent ? 'Peça ao agente para explorar o site aberto...' : active ? (topic === 'strategies' ? 'Descreva a estratégia que quer analisar...' : 'O que você quer pesquisar?') : 'Descreva o que você quer simular...';
+  if (composerNote) composerNote.textContent = agent ? 'Navegador temporário. A sessão é apagada ao encerrar.' : active ? 'O agente consulta fontes públicas na web. Confira as referências antes de decidir.'
     : 'Pools, lending e wallets usam dados do Altside. Nenhuma transação é enviada.';
-  if (modeBadge) { modeBadge.hidden = !active; modeBadge.textContent = `Modo Nerd · ${topic === 'strategies' ? 'Estratégias' : 'Research'}`; }
+  if (modeBadge) { modeBadge.hidden = !active && !agent; modeBadge.textContent = agent ? 'Modo Agente' : `Modo Nerd · ${topic === 'strategies' ? 'Estratégias' : 'Research'}`; }
   if (nerdToggle) nerdToggle.setAttribute('aria-checked', String(active));
+  if (agentToggle) agentToggle.setAttribute('aria-checked', String(agent));
   nerdGrid?.querySelectorAll('[data-nerd-topic]').forEach((button) => button.classList.toggle('selected', button.dataset.nerdTopic === topic));
   chatMessages?.querySelectorAll('.message-ai').forEach((row) => row.classList.toggle('message-nerd', active));
 }
@@ -269,12 +288,13 @@ const pinIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 const deleteIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg>';
 const historyLogoSvg = '<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><g transform="rotate(-9 18 18)"><rect x="2" y="2" width="32" height="32" rx="12" fill="#ad73d8"/><ellipse cx="13" cy="17" rx="5.3" ry="8" fill="#fff"/><ellipse cx="23" cy="17" rx="5.3" ry="8" fill="#fff"/><ellipse cx="15" cy="19" rx="2.5" ry="4" fill="#17151a"/><ellipse cx="21" cy="19" rx="2.5" ry="4" fill="#17151a"/></g></svg>';
 const historyNerdSvg = '<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><rect x="2" y="2" width="32" height="32" rx="12" fill="#81a6ed"/><ellipse cx="13" cy="17" rx="4.4" ry="6.6" fill="#fff"/><ellipse cx="23" cy="17" rx="4.4" ry="6.6" fill="#fff"/><circle cx="14.2" cy="18" r="2.1" fill="#172038"/><circle cx="24.2" cy="18" r="2.1" fill="#172038"/><g fill="none" stroke="#25334f" stroke-width="1.8"><rect x="6.7" y="10.7" width="12.5" height="13" rx="3"/><rect x="18.9" y="10.7" width="12.5" height="13" rx="3"/><path d="M19 16h-1"/></g><path d="M15.5 27h5m-4.3 0v2.6m3.5-2.6v2.6" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
+const historyAgentSvg = '<svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2" y="2" width="32" height="32" rx="12" fill="#9b77cd"/><path d="M8 12 14 7 18 13 23 6 29 12v13H8Z" fill="#ff9d5d"/><ellipse cx="13" cy="19" rx="4" ry="6" fill="#fff1db"/><ellipse cx="23" cy="19" rx="4" ry="6" fill="#fff1db"/><ellipse cx="14" cy="20" rx="2" ry="3" fill="#472b3b"/><ellipse cx="24" cy="20" rx="2" ry="3" fill="#472b3b"/></svg>';
 
-function createHistoryLogo(nerdMode = false) {
+function createHistoryLogo(nerdMode = false, agentMode = false) {
   const icon = document.createElement('span');
   icon.className = `history-item-icon history-logo${nerdMode ? ' history-nerd' : ''}`;
   icon.setAttribute('aria-hidden', 'true');
-  icon.innerHTML = nerdMode ? historyNerdSvg : historyLogoSvg;
+  icon.innerHTML = agentMode ? historyAgentSvg : nerdMode ? historyNerdSvg : historyLogoSvg;
   return icon;
 }
 
@@ -296,13 +316,14 @@ function renderHistory() {
     button.className = 'history-item';
     button.setAttribute('aria-current', conversation.id === activeId ? 'page' : 'false');
     button.title = conversation.title;
-    const icon = createHistoryLogo(conversation.nerdMode);
+    const icon = createHistoryLogo(conversation.nerdMode, conversation.agentMode);
     const label = document.createElement('span');
     label.className = 'history-item-label';
     label.textContent = conversation.title;
     button.append(icon, label);
     button.addEventListener('click', () => {
       pendingDeleteId = null;
+      if (agentStarted && activeId !== conversation.id) void stopAgentSession();
       activeId = conversation.id;
       persist();
       renderHistory();
@@ -777,8 +798,10 @@ window.addEventListener('keydown', (event) => { if (event.key === 'Escape') clos
 
 newChatButton?.addEventListener('click', () => {
   pendingDeleteId = null;
+  if (agentStarted) void stopAgentSession();
   activeId = null;
   draftNerdMode = false;
+  draftAgentMode = false;
   draftNerdTopic = 'research';
   closeModeMenu();
   persist();
@@ -787,6 +810,114 @@ newChatButton?.addEventListener('click', () => {
   closeSidebar();
   chatInput?.focus();
 });
+let agentStarted = false;
+let agentRefreshing = false;
+let agentStartPromise = null;
+async function agentRequest(path, payload = {}, method = 'POST') {
+  const response = await fetch(`/api/agent/${path}`, { method, headers: { 'Content-Type': 'application/json' },
+    body: method === 'DELETE' ? undefined : JSON.stringify(payload) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Falha no navegador temporário.');
+  return data;
+}
+async function startAgentSession() {
+  if (agentStarted || !isAgentMode()) return;
+  if (agentStartPromise) return agentStartPromise;
+  agentStartPromise = (async () => {
+    try {
+      if (agentStatus) agentStatus.textContent = 'Iniciando navegador temporário…';
+      await agentRequest('start');
+      agentStarted = true;
+      applyNerdModeUI();
+      await refreshAgentWindow();
+    } catch (error) { if (agentStatus) agentStatus.textContent = error.message; throw error; }
+    finally { agentStartPromise = null; }
+  })();
+  return agentStartPromise;
+}
+async function stopAgentSession() {
+  agentStarted = false;
+  applyNerdModeUI();
+  if (agentImage) agentImage.removeAttribute('src');
+  if (agentUrl) agentUrl.textContent = 'Sessão isolada · dados apagados ao encerrar';
+  try { await agentRequest('session', {}, 'DELETE'); } catch { /* Idle expiration also closes the context. */ }
+}
+async function refreshAgentWindow() {
+  if (!agentStarted || !isAgentMode() || agentRefreshing || document.hidden) return;
+  agentRefreshing = true;
+  try {
+    const response = await fetch('/api/agent/state', { cache: 'no-store' });
+    const state = await response.json();
+    if (!response.ok) throw new Error(state.error || 'Sessão encerrada.');
+    if (agentStatus) agentStatus.textContent = state.running ? 'Navegando e analisando…' : state.status || 'Pronto';
+    if (agentUrl) agentUrl.textContent = state.url === 'about:blank' ? 'Sessão isolada · dados apagados ao encerrar' : state.url;
+    if (state.url && state.url !== 'about:blank' && agentImage) agentImage.src = `/api/agent/image?t=${Date.now()}`;
+    if (agentCursor) {
+      agentCursor.hidden = !state.cursor || state.url === 'about:blank';
+      if (!agentCursor.hidden) { agentCursor.style.left = `${state.cursor.x / 11}%`; agentCursor.style.top = `${state.cursor.y / 7.2}%`; }
+    }
+  } catch (error) { if (agentStatus) agentStatus.textContent = error.message; }
+  finally { agentRefreshing = false; }
+}
+setInterval(() => { void refreshAgentWindow(); }, 2400);
+document.querySelector('#agent-close')?.addEventListener('click', async () => {
+  const conversation = currentConversation();
+  if (conversation) conversation.agentMode = false;
+  else draftAgentMode = false;
+  persist(); renderHistory(); applyNerdModeUI();
+  await stopAgentSession();
+});
+window.addEventListener('pagehide', () => {
+  if (agentStarted) fetch('/api/agent/session', { method: 'DELETE', keepalive: true }).catch(() => {});
+});
+const agentScreen = document.querySelector('.agent-screen');
+let agentInputQueue = Promise.resolve();
+function queueAgentInput(path, payload) {
+  agentInputQueue = agentInputQueue.catch(() => {}).then(async () => {
+    await agentRequest(path, payload);
+    await refreshAgentWindow();
+  });
+  return agentInputQueue;
+}
+agentScreen?.addEventListener('click', async (event) => {
+  agentScreen.focus();
+  if (!agentImage?.hasAttribute('src')) return;
+  const rect = agentImage.getBoundingClientRect();
+  const scale = Math.min(rect.width / 1100, rect.height / 720);
+  const x = (event.clientX - rect.left - (rect.width - 1100 * scale) / 2) / scale;
+  const y = (event.clientY - rect.top - (rect.height - 720 * scale) / 2) / scale;
+  try { await queueAgentInput('manual-click', { x, y }); }
+  catch (error) { if (agentStatus) agentStatus.textContent = error.message; }
+});
+agentScreen?.addEventListener('keydown', async (event) => {
+  if (!agentStarted || event.isComposing) return;
+  const special = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
+  const key = event.ctrlKey || event.metaKey ? event.key.toLowerCase() === 'a' ? 'ControlOrMeta+A' : null
+    : special.includes(event.key) ? event.key : null;
+  if (!key && (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey)) return;
+  event.preventDefault();
+  try {
+    if (key) await queueAgentInput('key', { key });
+    else await queueAgentInput('type', { value: event.key });
+  } catch (error) { if (agentStatus) agentStatus.textContent = error.message; }
+});
+agentScreen?.addEventListener('paste', async (event) => {
+  const value = event.clipboardData?.getData('text/plain')?.slice(0, 500);
+  if (!agentStarted || !value) return;
+  event.preventDefault();
+  try { await queueAgentInput('type', { value }); }
+  catch (error) { if (agentStatus) agentStatus.textContent = error.message; }
+});
+let agentWheelPending = false;
+agentScreen?.addEventListener('wheel', async (event) => {
+  if (!agentStarted) return;
+  event.preventDefault();
+  if (agentWheelPending) return;
+  agentWheelPending = true;
+  try { await queueAgentInput('scroll', { dy: event.deltaY }); }
+  catch (error) { if (agentStatus) agentStatus.textContent = error.message; }
+  finally { agentWheelPending = false; }
+}, { passive: false });
 
 modePlus?.addEventListener('click', () => {
   const show = modeMenu?.hidden;
@@ -855,8 +986,9 @@ nerdToggle?.addEventListener('click', async () => {
     if (activeId !== startingId) return;
     burstMascot(mascot, oldMode);
     const conversation = currentConversation();
-    if (conversation) conversation.nerdMode = !conversation.nerdMode;
-    else draftNerdMode = !draftNerdMode;
+    if (conversation) { conversation.nerdMode = !conversation.nerdMode; conversation.agentMode = false; }
+    else { draftNerdMode = !draftNerdMode; draftAgentMode = false; }
+    if (agentStarted) void stopAgentSession();
     persist();
     renderHistory();
     applyNerdModeUI();
@@ -889,6 +1021,41 @@ nerdToggle?.addEventListener('click', async () => {
     nerdToggle.disabled = false;
     chatInput?.focus();
   }
+});
+agentToggle?.addEventListener('click', async () => {
+  if (modeSwitching || !agentDesktop.matches) return;
+  modeSwitching = true;
+  agentToggle.disabled = true;
+  closeModeMenu();
+  const wasActive = isAgentMode();
+  const mascot = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? null : modeMascot();
+  const pop = mascot?.animate([{ transform: 'scale(1)', opacity: 1 }, { transform: 'scale(1.36)', opacity: 1 },
+    { transform: 'scale(.08)', opacity: 0 }], { duration: 290, easing: 'ease-in', fill: 'forwards' });
+  const items = welcome?.isConnected ? [welcome.querySelector('.welcome-kicker'), welcome.querySelector('h1'), welcome.querySelector(':scope > p'), agentIntro, nerdGrid, normalGrid].filter(Boolean) : [];
+  const leaving = items.length ? animate(items, { opacity: [1, 0], y: [0, -8] }, { duration: .2 }) : null;
+  try {
+    await Promise.all([pop?.finished, leaving?.finished].filter(Boolean));
+    burstMascot(mascot, false);
+    const conversation = currentConversation();
+    if (conversation) { conversation.agentMode = !wasActive; conversation.nerdMode = false; }
+    else { draftAgentMode = !wasActive; draftNerdMode = false; }
+    persist();
+    renderHistory();
+    applyNerdModeUI();
+    if (wasActive) await stopAgentSession();
+    pop?.cancel();
+    const landing = mascot?.animate([{ translate: '0 -90px', scale: '.8 1.1', opacity: 0 },
+      { offset: .48, translate: '0 0', scale: '1.14 .8', opacity: 1 },
+      { offset: .72, translate: '0 -16px', scale: '.95 1.06', opacity: 1 },
+      { translate: '0 0', scale: '1 1', opacity: 1 }], { duration: 610, easing: 'ease-out' });
+    const entering = items.length ? animate(items, { opacity: [0, 1], y: [12, 0] }, { duration: .36, ease: 'easeOut' }) : null;
+    await Promise.all([landing?.finished, entering?.finished].filter(Boolean));
+    landing?.cancel(); entering?.cancel();
+  } finally { pop?.cancel(); leaving?.cancel(); agentToggle.disabled = false; modeSwitching = false; chatInput?.focus(); }
+});
+agentDesktop.addEventListener('change', () => {
+  if (!agentDesktop.matches && agentStarted) void stopAgentSession();
+  applyNerdModeUI();
 });
 document.addEventListener('pointerdown', (event) => {
   if (!modeMenu?.hidden && !modeMenu.contains(event.target) && !modePlus?.contains(event.target)) closeModeMenu();
@@ -1412,7 +1579,7 @@ chatForm?.addEventListener('submit', async (event) => {
   pendingWalletRequest = null;
   let conversation = conversations.find((item) => item.id === activeId);
   if (!conversation) {
-    conversation = { id: crypto.randomUUID(), title: titleFrom(text), pinned: false, nerdMode: draftNerdMode,
+    conversation = { id: crypto.randomUUID(), title: titleFrom(text), pinned: false, nerdMode: draftNerdMode, agentMode: draftAgentMode,
       nerdTopic: draftNerdTopic, updatedAt: Date.now(), messages: [] };
     conversations.push(conversation);
     activeId = conversation.id;
@@ -1435,7 +1602,8 @@ chatForm?.addEventListener('submit', async (event) => {
   chatMessages.setAttribute('aria-busy', 'true');
   if (isFirstMessage) await revealFirstMessage(conversationId);
   else renderConversation();
-  const pending = createMessage('ai', conversation.nerdMode ? 'Pesquisando fontes e analisando…' : walletRequest ? 'Consultando a wallet e organizando os dados…'
+  const agentForRequest = conversation.agentMode && agentDesktop.matches;
+  const pending = createMessage('ai', agentForRequest ? 'Navegando e analisando a página…' : conversation.nerdMode ? 'Pesquisando fontes e analisando…' : walletRequest ? 'Consultando a wallet e organizando os dados…'
     : /\b(news|not[ií]cias?|manchetes)\b/i.test(text) ? 'Buscando notícias…' : 'Pensando…', null, '', [], null, [], conversation.nerdMode);
   pending.classList.add('message-pending');
   if (activeId === conversationId) {
@@ -1452,10 +1620,11 @@ chatForm?.addEventListener('submit', async (event) => {
       if (context.at(-1)?.role === role) context.at(-1).content += `\n\n${content}`;
       else context.push({ role, content });
     }
-    const response = await fetch('/api/chat', {
+    if (agentForRequest) await startAgentSession();
+    const response = await fetch(agentForRequest ? '/api/agent/run' : '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: context, nerd_mode: conversation.nerdMode, nerd_topic: conversation.nerdTopic, chat_context: {
+      body: agentForRequest ? JSON.stringify({ task: text }) : JSON.stringify({ messages: context, nerd_mode: conversation.nerdMode, nerd_topic: conversation.nerdTopic, chat_context: {
         mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.newsContext || previousAnswer?.news || [] : [],
         nerd_query: previousMode === 'nerd' ? previousAnswer?.nerdQuery || '' : '',
         pool_request: previousMode === 'pool' || previousMode === 'historical_pool' ? previousAnswer?.poolRequest || null : null,
@@ -1476,7 +1645,7 @@ chatForm?.addEventListener('submit', async (event) => {
     target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation), news: safeNews(data.news), wallet: safeWallet(data.wallet),
       research: safeResearch(data.research), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
       newsContext: safeNews(data.news_context || data.news),
-      mode: ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd'].includes(data.mode) ? data.mode : 'general',
+      mode: ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd', 'agent'].includes(data.mode) ? data.mode : 'general',
       newsTopic: typeof data.news_topic === 'string' ? data.news_topic.slice(0, 30) : '',
       poolRequest: safePoolRequest(data.pool_request),
       lendingRequest: safeLendingRequest(data.lending_request),
@@ -1563,6 +1732,12 @@ function startMascotPhysics() {
     ['#80b6ee', '51% 42% 48% 45%'],
     ['#78c9be', '43% 48% 39% 52%']
   ];
+  const agentLooks = [
+    ['#ef7844', '50%'],
+    ['#ef6a3d', '50%'],
+    ['#f08844', '50%'],
+    ['#e76540', '50%']
+  ];
   // Return across the word instead of snapping back to the first letter.
   const stops = [...letters.keys(), ...[...letters.keys()].slice(0, -1).reverse()];
   const flightMs = 650;
@@ -1583,11 +1758,23 @@ function startMascotPhysics() {
   }
 
   function impact(index, direction) {
-    const looks = isNerdMode() ? nerdLooks : normalLooks;
+    const looks = isAgentMode() ? agentLooks : isNerdMode() ? nerdLooks : normalLooks;
     const [color, radius] = looks[index % looks.length];
-    mascot.style.backgroundColor = color;
+    if (isAgentMode()) mascot.style.setProperty('--fire', color);
+    else mascot.style.backgroundColor = color;
     mascot.style.borderRadius = radius;
     letters.forEach((letter, letterIndex) => letter.classList.toggle('is-lit', letterIndex === index));
+    if (isAgentMode()) {
+      const burned = letters[index];
+      burned.classList.remove('is-burnt');
+      void burned.offsetWidth;
+      burned.classList.add('is-burnt');
+      mascot.classList.remove('is-impact');
+      void mascot.offsetWidth;
+      mascot.classList.add('is-impact');
+      setTimeout(() => burned.classList.remove('is-burnt'), 2100);
+      setTimeout(() => mascot.classList.remove('is-impact'), 680);
+    }
     if (lastLook < 0) return;
 
     const letter = letters[index];

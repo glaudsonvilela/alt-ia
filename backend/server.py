@@ -21,6 +21,7 @@ from news_agent import run as run_news_agent
 from wallet_lookup import WalletInputError, WalletUnavailable, parse_wallet_text, validate_request
 from wallet_agent import analyze_wallet
 from research_agent import search_web
+from agent_browser import cookie_value, session_from_cookie, session_path, worker_call, run as run_browser_agent
 
 
 MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -40,6 +41,8 @@ SCENARIO_SECRET = hashlib.sha256((API_KEY + ":alt-ia-scenario-v1").encode()).dig
 window = deque()
 window_lock = threading.Lock()
 slots = threading.BoundedSemaphore(3)
+agent_running = set()
+agent_running_lock = threading.Lock()
 
 
 def summarize_news(result, user_request=None, conversation=None):
@@ -213,18 +216,106 @@ class Handler(BaseHTTPRequestHandler):
         # Do not log prompts, response bodies or credentials.
         pass
 
-    def respond(self, status, payload):
+    def respond(self, status, payload, extra_headers=None):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(body)))
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
+    def agent_session(self):
+        return session_from_cookie(self.headers.get("Cookie"), API_KEY)
+
+    def agent_origin_ok(self):
+        return self.headers.get("Origin") == "https://ai.bigbanana.io"
+
+    def agent_payload(self):
+        if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
+            raise ValueError("Envie JSON.")
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if length < 2 or length > 4000:
+            raise ValueError("Entrada inválida.")
+        payload = json.loads(self.rfile.read(length))
+        if not isinstance(payload, dict):
+            raise ValueError("Entrada inválida.")
+        return payload
+
+    def agent_get(self, path):
+        session_id = self.agent_session()
+        if not session_id:
+            return self.respond(401, {"error": "Inicie o Modo Agente."})
+        try:
+            if path == "/api/agent/state":
+                state = worker_call("GET", session_path(session_id, "/snapshot"), API_KEY)
+                state.pop("text", None)
+                state.pop("elements", None)
+                with agent_running_lock:
+                    state["running"] = session_id in agent_running
+                cookie = f"alt_ia_agent={cookie_value(session_id, API_KEY)}; HttpOnly; Secure; SameSite=Strict; Path=/api/agent; Max-Age=720"
+                return self.respond(200, state, {"Set-Cookie": cookie})
+            image = worker_call("GET", session_path(session_id, "/image"), API_KEY, image=True, timeout=12)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(image)))
+            self.end_headers()
+            self.wfile.write(image)
+        except ValueError as error:
+            return self.respond(503, {"error": str(error)})
+
+    def agent_post(self, path):
+        if not self.agent_origin_ok():
+            return self.respond(403, {"error": "Origem não permitida."})
+        try:
+            payload = self.agent_payload()
+            if path == "/api/agent/start":
+                prior = self.agent_session()
+                if prior:
+                    try:
+                        worker_call("GET", session_path(prior, "/snapshot"), API_KEY)
+                        return self.respond(200, {"active": True})
+                    except ValueError:
+                        pass
+                session_id = worker_call("POST", "/sessions", API_KEY, {})["id"]
+                cookie = f"alt_ia_agent={cookie_value(session_id, API_KEY)}; HttpOnly; Secure; SameSite=Strict; Path=/api/agent; Max-Age=720"
+                return self.respond(200, {"active": True}, {"Set-Cookie": cookie})
+            session_id = self.agent_session()
+            if not session_id:
+                return self.respond(401, {"error": "Inicie o Modo Agente."})
+            with agent_running_lock:
+                if session_id in agent_running:
+                    return self.respond(409, {"error": "O agente ainda está navegando."})
+                if path == "/api/agent/run":
+                    agent_running.add(session_id)
+            if path == "/api/agent/run":
+                try:
+                    return self.respond(200, run_browser_agent(payload.get("task"), session_id, API_KEY))
+                finally:
+                    with agent_running_lock:
+                        agent_running.discard(session_id)
+            actions = {"navigate", "manual-click", "type", "key", "scroll"}
+            action = path.removeprefix("/api/agent/")
+            if action not in actions:
+                return self.respond(404, {"error": "Ação desconhecida."})
+            state = worker_call("POST", session_path(session_id, "/" + action), API_KEY, payload, timeout=28)
+            state.pop("text", None)
+            state.pop("elements", None)
+            return self.respond(200, state)
+        except (ValueError, KeyError, TypeError, OSError) as error:
+            return self.respond(400, {"error": str(error)[:180] or "Entrada inválida."})
+
     def do_GET(self):
         parsed = urlsplit(self.path)
+        if parsed.path in ("/api/agent/state", "/api/agent/image"):
+            return self.agent_get(parsed.path)
         if self.path == "/healthz":
             self.respond(200, {"status": "ok", "model": MODEL})
         elif self.path == "/api/pool-options":
@@ -257,7 +348,22 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.respond(404, {"error": "Não encontrado."})
 
+    def do_DELETE(self):
+        if self.path != "/api/agent/session":
+            return self.respond(404, {"error": "Não encontrado."})
+        if not self.agent_origin_ok():
+            return self.respond(403, {"error": "Origem não permitida."})
+        session_id = self.agent_session()
+        if session_id:
+            try:
+                worker_call("DELETE", session_path(session_id), API_KEY)
+            except ValueError:
+                pass
+        return self.respond(200, {"closed": True}, {"Set-Cookie": "alt_ia_agent=; HttpOnly; Secure; SameSite=Strict; Path=/api/agent; Max-Age=0"})
+
     def do_POST(self):
+        if self.path.startswith("/api/agent/"):
+            return self.agent_post(self.path)
         if self.path != "/api/chat":
             return self.respond(404, {"error": "Não encontrado."})
         if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":

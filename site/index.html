@@ -10,8 +10,8 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=32">
-  <script defer src="/app.js?v=32"></script>
+  <link rel="stylesheet" href="/shell.css?v=35">
+  <script defer src="/app.js?v=35"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -100,10 +100,8 @@
           <div><label for="pool-network">Rede</label><select id="pool-network" required><option value="">Carregando redes…</option></select></div>
           <div><label for="pool-select">Pool</label><select id="pool-select" required><option value="">Carregando pools…</option></select></div>
         </div>
-        <div class="pool-mode-grid" id="pool-mode-grid">
-          <div><label for="pool-mode">Tipo de simulação</label><select id="pool-mode"><option value="live">Entrada agora</option><option value="history">Dados passados</option></select></div>
-          <div id="pool-period-field" hidden><label for="pool-period">Período histórico</label><select id="pool-period"><option value="7">Últimos 7 dias</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option></select></div>
-        </div>
+        <input id="pool-mode" type="hidden" value="live">
+        <div class="pool-period-field" id="pool-period-field" hidden><label for="pool-period">Período histórico</label><select id="pool-period"><option value="7">Últimos 7 dias</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option></select></div>
         <p class="pool-availability" id="pool-availability" role="status" hidden></p>
         <div class="range-chart" id="range-chart" aria-label="Gráfico de preço e seleção da faixa">
           <div class="range-chart-top"><span class="range-chart-title">Sua faixa de preço</span><span class="range-chart-block" id="range-chart-block">Consultando pool…</span></div>

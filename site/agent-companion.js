@@ -34,8 +34,8 @@ function showVideo(value) {
   placeholder.hidden = true;
   videoFrame.hidden = false;
   videoFrame.src = playlist
-    ? `https://www.youtube-nocookie.com/embed/videoseries?list=${id}&autoplay=1&playsinline=1`
-    : `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&playsinline=1&rel=0`;
+    ? `https://www.youtube-nocookie.com/embed/videoseries?list=${id}&autoplay=1&playsinline=1&mute=1`
+    : `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&playsinline=1&rel=0&mute=1`;
   videoFrame.title = value.title || 'Vídeo do YouTube';
 }
 

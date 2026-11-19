@@ -132,7 +132,7 @@ async function startVideoPlayer(frame, hint, track = true) {
       onReady: ({ target }) => {
         target.setVolume(100);
         target.unMute();
-        if (!(frame.parentElement?.id === 'agent-media' && document.hidden && document.documentElement.dataset.altAgentExtension === 'true')) target.playVideo();
+        target.playVideo();
       },
       onAutoplayBlocked: ({ target }) => {
         if (mutedFallback) return;
@@ -1086,9 +1086,6 @@ function openAgentPip() {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && agentStarted && document.documentElement.dataset.altAgentExtension !== 'true') openAgentPip();
   else if (!document.hidden && agentPipWindow && !agentPipWindow.closed) agentPipWindow.close();
-  if (document.documentElement.dataset.altAgentExtension === 'true' && agentMediaPlayer) {
-    try { if (document.hidden) agentMediaPlayer.pauseVideo(); else agentMediaPlayer.playVideo(); } catch { /* The player may already be closed. */ }
-  }
 });
 async function agentRequest(path, payload = {}, method = 'POST') {
   const response = await fetch(`/api/agent/${path}`, { method, headers: { 'Content-Type': 'application/json' },

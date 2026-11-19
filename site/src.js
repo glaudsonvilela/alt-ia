@@ -16,6 +16,11 @@ const mobileMenu = document.querySelector('#mobile-menu');
 const sidebarClose = document.querySelector('#sidebar-close');
 const poolDialog = document.querySelector('#pool-dialog');
 const lendingDialog = document.querySelector('#lending-dialog');
+const walletDialog = document.querySelector('#wallet-dialog');
+const walletForm = document.querySelector('#wallet-config-form');
+const walletNetwork = document.querySelector('#wallet-network');
+const walletAddress = document.querySelector('#wallet-address');
+const walletFormError = document.querySelector('#wallet-form-error');
 const lendingForm = document.querySelector('#lending-config-form');
 const lendingCollateral = document.querySelector('#lending-collateral');
 const lendingDebt = document.querySelector('#lending-debt');
@@ -49,6 +54,7 @@ const storageKey = 'alt-ia-conversations-v1';
 const activeKey = 'alt-ia-active-v1';
 let poolOptions = null;
 let pendingSimulationRequest = null;
+let pendingWalletRequest = null;
 let poolSnapshot = null;
 let selectedRange = null;
 let chartRequestSeq = 0;
@@ -88,6 +94,38 @@ function safeLendingRequest(value) {
       || !/^\d+(?:[.,]\d{1,8})?$/.test(value.collateral_weth) || !/^\d+(?:[.,]\d{1,6})?$/.test(value.borrow_usdc)
       || !Number.isSafeInteger(value.price_drop_pct) || value.price_drop_pct < 0 || value.price_drop_pct > 90) return null;
   return { kind: 'lending', collateral_weth: value.collateral_weth, borrow_usdc: value.borrow_usdc, price_drop_pct: value.price_drop_pct };
+}
+
+function safeWalletRequest(value) {
+  if (!value || !['bitcoin', 'ethereum', 'solana'].includes(value.network) || typeof value.address !== 'string'
+      || value.address.length < 26 || value.address.length > 90 || !/^[a-zA-Z0-9]+$/.test(value.address)) return null;
+  return { network: value.network, address: value.address };
+}
+
+function safeWallet(value) {
+  const request = safeWalletRequest(value);
+  if (!request || typeof value.asset !== 'string' || !['BTC', 'ETH', 'SOL'].includes(value.asset)
+      || typeof value.balance !== 'string' || !/^[\d.,]+$/.test(value.balance)) return null;
+  const money = (item) => typeof item === 'string' && /^[+-]?[\d.,]+$/.test(item) ? item.slice(0, 45) : null;
+  return { ...request, asset: value.asset, balance: value.balance.slice(0, 45),
+    value_usdc: typeof value.value_usdc === 'string' && /^[\d.,]+$/.test(value.value_usdc) ? value.value_usdc.slice(0, 45) : null,
+    total_usdc: money(value.total_usdc),
+    scope: typeof value.scope === 'string' ? value.scope.slice(0, 330) : '',
+    sources: Array.isArray(value.sources) ? value.sources.filter((item) => typeof item === 'string').slice(0, 5).map((item) => item.slice(0, 35)) : [],
+    allocation: Array.isArray(value.allocation) ? value.allocation.slice(0, 7).filter((item) => item && typeof item.symbol === 'string'
+      && /^[A-Z0-9]{2,10}$/.test(item.symbol) && money(item.value_usdc) && Number.isFinite(item.percent) && item.percent >= 0 && item.percent <= 100)
+      .map((item) => ({ symbol: item.symbol, value_usdc: money(item.value_usdc), percent: item.percent })) : [],
+    performance: Array.isArray(value.performance) ? value.performance.slice(0, 3).filter((item) => item && ['day', 'week', 'month'].includes(item.period))
+      .map((item) => ({ period: item.period, label: typeof item.label === 'string' ? item.label.slice(0, 25) : '', available: item.available === true,
+        change_usdc: money(item.change_usdc), change_pct: money(item.change_pct), direction: ['gain', 'loss', 'flat'].includes(item.direction) ? item.direction : 'flat',
+        coverage: Number.isSafeInteger(item.coverage) ? item.coverage : 0, priced: Number.isSafeInteger(item.priced) ? item.priced : 0 })) : [],
+    observed_at_unix_ms: Number.isSafeInteger(value.observed_at_unix_ms) ? value.observed_at_unix_ms : null,
+    transaction_count: Number.isSafeInteger(value.transaction_count) ? value.transaction_count : null,
+    transactions: Array.isArray(value.transactions) ? value.transactions.slice(0, 2).filter((item) => item && typeof item.txid === 'string'
+      && /^[a-zA-Z0-9]{20,120}$/.test(item.txid) && ['received', 'sent', 'self_or_other'].includes(item.direction)
+      && (item.direction === 'self_or_other' || typeof item.amount === 'string' && /^[\d.,]+$/.test(item.amount)))
+      .map((item) => ({ txid: item.txid, direction: item.direction, amount: typeof item.amount === 'string' ? item.amount.slice(0, 45) : null,
+        block_time_unix: Number.isSafeInteger(item.block_time_unix) ? item.block_time_unix : null, confirmed: item.confirmed === true })) : [] };
 }
 
 function safeSimulation(value) {
@@ -134,12 +172,14 @@ function readConversations() {
         updatedAt: Number(item.updatedAt) || Date.now(),
         messages: item.messages.filter((message) => message && (message.role === 'user' || message.role === 'ai') && typeof message.text === 'string').slice(-100)
           .map((message) => ({ role: message.role, text: message.text, simulation: message.role === 'ai' ? safeSimulation(message.simulation) : null,
+            wallet: message.role === 'ai' ? safeWallet(message.wallet) : null,
             news: message.role === 'ai' && !message.text.startsWith('🗞️ Aqui está um resumo das notícias que mostrei:') ? safeNews(message.news) : [],
             newsContext: message.role === 'ai' ? safeNews(message.newsContext || message.news) : [],
-            mode: message.role === 'ai' && ['news', 'pool', 'historical_pool', 'lending', 'general'].includes(message.mode) ? message.mode : '',
+            mode: message.role === 'ai' && ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general'].includes(message.mode) ? message.mode : '',
             newsTopic: message.role === 'ai' && typeof message.newsTopic === 'string' ? message.newsTopic.slice(0, 30) : '',
             poolRequest: message.role === 'ai' ? safePoolRequest(message.poolRequest) : null,
             lendingRequest: message.role === 'ai' ? safeLendingRequest(message.lendingRequest) : null,
+            walletRequest: message.role === 'ai' ? safeWalletRequest(message.walletRequest) : null,
             scenarioToken: message.role === 'ai' && typeof message.scenarioToken === 'string' ? message.scenarioToken.slice(0, 12000) : '',
             followUp: message.role === 'ai' && typeof message.followUp === 'string' ? message.followUp.slice(0, 280) : '' }))
       }));
@@ -345,7 +385,160 @@ function createSimulationCard(simulation) {
   return card;
 }
 
-function createMessage(role, text, simulation = null, followUp = '', news = []) {
+function createWalletCard(wallet) {
+  const explorers = { bitcoin: 'https://blockstream.info', ethereum: 'https://eth.blockscout.com', solana: 'https://explorer.solana.com' };
+  const names = { bitcoin: 'Bitcoin', ethereum: 'Ethereum', solana: 'Solana' };
+  const explorer = explorers[wallet.network];
+  const displayPercent = (value) => value > 0 && value < 0.05 ? '<0,1%' : `${value.toFixed(1)}%`;
+  const card = document.createElement('section');
+  card.className = 'wallet-card';
+  card.setAttribute('aria-label', 'Consulta pública de endereço no Altside');
+  const label = document.createElement('span');
+  label.className = 'wallet-card-kicker';
+  label.textContent = `◎ WALLET · ${names[wallet.network].toUpperCase()}`;
+  const address = document.createElement('h3');
+  address.textContent = wallet.address;
+  const stats = document.createElement('div');
+  stats.className = 'wallet-card-stats';
+  const balance = document.createElement('div');
+  balance.innerHTML = '<small>Saldo nativo</small>';
+  const balanceValue = document.createElement('strong');
+  balanceValue.textContent = `${wallet.balance} ${wallet.asset}`;
+  balance.append(balanceValue);
+  stats.append(balance);
+  if (wallet.total_usdc || wallet.value_usdc) {
+    const value = document.createElement('div');
+    value.innerHTML = `<small>${wallet.total_usdc ? 'Valor monitorado' : 'Referência de valor'}</small>`;
+    const valueText = document.createElement('strong');
+    valueText.textContent = `US$ ${wallet.total_usdc || wallet.value_usdc}`;
+    value.append(valueText);
+    stats.append(value);
+  }
+  card.append(label, address, stats);
+  if (wallet.allocation.length) {
+    const section = document.createElement('div');
+    section.className = 'wallet-allocation';
+    const sectionHeading = document.createElement('h4');
+    sectionHeading.textContent = 'Alocação monitorada';
+    const chartRow = document.createElement('div');
+    chartRow.className = 'wallet-allocation-row';
+    const chart = document.createElement('div');
+    chart.className = 'wallet-donut';
+    chart.setAttribute('role', 'img');
+    chart.setAttribute('aria-label', wallet.allocation.map((item) => `${item.symbol} ${displayPercent(item.percent)}`).join(', '));
+    const colors = ['#80d8ab', '#9085f6', '#ffad79', '#f5a3c3', '#70c5ed', '#ebcd80', '#b7a6ca'];
+    let offset = 0;
+    const stops = wallet.allocation.map((item, index) => {
+      const start = offset;
+      offset = Math.min(100, offset + item.percent);
+      return `${colors[index]} ${start.toFixed(2)}% ${offset.toFixed(2)}%`;
+    });
+    chart.style.background = `conic-gradient(${stops.join(', ')})`;
+    const center = document.createElement('div');
+    center.className = 'wallet-donut-center';
+    center.innerHTML = '<small>Monitorado</small>';
+    const centerValue = document.createElement('strong');
+    centerValue.textContent = wallet.total_usdc ? `US$ ${wallet.total_usdc}` : '—';
+    center.append(centerValue);
+    chart.append(center);
+    const legend = document.createElement('ul');
+    legend.className = 'wallet-legend';
+    wallet.allocation.forEach((item, index) => {
+      const row = document.createElement('li');
+      const marker = document.createElement('i');
+      marker.style.background = colors[index];
+      const name = document.createElement('strong');
+      name.textContent = item.symbol;
+      const percent = document.createElement('span');
+      percent.textContent = displayPercent(item.percent);
+      const value = document.createElement('small');
+      value.textContent = `US$ ${item.value_usdc}`;
+      row.append(marker, name, percent, value);
+      legend.append(row);
+    });
+    chartRow.append(chart, legend);
+    section.append(sectionHeading, chartRow);
+    card.append(section);
+  }
+  if (wallet.performance.length) {
+    const heading = document.createElement('h4');
+    heading.textContent = 'Variação estimada com os saldos atuais';
+    const periods = document.createElement('div');
+    periods.className = 'wallet-periods';
+    wallet.performance.forEach((period) => {
+      const box = document.createElement('div');
+      box.className = `wallet-period wallet-period-${period.direction}`;
+      const title = document.createElement('small');
+      title.textContent = period.label;
+      const amount = document.createElement('strong');
+      amount.textContent = period.available && period.change_usdc ? `${period.change_usdc.startsWith('-') ? '-' : '+'}US$ ${period.change_usdc.replace(/^[+-]/, '')}` : 'Sem dados';
+      const pct = document.createElement('span');
+      pct.textContent = period.available && period.change_pct ? `${period.change_pct}%` : 'Histórico indisponível';
+      if (period.available && period.coverage < period.priced) pct.textContent += ` · ${period.coverage}/${period.priced} ativos`;
+      box.append(title, amount, pct);
+      periods.append(box);
+    });
+    const note = document.createElement('p');
+    note.className = 'wallet-period-note';
+    note.textContent = 'Cenário com as quantidades atuais fixas. Não representa lucro real: depósitos, saques e negociações no período não foram reconstituídos.';
+    card.append(heading, periods, note);
+  }
+  const heading = document.createElement('h4');
+  heading.textContent = 'Movimentações recentes';
+  card.append(heading);
+  if (wallet.transactions.length) {
+    const list = document.createElement('ul');
+    list.className = 'wallet-transactions';
+    wallet.transactions.forEach((transaction) => {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = `${explorer}/tx/${transaction.txid}`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      const kind = document.createElement('span');
+      kind.textContent = transaction.direction === 'received' ? '↙ Entrada' : transaction.direction === 'sent' ? '↗ Saída' : '↔ Transação';
+      const amount = document.createElement('strong');
+      amount.textContent = transaction.amount ? `${transaction.amount} ${wallet.asset}` : `${transaction.txid.slice(0, 8)}…${transaction.txid.slice(-6)}`;
+      const date = document.createElement('small');
+      date.textContent = transaction.block_time_unix ? new Date(transaction.block_time_unix * 1000).toLocaleString('pt-BR') : 'Data indisponível';
+      link.append(kind, amount, date);
+      item.append(link);
+      list.append(item);
+    });
+    card.append(list);
+  } else {
+    const empty = document.createElement('p');
+    empty.className = 'wallet-card-empty';
+    empty.textContent = 'Nenhuma movimentação disponível nesta amostra.';
+    card.append(empty);
+  }
+  const footer = document.createElement('div');
+  footer.className = 'wallet-card-footer';
+  const observed = document.createElement('span');
+  observed.textContent = wallet.observed_at_unix_ms ? `Consultado ${new Date(wallet.observed_at_unix_ms).toLocaleString('pt-BR')}` : 'Consulta recente';
+  const source = document.createElement('a');
+  source.href = `${explorer}/address/${wallet.address}`;
+  source.target = '_blank';
+  source.rel = 'noopener noreferrer';
+  source.textContent = 'Ver no explorador ↗';
+  footer.append(observed, source);
+  card.append(footer);
+  if (wallet.scope) {
+    const scope = document.createElement('p');
+    scope.className = 'wallet-scope';
+    scope.textContent = wallet.scope;
+    card.append(scope);
+  }
+  if (wallet.sources.length) {
+    const sources = document.createElement('p');
+    sources.className = 'wallet-sources';
+    sources.textContent = `Fontes: ${wallet.sources.join(' · ')}`;
+    card.append(sources);
+  }
+  return card;
+}
+
+function createMessage(role, text, simulation = null, followUp = '', news = [], wallet = null) {
   const row = document.createElement('article');
   row.className = `message-row message-${role}`;
   if (role === 'ai') {
@@ -410,6 +603,7 @@ function createMessage(role, text, simulation = null, followUp = '', news = []) 
     body.append(digest);
   }
   if (role === 'ai' && simulation) body.append(createSimulationCard(simulation));
+  if (role === 'ai' && wallet) body.append(createWalletCard(wallet));
   if (role === 'ai' && followUp) {
     const question = document.createElement('p');
     question.className = 'message-follow-up';
@@ -428,7 +622,7 @@ function renderConversation() {
     if (welcome) chatMessages.append(welcome);
   } else {
     const fragment = document.createDocumentFragment();
-  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news)));
+  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet)));
     chatMessages.append(fragment);
   }
   requestAnimationFrame(() => { chatMessages.scrollTop = conversation?.messages.length ? chatMessages.scrollHeight : 0; });
@@ -499,6 +693,34 @@ document.querySelector('[data-action="configure-lending"]')?.addEventListener('c
 document.querySelector('#lending-dialog-close')?.addEventListener('click', () => lendingDialog?.close());
 lendingDialog?.addEventListener('click', (event) => { if (event.target === lendingDialog) lendingDialog.close(); });
 lendingDrop?.addEventListener('input', () => { lendingDropValue.value = `${lendingDrop.value}%`; });
+
+document.querySelector('[data-action="track-wallet"]')?.addEventListener('click', () => {
+  walletFormError.hidden = true;
+  walletFormError.textContent = '';
+  if (!walletDialog.open) walletDialog.showModal();
+  walletAddress.focus();
+});
+document.querySelector('#wallet-dialog-close')?.addEventListener('click', () => walletDialog?.close());
+walletDialog?.addEventListener('click', (event) => { if (event.target === walletDialog) walletDialog.close(); });
+walletForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (isSubmitting) return;
+  const network = walletNetwork.value;
+  const address = walletAddress.value.trim();
+  const valid = network === 'ethereum' ? /^0x[0-9a-fA-F]{40}$/.test(address)
+    : network === 'bitcoin' ? /^(?:[13][1-9A-HJ-NP-Za-km-z]{25,34}|bc1[023456789acdefghjklmnpqrstuvwxyz]{11,87})$/.test(address)
+      : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+  if (!valid) {
+    walletFormError.textContent = 'Confira o endereço para a rede selecionada.';
+    walletFormError.hidden = false;
+    return;
+  }
+  pendingWalletRequest = { network, address };
+  chatInput.value = `Rastreie a wallet ${address} na rede ${walletNetwork.selectedOptions[0].textContent}`;
+  resizeComposer();
+  walletDialog.close();
+  chatForm.requestSubmit();
+});
 
 lendingForm?.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -808,7 +1030,6 @@ async function openPoolDialog(prefill = {}) {
 }
 
 document.querySelector('[data-action="configure-pool"]')?.addEventListener('click', () => openPoolDialog());
-document.querySelector('[data-action="historical-pool"]')?.addEventListener('click', () => openPoolDialog({ kind: 'historical_pool' }));
 poolDialogClose?.addEventListener('click', () => poolDialog?.close());
 poolDialog?.addEventListener('click', (event) => { if (event.target === poolDialog) poolDialog.close(); });
 poolDialog?.addEventListener('close', () => { chartRequestSeq++; marketRequestSeq++; marketDrag = null; });
@@ -942,6 +1163,8 @@ chatForm?.addEventListener('submit', async (event) => {
   if (!text || isSubmitting) return;
   const simulationRequest = pendingSimulationRequest;
   pendingSimulationRequest = null;
+  const walletRequest = pendingWalletRequest;
+  pendingWalletRequest = null;
   let conversation = conversations.find((item) => item.id === activeId);
   if (!conversation) {
     conversation = { id: crypto.randomUUID(), title: titleFrom(text), pinned: false, updatedAt: Date.now(), messages: [] };
@@ -966,7 +1189,8 @@ chatForm?.addEventListener('submit', async (event) => {
   chatMessages.setAttribute('aria-busy', 'true');
   if (isFirstMessage) await revealFirstMessage(conversationId);
   else renderConversation();
-  const pending = createMessage('ai', /\b(news|not[ií]cias?|manchetes)\b/i.test(text) ? 'Buscando notícias…' : 'Pensando…');
+  const pending = createMessage('ai', walletRequest ? 'Consultando a wallet e organizando os dados…'
+    : /\b(news|not[ií]cias?|manchetes)\b/i.test(text) ? 'Buscando notícias…' : 'Pensando…');
   pending.classList.add('message-pending');
   if (activeId === conversationId) {
     chatMessages.append(pending);
@@ -988,8 +1212,10 @@ chatForm?.addEventListener('submit', async (event) => {
       body: JSON.stringify({ messages: context, chat_context: {
         mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.newsContext || previousAnswer?.news || [] : [],
         pool_request: previousMode === 'pool' || previousMode === 'historical_pool' ? previousAnswer?.poolRequest || null : null,
-        lending_request: previousMode === 'lending' ? previousAnswer?.lendingRequest || null : null
+        lending_request: previousMode === 'lending' ? previousAnswer?.lendingRequest || null : null,
+        wallet_request: previousMode === 'wallet' ? previousAnswer?.walletRequest || null : null
       }, ...(simulationRequest ? { simulation_request: simulationRequest } : {}),
+        ...(walletRequest ? { wallet_request: walletRequest } : {}),
         ...(previousPool?.scenarioToken ? { scenario_token: previousPool.scenarioToken } : {}),
         ...(previousPool?.simulation ? { scenario_context: {
           kind: previousPool.simulation.kind, title: previousPool.simulation.title, subtitle: previousPool.simulation.subtitle,
@@ -1000,12 +1226,13 @@ chatForm?.addEventListener('submit', async (event) => {
     if (!response.ok || typeof data.reply !== 'string') throw new Error(data.error || 'Não foi possível obter uma resposta. Tente novamente.');
     const target = conversations.find((item) => item.id === conversationId);
     if (!target) return;
-    target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation), news: safeNews(data.news),
+    target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation), news: safeNews(data.news), wallet: safeWallet(data.wallet),
       newsContext: safeNews(data.news_context || data.news),
-      mode: ['news', 'pool', 'historical_pool', 'lending', 'general'].includes(data.mode) ? data.mode : 'general',
+      mode: ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general'].includes(data.mode) ? data.mode : 'general',
       newsTopic: typeof data.news_topic === 'string' ? data.news_topic.slice(0, 30) : '',
       poolRequest: safePoolRequest(data.pool_request),
       lendingRequest: safeLendingRequest(data.lending_request),
+      walletRequest: safeWalletRequest(data.wallet_request),
       scenarioToken: typeof data.scenario_token === 'string' ? data.scenario_token.slice(0, 12000) : '',
       followUp: typeof data.follow_up === 'string' ? data.follow_up.slice(0, 280) : '' });
     target.updatedAt = Date.now();

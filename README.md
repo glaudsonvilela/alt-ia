@@ -14,6 +14,7 @@
 - `backend/`: API Python que atende o chat, encaminha perguntas gerais ao NVIDIA Nemotron 120B e consulta o motor Rust do Altside para prévias de simulação.
 - `backend/ALT_IA.md`: instruções de tom, clareza e limites das respostas da Alt-IA, carregadas pelo servidor como mensagem de sistema.
 - `backend/news_agent.py`: bot de notícias com etapas de planejamento, coleta, revisão e apresentação inspiradas no fluxo do Sherlock. Publica apenas notícias do Altside Research Lab.
+- `backend/wallet_lookup.py` e `backend/wallet_agent.py`: rastreio pontual e somente leitura de endereços públicos, com saldo e movimentações do Altside, saldos de tokens diretos por RPC e preços atuais/históricos do DefiLlama.
 
 ## Desenvolvimento
 
@@ -32,6 +33,8 @@ Para entradas em pools, a interface oferece uma janela de configuração com poo
 Após a prévia canônica de entrada, o backend mostra uma tabela ilustrativa de sensibilidade para quedas e altas de 10% e 20% no preço do token base. O valor da posição usa a matemática contínua de liquidez concentrada, ancorada na alocação e nos limites retornados pelo motor Altside. São hipóteses instantâneas, sem taxas futuras de LP, gás, slippage efetivo ou impostos; não são previsão nem cotação de saída. O chat sempre encerra a resposta com uma pergunta relacionada ao assunto.
 
 O botão **News** envia diretamente ao chat um pedido de resumo das notícias publicadas no dia, no horário de Brasília. O bot seleciona destaques de cripto e macro, sintetiza títulos e resumos com o Nemotron e mostra as fontes originais em cartões clicáveis. Pedidos por uma moeda usam a busca pública do Research Lab e aceitam somente resultados classificados como `noticia`; documentos de casas de research e Basecamp são descartados. A chave do gateway do Sherlock não é usada nem publicada. Se a síntese do modelo falhar, as manchetes verificadas continuam disponíveis.
+
+O botão **Rastrear wallet** abre uma janela para Bitcoin, Ethereum ou Solana. A Alt-IA consulta o endereço público no Altside; para Ethereum tenta incluir USDC, USDT, WETH, WBTC e DAI diretos via RPC, e para Solana tenta incluir USDC direto. Saldos com preço recente e confiável do DefiLlama compõem o gráfico de alocação. Os cartões de 24 horas, 7 e 30 dias calculam a variação de preço **com as quantidades atuais fixas**; não são lucro/prejuízo real, pois fluxos e operações passadas não são reconstituídos. Outros tokens, NFTs e posições DeFi podem ficar fora. A síntese da Alt-IA recebe apenas esses dados filtrados, enquanto o cartão numérico é calculado no servidor. Não há conexão, assinatura, transação ou monitoramento contínuo da carteira.
 
 ```bash
 python3 -m unittest discover -s backend -p 'test_*.py' -v

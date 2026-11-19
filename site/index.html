@@ -10,8 +10,8 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=42">
-  <script defer src="/app.js?v=44"></script>
+  <link rel="stylesheet" href="/shell.css?v=44">
+  <script defer src="/app.js?v=47"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -74,7 +74,7 @@
               <button type="button" data-action="news-daily"><span class="prompt-icon orange">▤</span><strong>News</strong><small>Resumo de hoje</small></button>
               <button type="button" data-action="configure-pool"><span class="prompt-icon violet">◈</span><strong>Simular uma pool</strong><small>Defina capital e faixa</small></button>
               <button type="button" data-action="configure-lending"><span class="prompt-icon blue">◎</span><strong>Simular lending</strong><small>Garantia e empréstimo</small></button>
-              <button type="button" data-action="historical-pool"><span class="prompt-icon green">✳</span><strong>Simular o passado</strong><small>7, 30 ou 90 dias</small></button>
+              <button type="button" data-action="track-wallet"><span class="prompt-icon green">◎</span><strong>Rastrear wallet</strong><small>Saldo e movimentos</small></button>
             </div>
           </div>
         </div>
@@ -84,7 +84,7 @@
             <textarea id="chat-input" rows="1" maxlength="4000" placeholder="Descreva o que você quer simular..."></textarea>
             <div class="composer-footer"><span>Enter para enviar · Shift+Enter para nova linha</span><button type="submit" aria-label="Enviar mensagem">↑</button></div>
           </form>
-          <p class="composer-note">Pools, histórico e lending usam dados do Altside. Nenhuma transação é enviada.</p>
+          <p class="composer-note">Pools, lending e wallets usam dados do Altside. Nenhuma transação é enviada.</p>
         </div>
       </main>
     </div>
@@ -128,6 +128,23 @@
         <p id="pool-slippage-hint" class="pool-dialog-hint">Prévia somente leitura. Nenhuma transação é enviada.</p>
         <p class="pool-form-error" id="pool-form-error" role="alert" hidden></p>
         <button class="pool-submit" type="submit"><span id="pool-submit-label">Calcular prévia</span><span class="pool-submit-icon" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><path class="pool-submit-face" d="M9 3.5h14L29 10v12l-6 6.5H9L3 22V10z"/><ellipse cx="11.9" cy="15.2" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="20.1" cy="15.2" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="12.7" cy="16.2" rx="1.1" ry="2.1" fill="#282032"/><ellipse cx="19.3" cy="16.2" rx="1.1" ry="2.1" fill="#282032"/><path d="M13.2 22.2c1.6 1.5 4 1.5 5.6 0" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="1.5"/></svg></span></button>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog class="pool-dialog wallet-dialog" id="wallet-dialog" aria-labelledby="wallet-dialog-title">
+    <div class="pool-dialog-card">
+      <div class="pool-dialog-art" aria-hidden="true"><i class="pool-orbit pool-orbit-one"></i><i class="pool-orbit pool-orbit-two"></i><span class="pool-face eye-pod"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i></span><i class="pool-spark">✦</i></div>
+      <button class="pool-dialog-close" id="wallet-dialog-close" type="button" aria-label="Fechar rastreio de wallet">×</button>
+      <div class="pool-dialog-copy"><span class="pool-dialog-kicker">ALT-IA · WALLET</span><h2 id="wallet-dialog-title">Vamos olhar essa wallet.</h2><p>Consulte o saldo nativo e as movimentações recentes de um endereço público.</p></div>
+      <form id="wallet-config-form">
+        <label for="wallet-network">Rede</label>
+        <select id="wallet-network" required><option value="ethereum">Ethereum</option><option value="bitcoin">Bitcoin</option><option value="solana">Solana</option></select>
+        <label for="wallet-address">Endereço público</label>
+        <input id="wallet-address" type="text" autocomplete="off" spellcheck="false" placeholder="Cole o endereço da wallet" maxlength="90" required>
+        <p class="pool-dialog-hint">👀 Consulta pontual, somente leitura. O gráfico inclui apenas ativos diretos com saldo e preço disponíveis; posições DeFi ficam fora.</p>
+        <p class="pool-form-error" id="wallet-form-error" role="alert" hidden></p>
+        <button class="pool-submit" type="submit"><span>Consultar wallet</span><span class="pool-submit-icon" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><path class="pool-submit-face" d="M9 3.5h14L29 10v12l-6 6.5H9L3 22V10z"/><ellipse cx="11.9" cy="15.2" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="20.1" cy="15.2" rx="3.1" ry="4.2" fill="#fff"/><ellipse cx="12.7" cy="16.2" rx="1.1" ry="2.1" fill="#282032"/><ellipse cx="19.3" cy="16.2" rx="1.1" ry="2.1" fill="#282032"/><path d="M13.2 22.2c1.6 1.5 4 1.5 5.6 0" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="1.5"/></svg></span></button>
       </form>
     </div>
   </dialog>

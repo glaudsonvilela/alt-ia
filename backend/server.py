@@ -18,6 +18,8 @@ from simulator import (SimulationInputError, SimulationUnavailable, handle_simul
                        simulate_pool_request, simulate_price_shock)
 from scenario_tokens import issue, verify
 from news_agent import run as run_news_agent
+from wallet_lookup import WalletInputError, WalletUnavailable, parse_wallet_text, validate_request
+from wallet_agent import analyze_wallet
 
 
 MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -88,13 +90,48 @@ def summarize_news(result, user_request=None, conversation=None):
     return result
 
 
+def summarize_wallet(wallet):
+    """Let the model organize verified wallet facts; retain the calculated card."""
+    facts = {key: wallet.get(key) for key in ("network_label", "asset", "balance", "total_usdc", "allocation", "performance", "scope")}
+    facts["valor_estimado_em_dolares_USD"] = facts.pop("total_usdc")
+    body = json.dumps({
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": ("Você é a Alt-IA. Organize somente os dados JSON fornecidos em português brasileiro, de forma simples, gentil e com 1 ou 2 emojis. "
+                                          "Escreva até 3 frases e 90 palavras, sem Markdown, listas ou títulos. O cartão logo abaixo já mostra os números. "
+                                          "Mencione o saldo nativo, o principal ativo da alocação e a direção das variações de 24 horas, 7 e 30 dias. "
+                                          "Diga que são variações estimadas com as quantidades atuais fixas, não lucro ou prejuízo real; depósitos, saques e negociações não foram reconstituídos. "
+                                          "O valor total é em dólares (US$), não uma quantidade do token USDC. Não invente valores ou fontes. "
+                                          "Se um período estiver indisponível, diga isso. Termine com uma pergunta curta relacionada à wallet.")},
+            {"role": "user", "content": json.dumps(facts, ensure_ascii=False)},
+        ],
+        "max_tokens": 350, "temperature": 0.2, "stream": False,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }).encode("utf-8")
+    request = urllib.request.Request(ENDPOINT, body, {
+        "Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json", "Accept": "application/json",
+    }, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=25) as upstream:
+            choice = json.load(upstream)["choices"][0]
+            answer = choice["message"]["content"]
+        if choice.get("finish_reason") == "stop" and isinstance(answer, str) and 20 <= len(answer.strip()) <= 1100 \
+                and "**" not in answer:
+            wallet["reply"] = answer.strip()
+            if "?" not in wallet["reply"][-140:]:
+                wallet["reply"] += "\n\nQuer atualizar esta wallet ou consultar outra?"
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        pass
+    return wallet
+
+
 def safe_chat_context(value):
     if value is None:
         return {}
     if not isinstance(value, dict) or len(json.dumps(value, ensure_ascii=False)) > 9000:
         raise ValueError("Contexto inválido")
     mode = value.get("mode")
-    if mode not in (None, "news", "pool", "historical_pool", "lending", "general"):
+    if mode not in (None, "news", "pool", "historical_pool", "lending", "wallet", "general"):
         raise ValueError("Modo inválido")
     request = value.get("pool_request")
     if request is not None and (not isinstance(request, dict) or len(json.dumps(request)) > 1200):
@@ -102,6 +139,12 @@ def safe_chat_context(value):
     lending_request = value.get("lending_request")
     if lending_request is not None and (not isinstance(lending_request, dict) or len(json.dumps(lending_request)) > 600):
         raise ValueError("Lending inválido")
+    wallet_request = value.get("wallet_request")
+    if wallet_request is not None:
+        try:
+            wallet_request = validate_request(wallet_request)
+        except WalletInputError as error:
+            raise ValueError("Wallet inválida") from error
     cards = value.get("news") or []
     if not isinstance(cards, list) or len(cards) > 7:
         raise ValueError("Notícias inválidas")
@@ -118,7 +161,8 @@ def safe_chat_context(value):
         clean.append({"title": str(card.get("title", ""))[:230], "summary": str(card.get("summary", ""))[:260],
                       "source": str(card.get("source", parsed.hostname))[:65], "published_at": str(card.get("published_at", ""))[:40],
                       "url": url, "time_known": card.get("time_known") is True})
-    return {"mode": mode, "pool_request": request, "lending_request": lending_request, "news": clean,
+    return {"mode": mode, "pool_request": request, "lending_request": lending_request,
+            "wallet_request": wallet_request, "news": clean,
             "news_topic": str(value.get("news_topic") or "")[:30]}
 
 
@@ -191,6 +235,9 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             raw_messages = payload["messages"]
             simulation_request = payload.get("simulation_request")
+            wallet_request = payload.get("wallet_request")
+            if wallet_request is not None:
+                wallet_request = validate_request(wallet_request)
             scenario_token = payload.get("scenario_token")
             scenario_context = payload.get("scenario_context")
             chat_context = safe_chat_context(payload.get("chat_context"))
@@ -209,6 +256,8 @@ class Handler(BaseHTTPRequestHandler):
                 messages.append({"role": role, "content": content})
             if messages[-1]["role"] != "user" or sum(len(m["content"]) for m in messages) > 20000:
                 raise ValueError
+        except WalletInputError as error:
+            return self.respond(400, {"error": str(error)})
         except (ValueError, TypeError, KeyError, UnicodeDecodeError):
             return self.respond(400, {"error": "Conversa inválida."})
 
@@ -227,6 +276,15 @@ class Handler(BaseHTTPRequestHandler):
             previous_request = chat_context.get("pool_request")
             previous_lending = chat_context.get("lending_request")
             previous_news = chat_context.get("news") or []
+            if wallet_request is None and simulation_request is None:
+                wallet_request = parse_wallet_text(user_text)
+            if wallet_request is None and previous_mode == "wallet" and chat_context.get("wallet_request") \
+                    and re.search(r"\b(?:atualiz\w*|reconsult\w*|ver\s+de\s+novo)\b", user_text, re.I):
+                wallet_request = chat_context["wallet_request"]
+            if wallet_request is not None:
+                wallet = summarize_wallet(analyze_wallet(wallet_request))
+                return self.respond(200, {"reply": wallet.pop("reply"), "wallet": wallet,
+                                          "wallet_request": wallet_request, "mode": "wallet"})
             if simulation_request is None:
                 try:
                     news = run_news_agent(user_text, previous_mode, chat_context.get("news_topic"))
@@ -320,6 +378,8 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(503, {"error": str(error)})
         except SimulationInputError as error:
             self.respond(400, {"error": str(error)})
+        except WalletUnavailable as error:
+            self.respond(503, {"error": str(error)})
         finally:
             slots.release()
 

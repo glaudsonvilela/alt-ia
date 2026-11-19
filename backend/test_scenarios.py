@@ -56,6 +56,7 @@ class PoolScenarioTests(unittest.TestCase):
         result = simulate_price_shock(verify(token, b"secret"), shock)
         self.assertEqual(result["simulation"]["scenarios"]["rows"][1]["label"], "SOL +35%")
         self.assertIn("−", result["simulation"]["metrics"][2]["value"])
+        self.assertEqual(parse_price_shock("e se o preço cair 20%?"), ("BASE", Decimal("-20")))
 
 
 if __name__ == "__main__":

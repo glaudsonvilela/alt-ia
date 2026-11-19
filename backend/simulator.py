@@ -623,7 +623,7 @@ def handle_simulation(text):
         result = _swap(text)
     elif HISTORY_RE.search(text) and (POOL_RE.search(text) or len(TOKEN_RE.findall(text)) >= 2 or re.search(r"\bsimul", text, re.I)):
         result = _pool(text, historical=True)
-    elif POOL_RE.search(text) and re.search(r"\b(simular|simule|simulação|entrar|entrada|investir|alocar|comparar|compare)\b", text, re.I):
+    elif POOL_RE.search(text) and re.search(r"\b(simular|simule|simulação|entrar|entrada|investir|alocar|comparar|compare|renderia|ganharia|perderia)\b", text, re.I):
         result = _pool(text)
     if result is not None and not result.get("simulation") and not result["reply"].rstrip().endswith("?"):
         result["reply"] += "\n\n😊 Quer que eu te ajude a montar essa simulação?"
@@ -646,9 +646,15 @@ def parse_price_shock(text):
         symbol, verb, amount = match.groups()
     else:
         match = re.search(patterns[1], text, re.I)
-        if not match:
-            return None
-        verb, amount, symbol = match.groups()
+        if match:
+            verb, amount, symbol = match.groups()
+        else:
+            pair_pattern = rf"\b(?:pre[cç]o|par)\b\s+(?:\w+\s+){{0,3}}?({SHOCK_VERB})\s+(?:\w+\s+){{0,2}}?{SHOCK_NUMBER}"
+            pair_match = re.search(pair_pattern, text, re.I)
+            if not pair_match:
+                return None
+            verb, amount = pair_match.groups()
+            symbol = "BASE"
     change = Decimal(amount.replace(",", "."))
     if change <= 0 or change > 1000:
         raise SimulationInputError("Informe uma variação maior que 0% e de até 1000%.")
@@ -659,7 +665,7 @@ def parse_price_shock(text):
 
 
 def is_quant_pool_question(text):
-    return bool((POOL_RE.search(text) or TOKEN_RE.search(text) or re.search(r"\bsimul", text, re.I))
+    return bool((POOL_RE.search(text) or TOKEN_RE.search(text) or re.search(r"\b(?:simul\w*|pre[cç]o|capital|faixa|moeda|liquidez|investir|subir|cair)\b", text, re.I))
                 and (re.search(r"\d+(?:[.,]\d+)?\s*%", text)
                      or re.search(r"\b(?:ganh|perd|lucro|preju[ií]zo|rentabil|quanto|valor|pre[cç]o|dobr)\w*\b", text, re.I)))
 
@@ -670,6 +676,8 @@ def simulate_price_shock(basis, shock):
                 "input_request": {"kind": "pool"}}
     pool, raw, source = basis["pool"], basis["raw"], basis["source"]
     symbol, change = shock
+    if symbol == "BASE":
+        symbol = pool["base_symbol"]
     aliases = {"ETH": "WETH", "BTC": "WBTC"}
     if symbol not in (pool["base_symbol"], pool["quote_symbol"]):
         alias = aliases.get(symbol)

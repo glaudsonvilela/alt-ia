@@ -1103,7 +1103,7 @@ async function startAgentSession() {
       await agentRequest('start');
       agentStarted = true;
       applyNerdModeUI();
-      await refreshAgentWindow(true);
+      void refreshAgentWindow(true);
     } catch (error) { if (agentStatus) agentStatus.textContent = error.message; throw error; }
     finally { agentStartPromise = null; }
   })();
@@ -1164,8 +1164,8 @@ async function refreshAgentWindow(force = false) {
     const state = await response.json();
     if (!response.ok) throw new Error(state.error || 'Sessão encerrada.');
     agentWasRunning = Boolean(state.running);
-    if (agentStatus && !agentScreen?.classList.contains('is-playing')) agentStatus.textContent = state.status || (state.running ? 'Navegando e analisando…' : 'Pronto');
-    if (agentPipStatus && (state.running || !agentPipHasReply) && !agentDockBusy) agentPipStatus.textContent = state.status || 'Pronto';
+    if (agentStatus && !agentScreen?.classList.contains('is-playing')) agentStatus.textContent = state.running ? 'Navegando e analisando…' : state.status || 'Pronto';
+    if (agentPipStatus && (state.running || !agentPipHasReply) && !agentDockBusy) agentPipStatus.textContent = state.running ? 'Navegando e analisando…' : state.status || 'Pronto';
     if (state.running && !agentPipHasReply && state.title) agentDockSpeech.textContent = `Estou vendo “${state.title.slice(0, 90)}” e conferindo os detalhes. 🔎`;
     if (agentUrl && !agentScreen?.classList.contains('is-playing')) agentUrl.textContent = state.url === 'about:blank' ? 'Sessão isolada · dados apagados ao encerrar' : state.url;
     const shotKey = `${state.url}:${state.updated}`;

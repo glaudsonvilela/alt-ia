@@ -278,7 +278,7 @@ class Handler(BaseHTTPRequestHandler):
                 prior = self.agent_session()
                 if prior:
                     try:
-                        worker_call("GET", session_path(prior, "/snapshot"), API_KEY)
+                        worker_call("GET", session_path(prior, "/status"), API_KEY)
                         return self.respond(200, {"active": True})
                     except ValueError:
                         pass

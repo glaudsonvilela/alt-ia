@@ -59,23 +59,43 @@ class AgentBrowserTests(unittest.TestCase):
 
     def test_agent_can_choose_first_site_from_blank_page(self):
         blank = {"url": "about:blank", "title": "", "text": "", "elements": []}
-        result_page = {"url": "https://duckduckgo.com/", "title": "DuckDuckGo", "text": "Search", "elements": []}
+        result_page = {"url": "https://example.com/", "title": "Example", "text": "Example", "elements": []}
         with patch.object(agent_browser, "worker_call", side_effect=[blank, result_page]) as worker, \
-             patch.object(agent_browser, "choose_action", side_effect=[{"action": "navigate", "url": "https://duckduckgo.com/"},
+             patch.object(agent_browser, "choose_action", side_effect=[{"action": "navigate", "url": "https://example.com/"},
                                                                   {"action": "finish", "answer": "Página aberta."}]):
             result = agent_browser.run("Pesquise bitcoin", "a" * 48, "nvapi-test")
         self.assertEqual(result["reply"], "Página aberta.")
         self.assertEqual(worker.call_args_list[1].args[1], "/sessions/" + "a" * 48 + "/navigate")
 
-    def test_google_verification_stops_search_loop(self):
-        blank = {"url": "about:blank", "title": "", "text": "", "elements": []}
+    def test_google_verification_uses_search_service_and_opens_playlist(self):
         challenge = {"url": "https://www.google.com/sorry/index?continue=/search", "title": "Google", "text": "Verify", "elements": []}
-        with patch.object(agent_browser, "worker_call", side_effect=[blank, challenge]) as worker, \
-             patch.object(agent_browser, "choose_action", return_value={"action": "navigate", "url": "https://www.google.com/search?q=bitcoin"}) as choose:
-            result = agent_browser.run("Pesquise bitcoin", "a" * 48, "nvapi-test")
-        self.assertIn("Google pediu uma verificação", result["reply"])
-        self.assertEqual(worker.call_count, 2)
-        self.assertEqual(choose.call_count, 1)
+        playlist_url = "https://www.youtube.com/playlist?list=PLRknjXeAnCio"
+        sources = [{"title": "Muse playlist", "url": playlist_url, "summary": "Músicas da banda Muse"}]
+        with patch.object(agent_browser, "worker_call", return_value=challenge) as worker, \
+             patch.object(agent_browser, "search_web", return_value={"sources": sources}) as search, \
+             patch.object(agent_browser, "choose_action", side_effect=[{"action": "search", "query": "Muse playlist YouTube"},
+                                                                  {"action": "navigate", "url": playlist_url}]):
+            result = agent_browser.run("Abra uma playlist boa da banda Muse", "a" * 48, "nvapi-test")
+        self.assertEqual(result["video"]["kind"], "playlist")
+        self.assertEqual(result["video"]["title"], "Muse playlist")
+        self.assertIn("playlist", result["reply"])
+        self.assertEqual(worker.call_count, 1)
+        search.assert_called_once_with("Muse playlist YouTube", "research")
+
+    def test_blank_page_presearches_media_before_model_choice(self):
+        blank = {"url": "about:blank", "title": "", "text": "", "elements": []}
+        playlist_url = "https://www.youtube.com/playlist?list=PLRknjXeAnCio"
+        sources = [{"title": "Muse playlist", "url": playlist_url, "summary": "Músicas da banda Muse"}]
+        with patch.object(agent_browser, "worker_call", return_value=blank) as worker, \
+             patch.object(agent_browser, "search_web", return_value={"sources": sources}) as search, \
+             patch.object(agent_browser, "choose_action", return_value={"action": "navigate", "url": playlist_url,
+                                                                    "answer": "🎵 Muse para embalar sua sessão!"}) as model:
+            result = agent_browser.run("Abra uma playlist boa da banda Muse para tocar", "a" * 48, "nvapi-test")
+        search.assert_called_once_with("Muse playlist youtube", "research")
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual(worker.call_count, 1)
+        self.assertEqual(result["reply"], "🎵 Muse para embalar sua sessão!")
+        self.assertEqual(result["video"]["kind"], "playlist")
 
     def test_play_video_returns_embedded_video_without_loading_youtube_in_worker(self):
         result_page = {"url": "https://duckduckgo.com/?q=cyberpunk+music", "title": "Pesquisa", "text": "Vídeos",

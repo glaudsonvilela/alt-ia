@@ -14,9 +14,12 @@ const nerdToggle = document.querySelector('#nerd-toggle');
 const agentToggle = document.querySelector('#agent-toggle');
 const agentIntro = document.querySelector('#agent-intro');
 const agentWindow = document.querySelector('#agent-window');
+const agentWindowHome = agentWindow?.parentElement;
 const agentStatus = document.querySelector('#agent-status');
 const agentUrl = document.querySelector('#agent-url');
 const agentImage = document.querySelector('#agent-image');
+const agentMedia = document.querySelector('#agent-media');
+const agentPrivacy = document.querySelector('.agent-privacy');
 const agentCursor = document.querySelector('#agent-cursor');
 const modeBadge = document.querySelector('#mode-badge');
 const nerdGrid = document.querySelector('#nerd-grid');
@@ -97,9 +100,12 @@ function safeResearch(value) {
 }
 
 function safeVideo(value) {
-  if (!value || value.provider !== 'youtube' || typeof value.id !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(value.id)) return null;
-  return { provider: 'youtube', id: value.id, title: typeof value.title === 'string' ? value.title.slice(0, 180) : '',
-    url: `https://www.youtube.com/watch?v=${value.id}` };
+  if (!value || value.provider !== 'youtube' || typeof value.id !== 'string') return null;
+  const playlist = value.kind === 'playlist';
+  if (playlist ? !/^[A-Za-z0-9_-]{10,80}$/.test(value.id) : !/^[A-Za-z0-9_-]{11}$/.test(value.id)) return null;
+  return { provider: 'youtube', kind: playlist ? 'playlist' : 'video', id: value.id,
+    title: typeof value.title === 'string' ? value.title.slice(0, 180) : '',
+    url: playlist ? `https://www.youtube.com/playlist?list=${value.id}` : `https://www.youtube.com/watch?v=${value.id}` };
 }
 
 let youtubeApiPromise = null;
@@ -117,7 +123,7 @@ function ensureYouTubeApi() {
   return youtubeApiPromise;
 }
 
-async function startVideoPlayer(frame, hint) {
+async function startVideoPlayer(frame, hint, track = true) {
   try {
     const YT = await ensureYouTubeApi();
     if (!frame.isConnected) return;
@@ -136,7 +142,8 @@ async function startVideoPlayer(frame, hint) {
       },
       onError: () => { hint.textContent = 'Abra no YouTube para assistir'; }
     } });
-    activeVideoPlayers.push(player);
+    if (track) activeVideoPlayers.push(player);
+    return player;
   } catch { hint.textContent = 'Toque no vídeo para iniciar'; }
 }
 
@@ -292,7 +299,12 @@ function applyNerdModeUI() {
   if (agentGrid) agentGrid.hidden = !agent;
   if (agentShortcutStatus && !agent) agentShortcutStatus.hidden = true;
   if (agentIntro) agentIntro.hidden = !agent;
-  if (agentWindow) agentWindow.hidden = !(agent && agentStarted);
+  if (agentWindow) {
+    agentWindow.hidden = !(agent && agentStarted);
+    agentWindow.classList.toggle('agent-window-inline', agent && agentStarted);
+    if (agent && agentStarted && agentWindow.parentElement !== chatMessages) chatMessages?.append(agentWindow);
+    else if ((!agent || !agentStarted) && agentWindow.parentElement === chatMessages) agentWindowHome?.append(agentWindow);
+  }
   if (agentDock) agentDock.hidden = !agentStarted || agent || Boolean(agentPipWindow && !agentPipWindow.closed);
   const kicker = welcome?.querySelector('.welcome-kicker');
   const title = welcome?.querySelector('h1');
@@ -776,7 +788,7 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
   }
   if (role === 'ai' && simulation) body.append(createSimulationCard(simulation));
   if (role === 'ai' && wallet) body.append(createWalletCard(wallet));
-  if (role === 'ai' && video) {
+  if (role === 'ai' && video && video.kind !== 'playlist') {
     const player = document.createElement('div');
     player.className = 'agent-video';
     const frame = document.createElement('iframe');
@@ -837,6 +849,7 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
 function renderConversation() {
   if (!chatMessages) return;
   activeVideoPlayers.splice(0).forEach((player) => { try { player.destroy(); } catch { /* Player already removed. */ } });
+  if (agentWindow?.parentElement === chatMessages) agentWindowHome?.append(agentWindow);
   chatMessages.replaceChildren();
   const conversation = conversations.find((item) => item.id === activeId);
   applyNerdModeUI();
@@ -844,9 +857,10 @@ function renderConversation() {
     if (welcome) chatMessages.append(welcome);
   } else {
     const fragment = document.createDocumentFragment();
-  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, message.video)));
+  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode ? null : message.video)));
     chatMessages.append(fragment);
   }
+  if (isAgentMode() && agentStarted && agentWindow) chatMessages.append(agentWindow);
   requestAnimationFrame(() => { chatMessages.scrollTop = conversation?.messages.length ? chatMessages.scrollHeight : 0; });
 }
 
@@ -899,6 +913,10 @@ const agentDock = document.createElement('aside');
 agentDock.className = 'agent-dock';
 agentDock.hidden = true;
 agentDock.setAttribute('aria-label', 'Agente ativo');
+const agentDockSidekick = document.createElement('span');
+agentDockSidekick.className = 'agent-dock-sidekick agent-window-face';
+agentDockSidekick.setAttribute('aria-hidden', 'true');
+agentDockSidekick.innerHTML = '<span class="agent-face-core"><i class="agent-face-eye"></i><i class="agent-face-eye"></i></span>';
 const agentDockHead = document.createElement('button');
 agentDockHead.type = 'button';
 agentDockHead.textContent = '◉  Agente ativo · abrir conversa';
@@ -909,6 +927,13 @@ agentDockHead.addEventListener('click', () => {
 });
 const agentDockImage = document.createElement('img');
 agentDockImage.alt = 'Miniatura do navegador do agente';
+const agentDockSpeech = document.createElement('p');
+agentDockSpeech.className = 'agent-dock-speech';
+agentDockSpeech.setAttribute('aria-live', 'polite');
+agentDockSpeech.textContent = 'Estou por aqui. O que exploramos agora? 🔎';
+const agentDockMedia = document.createElement('div');
+agentDockMedia.className = 'agent-dock-media';
+agentDockMedia.hidden = true;
 const agentDockForm = document.createElement('form');
 const agentDockInput = document.createElement('input');
 agentDockInput.type = 'text';
@@ -927,8 +952,21 @@ agentDockForm.addEventListener('submit', (event) => {
   agentDockInput.value = '';
   void sendAgentDockTask(task);
 });
-agentDock.append(agentDockHead, agentDockImage, agentDockForm);
+agentDock.append(agentDockSidekick, agentDockHead, agentDockSpeech, agentDockMedia, agentDockImage, agentDockForm);
 document.body.append(agentDock);
+
+function updateAgentDockMedia(video) {
+  const media = safeVideo(video);
+  agentDockMedia.replaceChildren();
+  agentDockMedia.hidden = !media;
+  if (!media) return;
+  const icon = document.createElement('span');
+  icon.textContent = '▶';
+  const title = document.createElement('strong');
+  title.textContent = media.title || (media.kind === 'playlist' ? 'Playlist do YouTube' : 'Vídeo do YouTube');
+  agentDockMedia.append(icon, title);
+  agentDockImage.removeAttribute('src');
+}
 
 async function sendAgentDockTask(task) {
   if (agentDockBusy || !agentStarted || !agentOwnerId) return;
@@ -939,23 +977,32 @@ async function sendAgentDockTask(task) {
   agentDockSend.disabled = true;
   agentPipHasReply = false;
   if (agentPipStatus) agentPipStatus.textContent = 'Navegando…';
+  agentDockSpeech.textContent = 'Estou explorando o que você pediu… 🔎';
+  stopAgentMedia();
+  updateAgentDockMedia(null);
   conversation.messages.push({ role: 'user', text: task });
   conversation.updatedAt = Date.now();
   persist(); renderHistory();
   if (activeId === conversation.id) renderConversation();
+  let resultMedia = null;
   try {
     const data = await agentRequest('run', { task });
+    resultMedia = data.video;
+    updateAgentDockMedia(resultMedia);
     conversation.messages.push({ role: 'ai', text: data.reply, mode: 'agent', video: safeVideo(data.video) });
     agentPipHasReply = true;
     if (agentPipStatus) agentPipStatus.textContent = data.reply.slice(0, 180);
+    agentDockSpeech.textContent = data.reply.slice(0, 180);
   } catch (error) {
     conversation.messages.push({ role: 'ai', text: error.message || 'Não consegui concluir. Tente novamente.', mode: 'agent' });
     agentPipHasReply = true;
     if (agentPipStatus) agentPipStatus.textContent = error.message;
+    agentDockSpeech.textContent = error.message;
   } finally {
     conversation.updatedAt = Date.now();
     persist(); renderHistory();
     if (activeId === conversation.id) renderConversation();
+    showAgentMedia(resultMedia);
     agentDockBusy = false;
     agentDockInput.disabled = false;
     agentDockSend.disabled = false;
@@ -969,10 +1016,14 @@ function openAgentPip() {
     pip.document.title = 'Alt-IA · Agente';
     const css = pip.document.createElement('link');
     css.rel = 'stylesheet';
-    css.href = '/agent-pip.css?v=1';
+    css.href = '/agent-pip.css?v=2';
     pip.document.head.append(css);
     const head = pip.document.createElement('header');
-    head.textContent = '◉  Alt-IA · Agente';
+    const face = pip.document.createElement('span');
+    face.className = 'pip-face';
+    face.setAttribute('aria-hidden', 'true');
+    face.innerHTML = '<span><i></i><i></i></span>';
+    head.append(face, pip.document.createTextNode('Alt-IA · Agente'));
     const image = pip.document.createElement('img');
     image.alt = 'Navegador temporário';
     agentPipImage = image;
@@ -1008,6 +1059,10 @@ function openAgentPip() {
     applyNerdModeUI();
   }).catch(() => { applyNerdModeUI(); });
 }
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && agentStarted) openAgentPip();
+  else if (!document.hidden && agentPipWindow && !agentPipWindow.closed) agentPipWindow.close();
+});
 async function agentRequest(path, payload = {}, method = 'POST') {
   const response = await fetch(`/api/agent/${path}`, { method, headers: { 'Content-Type': 'application/json' },
     body: method === 'DELETE' ? undefined : JSON.stringify(payload) });
@@ -1060,6 +1115,8 @@ agentGrid?.querySelectorAll('[data-agent-site]').forEach((button) => button.addE
   }
 }));
 async function stopAgentSession() {
+  stopAgentMedia();
+  updateAgentDockMedia(null);
   agentStarted = false;
   agentOwnerId = null;
   agentPipHasReply = false;
@@ -1076,9 +1133,10 @@ async function refreshAgentWindow() {
     const response = await fetch('/api/agent/state', { cache: 'no-store' });
     const state = await response.json();
     if (!response.ok) throw new Error(state.error || 'Sessão encerrada.');
-    if (agentStatus) agentStatus.textContent = state.status || (state.running ? 'Navegando e analisando…' : 'Pronto');
+    if (agentStatus && !agentScreen?.classList.contains('is-playing')) agentStatus.textContent = state.status || (state.running ? 'Navegando e analisando…' : 'Pronto');
     if (agentPipStatus && (state.running || !agentPipHasReply) && !agentDockBusy) agentPipStatus.textContent = state.status || 'Pronto';
-    if (agentUrl) agentUrl.textContent = state.url === 'about:blank' ? 'Sessão isolada · dados apagados ao encerrar' : state.url;
+    if (state.running && !agentPipHasReply && state.title) agentDockSpeech.textContent = `Estou vendo “${state.title.slice(0, 90)}” e conferindo os detalhes. 🔎`;
+    if (agentUrl && !agentScreen?.classList.contains('is-playing')) agentUrl.textContent = state.url === 'about:blank' ? 'Sessão isolada · dados apagados ao encerrar' : state.url;
     if (state.url && state.url !== 'about:blank' && agentImage && isAgentMode()) agentImage.src = `/api/agent/image?t=${Date.now()}`;
     if (state.url && state.url !== 'about:blank' && agentDockImage && !agentDock.hidden) agentDockImage.src = `/api/agent/image?t=${Date.now()}`;
     if (state.url && state.url !== 'about:blank' && agentPipImage) agentPipImage.src = `/api/agent/image?t=${Date.now()}`;
@@ -1101,6 +1159,45 @@ window.addEventListener('pagehide', () => {
   if (agentStarted) fetch('/api/agent/session', { method: 'DELETE', keepalive: true }).catch(() => {});
 });
 const agentScreen = document.querySelector('.agent-screen');
+let agentMediaPlayer = null;
+let agentMediaGeneration = 0;
+function stopAgentMedia() {
+  agentMediaGeneration += 1;
+  if (agentMediaPlayer) { try { agentMediaPlayer.destroy(); } catch { /* Player already stopped. */ } }
+  agentMediaPlayer = null;
+  agentMedia?.replaceChildren();
+  agentScreen?.classList.remove('is-playing');
+  if (agentPrivacy) agentPrivacy.textContent = 'Clique e digite na tela. O conteúdo pedido ao agente é enviado à IA.';
+}
+function showAgentMedia(value) {
+  const video = safeVideo(value);
+  if (!video || !agentMedia || !agentScreen) return;
+  stopAgentMedia();
+  updateAgentDockMedia(video);
+  if (isAgentMode() && agentWindow) {
+    agentWindow.hidden = false;
+    agentWindow.classList.add('agent-window-inline');
+    if (agentWindow.parentElement !== chatMessages) chatMessages?.append(agentWindow);
+  }
+  const generation = agentMediaGeneration;
+  const frame = document.createElement('iframe');
+  frame.src = video.kind === 'playlist'
+    ? `https://www.youtube-nocookie.com/embed/videoseries?list=${video.id}&autoplay=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`
+    : `https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(location.origin)}`;
+  frame.title = video.title || (video.kind === 'playlist' ? 'Playlist do YouTube' : 'Vídeo do YouTube');
+  frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+  frame.referrerPolicy = 'strict-origin-when-cross-origin';
+  frame.allowFullscreen = true;
+  agentMedia.append(frame);
+  agentScreen.classList.add('is-playing');
+  if (agentStatus) agentStatus.textContent = video.kind === 'playlist' ? 'Iniciando playlist…' : 'Iniciando vídeo…';
+  if (agentUrl) agentUrl.textContent = video.url;
+  if (agentPrivacy) agentPrivacy.textContent = 'Vídeo na janela. Se o navegador bloquear o som, toque no vídeo para ativar.';
+  void startVideoPlayer(frame, agentStatus, false).then((player) => {
+    if (generation === agentMediaGeneration) agentMediaPlayer = player;
+    else { try { player?.destroy(); } catch { /* Player already stopped. */ } }
+  });
+}
 let agentInputQueue = Promise.resolve();
 function queueAgentInput(path, payload) {
   agentInputQueue = agentInputQueue.catch(() => {}).then(async () => {
@@ -1110,6 +1207,7 @@ function queueAgentInput(path, payload) {
   return agentInputQueue;
 }
 agentScreen?.addEventListener('click', async (event) => {
+  if (agentScreen.classList.contains('is-playing')) return;
   agentScreen.focus();
   if (!agentImage?.hasAttribute('src')) return;
   const rect = agentImage.getBoundingClientRect();
@@ -1120,6 +1218,7 @@ agentScreen?.addEventListener('click', async (event) => {
   catch (error) { if (agentStatus) agentStatus.textContent = error.message; }
 });
 agentScreen?.addEventListener('keydown', async (event) => {
+  if (agentScreen.classList.contains('is-playing')) return;
   if (!agentStarted || event.isComposing) return;
   const special = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'];
   const key = event.ctrlKey || event.metaKey ? event.key.toLowerCase() === 'a' ? 'ControlOrMeta+A' : null
@@ -1830,7 +1929,8 @@ chatForm?.addEventListener('submit', async (event) => {
   const agentForRequest = conversation.agentMode && agentDesktop.matches;
   if (agentForRequest) {
     agentOwnerId = conversationId;
-    if (!agentStarted) openAgentPip();
+    agentPipHasReply = false;
+    agentDockSpeech.textContent = 'Estou explorando o que você pediu… 🔎';
   }
   isSubmitting = true;
   chatForm.querySelector('button[type="submit"]').disabled = true;
@@ -1854,7 +1954,7 @@ chatForm?.addEventListener('submit', async (event) => {
       if (context.at(-1)?.role === role) context.at(-1).content += `\n\n${content}`;
       else context.push({ role, content });
     }
-    if (agentForRequest) await startAgentSession();
+    if (agentForRequest) { stopAgentMedia(); await startAgentSession(); }
     const response = await fetch(agentForRequest ? '/api/agent/run' : '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1890,6 +1990,12 @@ chatForm?.addEventListener('submit', async (event) => {
     persist();
     renderHistory();
     if (activeId === conversationId) renderConversation();
+    if (agentForRequest && activeId === conversationId) showAgentMedia(data.video);
+    if (agentForRequest) {
+      agentPipHasReply = true;
+      agentDockSpeech.textContent = data.reply.slice(0, 180);
+      if (agentPipStatus) agentPipStatus.textContent = data.reply.slice(0, 180);
+    }
     if (data.input_request?.kind === 'pool') requestedConfig = data.input_request;
     if (data.input_request?.kind === 'lending') requestedConfig = data.input_request;
   } catch (error) {

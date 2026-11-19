@@ -11,8 +11,8 @@
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
   <link rel="stylesheet" href="/shell.css?v=55">
-  <link rel="stylesheet" href="/agent.css?v=17">
-  <script defer src="/app.js?v=62"></script>
+  <link rel="stylesheet" href="/agent.css?v=21">
+  <script defer src="/app.js?v=65"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -101,7 +101,7 @@
       </main>
       <aside class="agent-window" id="agent-window" aria-label="Navegador temporário do agente" hidden>
         <div class="agent-window-head"><span class="agent-window-face" aria-hidden="true"><span class="agent-face-core"><i class="agent-face-eye"></i><i class="agent-face-eye"></i></span></span><div><strong>Navegador do agente</strong><small id="agent-status">Iniciando…</small></div><button type="button" id="agent-close" aria-label="Encerrar navegador temporário">×</button></div>
-        <div class="agent-screen" tabindex="0" role="application" aria-label="Tela do navegador do agente; clique e use o teclado aqui"><img id="agent-image" alt="Tela atual do navegador temporário"><i class="agent-cursor" id="agent-cursor" hidden></i><span id="agent-screen-empty">Abrindo o site…</span></div>
+        <div class="agent-screen" tabindex="0" role="application" aria-label="Tela do navegador do agente; clique e use o teclado aqui"><img id="agent-image" alt="Tela atual do navegador temporário"><div id="agent-media"></div><i class="agent-cursor" id="agent-cursor" hidden></i><span id="agent-screen-empty">Abrindo o site…</span></div>
         <div class="agent-window-url" id="agent-url">Sessão isolada · dados apagados ao encerrar</div>
         <p class="agent-privacy">Clique e digite na tela. O conteúdo pedido ao agente é enviado à IA.</p>
       </aside>

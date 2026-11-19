@@ -1,6 +1,7 @@
 """Read-only Altside simulation adapter. The Rust engine owns all financial math."""
 
 import json
+import math
 import os
 import re
 import urllib.error
@@ -116,12 +117,42 @@ def pool_options():
                 "base_symbol": pool["base_token"]["symbol"],
                 "quote_symbol": pool["quote_token"]["symbol"],
                 "tick_spacing": int(pool["tick_spacing"]),
+                "base_is_token0": pool["base_token"]["address"].lower() == pool["token0"]["address"].lower(),
+                "token0_decimals": int(pool["token0"]["decimals"]),
+                "token1_decimals": int(pool["token1"]["decimals"]),
             }
         except (KeyError, TypeError, ValueError):
             continue
-        if option["tick_spacing"] > 0 and re.fullmatch(r"[a-z0-9:.-]{1,120}", option["id"]):
+        if (option["tick_spacing"] > 0 and 0 <= option["token0_decimals"] <= 36 and 0 <= option["token1_decimals"] <= 36
+                and re.fullmatch(r"[a-z0-9:.-]{1,120}", option["id"])):
             options.append(option)
     return options[:20]
+
+
+def pool_chart(pool_id, interval):
+    if interval not in ("15m", "1h", "4h", "1d"):
+        raise SimulationInputError("Intervalo do gráfico inválido.")
+    if not any(item["id"] == pool_id for item in pool_options()):
+        raise SimulationInputError("Pool indisponível para esta prévia.")
+    raw = _json_request(f"/markets/pool-chart?pool_id={quote(pool_id, safe='')}&interval={interval}")
+    if (raw.get("schema") != "altside_pool_chart_v1" or raw.get("pool_id") != pool_id
+            or raw.get("interval") != interval or raw.get("source") != "geckoterminal"
+            or not isinstance(raw.get("candles"), list) or not 1 <= len(raw["candles"]) <= 300):
+        raise SimulationUnavailable("O histórico desta pool ainda está sendo preparado.")
+    candles = []
+    previous = 0
+    for item in raw["candles"]:
+        if not isinstance(item, dict):
+            raise SimulationUnavailable("O histórico da pool retornou dados inválidos.")
+        time = item.get("time")
+        values = [item.get(key) for key in ("open", "high", "low", "close")]
+        if (type(time) is not int or time <= previous or any(type(value) not in (float, int) or not math.isfinite(value) or value <= 0 for value in values)
+                or values[2] > min(values[0], values[3]) or values[1] < max(values[0], values[3])):
+            raise SimulationUnavailable("O histórico da pool retornou dados inválidos.")
+        previous = time
+        candles.append({"time": time, "open": values[0], "high": values[1], "low": values[2], "close": values[3]})
+    return {"pool_id": pool_id, "interval": interval, "candles": candles,
+            "stale": raw.get("stale") is True, "fetched_at_unix": raw.get("fetched_at_unix"), "source": "GeckoTerminal via Altside"}
 
 
 def pool_snapshot(pool_id):

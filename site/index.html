@@ -10,8 +10,8 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=25">
-  <script defer src="/app.js?v=25"></script>
+  <link rel="stylesheet" href="/shell.css?v=27">
+  <script defer src="/app.js?v=27"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -98,23 +98,19 @@
       <form id="pool-config-form">
         <label for="pool-select">Pool</label>
         <select id="pool-select" required><option value="">Carregando pools…</option></select>
-        <div class="range-chart" id="range-chart" aria-label="Seleção visual da faixa de ticks">
+        <div class="range-chart" id="range-chart" aria-label="Gráfico de preço e seleção da faixa">
           <div class="range-chart-top"><span class="range-chart-title">Sua faixa de preço</span><span class="range-chart-block" id="range-chart-block">Consultando pool…</span></div>
           <div class="range-chart-price" id="range-chart-price">Aguardando preço atual</div>
-          <svg id="range-chart-svg" viewBox="0 0 420 104" aria-label="Arraste os limites ou a faixa inteira para ajustar a posição" role="group">
-            <defs><linearGradient id="range-fill" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#a77be8"/><stop offset=".52" stop-color="#ea9cca"/><stop offset="1" stop-color="#ffae72"/></linearGradient></defs>
-            <g class="range-grid" aria-hidden="true"><path d="M24 18V84 M117 18V84 M210 18V84 M303 18V84 M396 18V84"/><path d="M24 51H396"/></g>
-            <rect class="range-track" x="24" y="44" width="372" height="14" rx="7" aria-hidden="true"/>
-            <rect class="range-selection" id="range-selection" x="117" y="42" width="186" height="18" rx="9" data-handle="band" aria-label="Arrastar faixa inteira"/>
-            <path class="range-current" d="M210 20V79" aria-hidden="true"/>
-            <circle class="range-current-dot" cx="210" cy="51" r="5" aria-hidden="true"/>
-            <circle class="range-handle-halo" id="range-lower-halo" cx="117" cy="51" r="19" data-handle="lower"/>
-            <circle class="range-handle" id="range-lower-handle" cx="117" cy="51" r="9" data-handle="lower" tabindex="0" role="slider" aria-label="Limite inferior da faixa"/>
-            <circle class="range-handle-halo" id="range-upper-halo" cx="303" cy="51" r="19" data-handle="upper"/>
-            <circle class="range-handle" id="range-upper-handle" cx="303" cy="51" r="9" data-handle="upper" tabindex="0" role="slider" aria-label="Limite superior da faixa"/>
-          </svg>
-          <div class="range-chart-values"><span id="range-lower-value">—</span><span id="range-current-value">Tick atual —</span><span id="range-upper-value">—</span></div>
-          <div class="range-chart-note">Arraste as bordas ou o centro · escala de ticks, sem histórico de preços</div>
+          <div class="price-chart-toolbar"><div id="pool-chart-intervals" role="group" aria-label="Intervalo das velas"><button type="button" data-interval="15m">15m</button><button type="button" class="active" data-interval="1h" aria-pressed="true">1h</button><button type="button" data-interval="4h">4h</button><button type="button" data-interval="1d">1D</button></div><span id="pool-chart-source">Histórico da pool</span></div>
+          <div class="price-chart-plot" id="pool-price-plot">
+            <div id="pool-price-canvas" class="price-chart-canvas" role="img" aria-label="Velas reais da pool com faixa de preço selecionada"></div>
+            <div class="price-chart-shade" id="pool-price-shade" hidden></div>
+            <button class="price-chart-handle floor" id="pool-floor-handle" type="button" aria-label="Arrastar preço mínimo" hidden>↕ Piso</button>
+            <button class="price-chart-handle ceiling" id="pool-ceiling-handle" type="button" aria-label="Arrastar preço máximo" hidden>↕ Teto</button>
+            <div class="price-chart-status" id="pool-chart-status">Carregando histórico real da pool…</div>
+          </div>
+          <div class="range-chart-note">Arraste o piso e o teto no gráfico ou ajuste a largura em ticks abaixo · velas históricas da pool via Altside/GeckoTerminal</div>
+          <div class="price-chart-credits"><a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts™</a><a href="/lightweight-charts-NOTICE.txt" target="_blank" rel="noreferrer">Licença e créditos</a></div>
         </div>
         <div class="pool-field-grid">
           <div><label for="pool-capital">Capital <span id="pool-capital-unit">USDC</span></label><input id="pool-capital" type="text" inputmode="decimal" autocomplete="off" placeholder="Ex.: 1000" required></div>

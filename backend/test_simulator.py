@@ -9,8 +9,10 @@ CATALOG = {"pools": [{
     "display_pair": "WETH/USDC",
     "network": {"name": "Base Mainnet"},
     "protocol": {"name": "Uniswap v3"},
-    "base_token": {"symbol": "WETH"},
-    "quote_token": {"symbol": "USDC"},
+    "base_token": {"symbol": "WETH", "address": "0x4200"},
+    "quote_token": {"symbol": "USDC", "address": "0x8335"},
+    "token0": {"address": "0x4200", "decimals": 18},
+    "token1": {"address": "0x8335", "decimals": 6},
     "tick_spacing": 60,
     "capabilities": {"simulation_engine": "canonical_entry_preview"},
 }]}
@@ -36,6 +38,9 @@ SNAPSHOT = {
     "state": {"tick": -201496},
     "price": {"status": "available", "quote_per_base": "1776.5"},
 }
+CHART = {"schema": "altside_pool_chart_v1", "pool_id": CATALOG["pools"][0]["id"], "interval": "1h",
+         "source": "geckoterminal", "stale": False, "fetched_at_unix": 1795045000,
+         "candles": [{"time": 1795042800, "open": 1780.0, "high": 1790.0, "low": 1770.0, "close": 1784.0}]}
 
 
 class SimulatorTests(unittest.TestCase):
@@ -84,6 +89,17 @@ class SimulatorTests(unittest.TestCase):
         self.assertEqual(request.call_count, 2)
         self.assertEqual(result["current_tick"], -201496)
         self.assertEqual(result["block_number"], 789)
+
+    def test_pool_chart_uses_real_ohlc(self):
+        with patch.object(simulator, "_json_request", side_effect=[CATALOG, CHART]):
+            result = simulator.pool_chart(CATALOG["pools"][0]["id"], "1h")
+        self.assertEqual(result["candles"][0]["high"], 1790.0)
+
+    def test_pool_chart_rejects_invalid_candle(self):
+        invalid = {**CHART, "candles": [{**CHART["candles"][0], "low": 1800.0}]}
+        with patch.object(simulator, "_json_request", side_effect=[CATALOG, invalid]):
+            with self.assertRaises(simulator.SimulationUnavailable):
+                simulator.pool_chart(CATALOG["pools"][0]["id"], "1h")
 
     def test_dragged_bounds_are_sent_to_engine(self):
         payload = {"kind": "pool", "pool_id": CATALOG["pools"][0]["id"], "capital_quote": "1000",

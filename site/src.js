@@ -1,4 +1,5 @@
 import { animate, stagger } from 'motion';
+import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
 
 const intro = document.querySelector('#intro');
 const site = document.querySelector('.site');
@@ -24,10 +25,12 @@ const poolRangeHint = document.querySelector('#pool-range-hint');
 const poolSlippage = document.querySelector('#pool-slippage');
 const poolFormError = document.querySelector('#pool-form-error');
 const rangeChart = document.querySelector('#range-chart');
-const rangeChartSvg = document.querySelector('#range-chart-svg');
-const rangeSelection = document.querySelector('#range-selection');
-const rangeLowerHandle = document.querySelector('#range-lower-handle');
-const rangeUpperHandle = document.querySelector('#range-upper-handle');
+const poolPriceCanvas = document.querySelector('#pool-price-canvas');
+const poolPricePlot = document.querySelector('#pool-price-plot');
+const poolPriceShade = document.querySelector('#pool-price-shade');
+const poolFloorHandle = document.querySelector('#pool-floor-handle');
+const poolCeilingHandle = document.querySelector('#pool-ceiling-handle');
+const poolChartStatus = document.querySelector('#pool-chart-status');
 const storageKey = 'alt-ia-conversations-v1';
 const activeKey = 'alt-ia-active-v1';
 let poolOptions = null;
@@ -35,7 +38,13 @@ let pendingSimulationRequest = null;
 let poolSnapshot = null;
 let selectedRange = null;
 let chartRequestSeq = 0;
-let chartDrag = null;
+let marketChart = null;
+let marketCandles = null;
+let marketLines = {};
+let marketInterval = '1h';
+let marketRequestSeq = 0;
+let marketDrag = null;
+let marketHasData = false;
 
 function safeSimulation(value) {
   if (!value || !['swap', 'pool'].includes(value.kind) || !Array.isArray(value.metrics) || !value.source) return null;
@@ -330,40 +339,130 @@ function selectedPool() {
   return poolOptions?.find((pool) => pool.id === poolSelect?.value) || null;
 }
 
-function chartDomain() {
-  const spacing = poolSnapshot.tick_spacing;
-  const half = Math.max(1800, Math.ceil((selectedRange.upper - selectedRange.lower) * 1.15 / spacing) * spacing);
-  return { min: poolSnapshot.current_tick - half, max: poolSnapshot.current_tick + half };
+const formatPrice = (value) => value.toLocaleString('pt-BR', { maximumFractionDigits: 6 });
+function tickPrice(pool, tick) {
+  const ratio = Math.exp(tick * Math.log(1.0001)) * 10 ** (pool.token0_decimals - pool.token1_decimals);
+  return pool.base_is_token0 ? ratio : 1 / ratio;
+}
+function priceTick(pool, price) {
+  const ratio = pool.base_is_token0 ? price : 1 / price;
+  return Math.log(ratio / 10 ** (pool.token0_decimals - pool.token1_decimals)) / Math.log(1.0001);
+}
+function rangePrices() {
+  const pool = selectedPool();
+  if (!pool || !selectedRange) return null;
+  const first = tickPrice(pool, selectedRange.lower);
+  const last = tickPrice(pool, selectedRange.upper);
+  return { floor: Math.min(first, last), ceiling: Math.max(first, last) };
+}
+function renderMarketRange() {
+  if (!marketCandles || !marketChart || !marketHasData || !poolSnapshot || !selectedRange) return;
+  const bounds = rangePrices();
+  if (!bounds) return;
+  const spot = Number(poolSnapshot.price?.quote_per_base);
+  for (const [key, value, title, color] of [['floor', bounds.floor, 'Piso', '#b889df'], ['ceiling', bounds.ceiling, 'Teto', '#f4a4c0'], ['spot', spot, 'Atual', '#ffae72']]) {
+    if (!Number.isFinite(value) || value <= 0) continue;
+    if (marketLines[key]) marketLines[key].applyOptions({ price: value });
+    else marketLines[key] = marketCandles.createPriceLine({ price: value, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title });
+  }
+  const floorY = marketCandles.priceToCoordinate(bounds.floor);
+  const ceilingY = marketCandles.priceToCoordinate(bounds.ceiling);
+  const height = marketChart.panes()[0]?.getHeight() || 190;
+  if (floorY === null || ceilingY === null) return;
+  poolFloorHandle.hidden = false;
+  poolCeilingHandle.hidden = false;
+  poolPriceShade.hidden = false;
+  poolFloorHandle.style.top = `${Math.max(16, Math.min(height - 16, floorY))}px`;
+  poolCeilingHandle.style.top = `${Math.max(16, Math.min(height - 16, ceilingY))}px`;
+  poolFloorHandle.textContent = `↕ Piso ${formatPrice(bounds.floor)}`;
+  poolCeilingHandle.textContent = `↕ Teto ${formatPrice(bounds.ceiling)}`;
+  poolPriceShade.style.top = `${Math.max(0, ceilingY)}px`;
+  poolPriceShade.style.height = `${Math.max(0, Math.min(height, floorY) - Math.max(0, ceilingY))}px`;
+  poolPriceShade.style.width = `${marketChart.timeScale().width()}px`;
+}
+function ensureMarketChart() {
+  if (marketChart || !poolPriceCanvas) return;
+  marketChart = createChart(poolPriceCanvas, {
+    width: poolPriceCanvas.clientWidth, height: 210,
+    layout: { background: { type: ColorType.Solid, color: '#15141e' }, textColor: '#a99eb3', fontSize: 10, attributionLogo: true },
+    grid: { vertLines: { color: '#ffffff10' }, horzLines: { color: '#ffffff10' } },
+    localization: { locale: 'pt-BR', priceFormatter: formatPrice },
+    rightPriceScale: { borderColor: '#ffffff20', scaleMargins: { top: 0.12, bottom: 0.12 } },
+    timeScale: { borderColor: '#ffffff20', timeVisible: true, secondsVisible: false },
+    handleScroll: false, handleScale: false,
+  });
+  marketCandles = marketChart.addSeries(CandlestickSeries, {
+    upColor: '#c79de9', downColor: '#ec8cae', wickUpColor: '#c79de9', wickDownColor: '#ec8cae',
+    borderVisible: false, priceLineVisible: false, lastValueVisible: false,
+    priceFormat: { type: 'price', precision: 6, minMove: 0.000001 },
+    autoscaleInfoProvider: (original) => {
+      const info = original();
+      const bounds = rangePrices();
+      if (info?.priceRange && bounds) {
+        info.priceRange.minValue = Math.min(info.priceRange.minValue, bounds.floor);
+        info.priceRange.maxValue = Math.max(info.priceRange.maxValue, bounds.ceiling);
+      }
+      return info;
+    },
+  });
+  marketCandles.attachPrimitive({ updateAllViews: () => {
+    if (!marketHasData || !selectedRange || !poolSnapshot) return;
+    const bounds = rangePrices();
+    if (!bounds) return;
+    const height = marketChart.panes()[0]?.getHeight() || 190;
+    const floorY = marketCandles.priceToCoordinate(bounds.floor);
+    const ceilingY = marketCandles.priceToCoordinate(bounds.ceiling);
+    if (floorY === null || ceilingY === null) return;
+    poolFloorHandle.style.top = `${Math.max(16, Math.min(height - 16, floorY))}px`;
+    poolCeilingHandle.style.top = `${Math.max(16, Math.min(height - 16, ceilingY))}px`;
+  } });
+  new ResizeObserver(() => {
+    if (poolPriceCanvas.clientWidth) marketChart.applyOptions({ width: poolPriceCanvas.clientWidth });
+    renderMarketRange();
+  }).observe(poolPriceCanvas);
+}
+async function loadPoolChart() {
+  const pool = selectedPool();
+  const requestSeq = ++marketRequestSeq;
+  marketHasData = false;
+  poolFloorHandle.hidden = true;
+  poolCeilingHandle.hidden = true;
+  poolPriceShade.hidden = true;
+  poolChartStatus.hidden = false;
+  poolChartStatus.textContent = 'Carregando velas reais da pool…';
+  document.getElementById('pool-chart-source').textContent = 'Histórico da pool';
+  if (!pool) return;
+  ensureMarketChart();
+  marketChart.applyOptions({ width: poolPriceCanvas.clientWidth });
+  for (const line of Object.values(marketLines)) marketCandles.removePriceLine(line);
+  marketLines = {};
+  marketCandles.setData([]);
+  try {
+    const response = await fetch(`/api/pool-chart?pool_id=${encodeURIComponent(pool.id)}&interval=${marketInterval}`, { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || data.pool_id !== pool.id || data.interval !== marketInterval || !Array.isArray(data.candles) || !data.candles.length) throw new Error(data.error || 'Histórico indisponível.');
+    if (requestSeq !== marketRequestSeq || !poolDialog.open) return;
+    marketCandles.setData(data.candles);
+    marketHasData = true;
+    marketChart.timeScale().fitContent();
+    poolChartStatus.hidden = true;
+    document.getElementById('pool-chart-source').textContent = data.stale ? 'Último histórico disponível' : 'Histórico atualizado';
+    renderMarketRange();
+  } catch (error) {
+    if (requestSeq !== marketRequestSeq || !poolDialog.open) return;
+    poolChartStatus.textContent = 'Histórico indisponível agora. A faixa em ticks continua utilizável.';
+  }
 }
 
-function chartX(tick) {
-  const { min, max } = chartDomain();
-  return 24 + (tick - min) / (max - min) * 372;
-}
-
-function renderRangeChart() {
+function renderSelectedRange() {
   if (!poolSnapshot || !selectedRange) return;
-  const lowerX = chartX(selectedRange.lower);
-  const upperX = chartX(selectedRange.upper);
-  rangeSelection.setAttribute('x', String(lowerX));
-  rangeSelection.setAttribute('width', String(upperX - lowerX));
-  for (const [id, x] of [['range-lower-halo', lowerX], ['range-lower-handle', lowerX], ['range-upper-halo', upperX], ['range-upper-handle', upperX]]) {
-    document.getElementById(id).setAttribute('cx', String(x));
-  }
-  const { min, max } = chartDomain();
-  for (const [element, value] of [[rangeLowerHandle, selectedRange.lower], [rangeUpperHandle, selectedRange.upper]]) {
-    element.setAttribute('aria-valuemin', String(min));
-    element.setAttribute('aria-valuemax', String(max));
-    element.setAttribute('aria-valuenow', String(value));
-    element.setAttribute('aria-valuetext', `Tick ${value}`);
-  }
-  document.getElementById('range-lower-value').textContent = `Início ${selectedRange.lower.toLocaleString('pt-BR')}`;
-  document.getElementById('range-current-value').textContent = `Atual ${poolSnapshot.current_tick.toLocaleString('pt-BR')}`;
-  document.getElementById('range-upper-value').textContent = `Fim ${selectedRange.upper.toLocaleString('pt-BR')}`;
   poolRange.value = String(selectedRange.upper - selectedRange.lower);
-  const lowDistance = (1 - Math.pow(1.0001, selectedRange.lower - poolSnapshot.current_tick)) * 100;
-  const highDistance = (Math.pow(1.0001, selectedRange.upper - poolSnapshot.current_tick) - 1) * 100;
-  poolRangeHint.textContent = `Distância no eixo de ticks: −${lowDistance.toLocaleString('pt-BR', {maximumFractionDigits: 1})}% / +${highDistance.toLocaleString('pt-BR', {maximumFractionDigits: 1})}%. Limites ajustados ao espaçamento da pool.`;
+  const bounds = rangePrices();
+  const pool = selectedPool();
+  poolRangeHint.textContent = bounds && pool
+    ? `Piso ${formatPrice(bounds.floor)} · teto ${formatPrice(bounds.ceiling)} ${pool.quote_symbol}. Limites alinhados aos ticks da pool.`
+    : 'Limites ajustados ao espaçamento de ticks da pool.';
+  renderMarketRange();
 }
 
 function centerRange(width) {
@@ -374,7 +473,7 @@ function centerRange(width) {
   const lower = Math.floor((current - half) / spacing) * spacing;
   const upper = Math.ceil((current + half) / spacing) * spacing;
   selectedRange = { lower, upper };
-  renderRangeChart();
+  renderSelectedRange();
 }
 
 async function loadPoolSnapshot() {
@@ -383,9 +482,6 @@ async function loadPoolSnapshot() {
   poolSnapshot = null;
   selectedRange = null;
   rangeChart.classList.remove('is-ready');
-  document.getElementById('range-lower-value').textContent = '—';
-  document.getElementById('range-current-value').textContent = 'Tick atual —';
-  document.getElementById('range-upper-value').textContent = '—';
   document.getElementById('range-chart-block').textContent = 'Consultando pool…';
   document.getElementById('range-chart-price').textContent = 'Aguardando preço atual';
   if (!pool) return;
@@ -435,7 +531,7 @@ async function openPoolDialog(prefill = {}) {
       const response = await fetch('/api/pool-options', { cache: 'no-store' });
       const data = await response.json();
       if (!response.ok || !Array.isArray(data.pools)) throw new Error(data.error || 'Não foi possível carregar as pools.');
-      poolOptions = data.pools.filter((pool) => pool && typeof pool.id === 'string' && typeof pool.pair === 'string' && typeof pool.quote_symbol === 'string' && Number.isInteger(pool.tick_spacing) && pool.tick_spacing > 0);
+      poolOptions = data.pools.filter((pool) => pool && typeof pool.id === 'string' && typeof pool.pair === 'string' && typeof pool.quote_symbol === 'string' && Number.isInteger(pool.tick_spacing) && pool.tick_spacing > 0 && typeof pool.base_is_token0 === 'boolean' && Number.isInteger(pool.token0_decimals) && Number.isInteger(pool.token1_decimals));
       if (!poolOptions.length) throw new Error('Não há pools disponíveis para prévia agora.');
     } catch (error) {
       poolOptions = null;
@@ -456,65 +552,69 @@ async function openPoolDialog(prefill = {}) {
   selectedRange = null;
   updatePoolFields(true);
   loadPoolSnapshot();
-  poolCapital.focus();
+  loadPoolChart();
+  poolSelect.focus();
 }
 
 document.querySelector('[data-action="configure-pool"]')?.addEventListener('click', () => openPoolDialog());
 poolDialogClose?.addEventListener('click', () => poolDialog?.close());
 poolDialog?.addEventListener('click', (event) => { if (event.target === poolDialog) poolDialog.close(); });
-poolDialog?.addEventListener('close', () => { chartRequestSeq++; chartDrag = null; });
-poolSelect?.addEventListener('change', () => { poolSnapshot = null; selectedRange = null; updatePoolFields(true); loadPoolSnapshot(); });
+poolDialog?.addEventListener('close', () => { chartRequestSeq++; marketRequestSeq++; marketDrag = null; });
+poolSelect?.addEventListener('change', () => { poolSnapshot = null; selectedRange = null; updatePoolFields(true); loadPoolSnapshot(); loadPoolChart(); });
 poolRange?.addEventListener('change', () => updatePoolFields());
+document.querySelectorAll('#pool-chart-intervals [data-interval]').forEach((button) => {
+  button.setAttribute('aria-pressed', button.dataset.interval === marketInterval ? 'true' : 'false');
+  button.addEventListener('click', () => {
+    if (button.dataset.interval === marketInterval) return;
+    marketInterval = button.dataset.interval;
+    document.querySelectorAll('#pool-chart-intervals [data-interval]').forEach((item) => {
+      item.classList.toggle('active', item === button);
+      item.setAttribute('aria-pressed', item === button ? 'true' : 'false');
+    });
+    loadPoolChart();
+  });
+});
 
-function dragRange(kind, targetTick, start = selectedRange) {
-  if (!poolSnapshot || !selectedRange || !start) return;
-  const spacing = poolSnapshot.tick_spacing;
+function moveMarketEdge(edge, price) {
+  const pool = selectedPool();
+  if (!pool || !poolSnapshot || !selectedRange || !Number.isFinite(price) || price <= 0) return;
+  const spacing = pool.tick_spacing;
   const current = poolSnapshot.current_tick;
-  const { min, max } = chartDomain();
-  const minAligned = Math.ceil(min / spacing) * spacing;
-  const maxAligned = Math.floor(max / spacing) * spacing;
-  const snapped = Math.round(targetTick / spacing) * spacing;
-  if (kind === 'lower') selectedRange.lower = Math.max(minAligned, start.upper - 50000, Math.min(snapped, Math.floor((current - 1) / spacing) * spacing, start.upper - 2 * spacing));
-  if (kind === 'upper') selectedRange.upper = Math.min(maxAligned, start.lower + 50000, Math.max(snapped, Math.ceil((current + 1) / spacing) * spacing, start.lower + 2 * spacing));
-  if (kind === 'band') {
-    const width = start.upper - start.lower;
-    const delta = Math.round((targetTick - chartDrag.startTick) / spacing) * spacing;
-    const lower = Math.max(minAligned, Math.ceil((current + 1) / spacing) * spacing - width, Math.min(start.lower + delta, maxAligned - width, Math.floor((current - 1) / spacing) * spacing));
-    selectedRange.lower = lower;
-    selectedRange.upper = lower + width;
-  }
-  renderRangeChart();
+  const nativeKind = (edge === 'floor') === pool.base_is_token0 ? 'lower' : 'upper';
+  const snapped = Math.round(priceTick(pool, price) / spacing) * spacing;
+  if (!Number.isSafeInteger(snapped)) return;
+  if (nativeKind === 'lower') selectedRange.lower = Math.max(Math.ceil(-887272 / spacing) * spacing, selectedRange.upper - 50000, Math.min(snapped, Math.floor((current - 1) / spacing) * spacing, selectedRange.upper - 2 * spacing));
+  else selectedRange.upper = Math.min(Math.floor(887272 / spacing) * spacing, selectedRange.lower + 50000, Math.max(snapped, Math.ceil((current + 1) / spacing) * spacing, selectedRange.lower + 2 * spacing));
+  renderSelectedRange();
 }
-
-rangeChartSvg?.addEventListener('pointerdown', (event) => {
-  const kind = event.target?.dataset?.handle;
-  if (!poolSnapshot || !selectedRange || !['lower', 'upper', 'band'].includes(kind)) return;
-  const rect = rangeChartSvg.getBoundingClientRect();
-  const { min, max } = chartDomain();
-  const x = (event.clientX - rect.left) / rect.width * 420;
-  chartDrag = { kind, start: { ...selectedRange }, startTick: min + (Math.max(24, Math.min(396, x)) - 24) / 372 * (max - min), min, max };
-  rangeChartSvg.setPointerCapture(event.pointerId);
-  rangeChart.classList.add('is-dragging');
-  event.preventDefault();
-});
-rangeChartSvg?.addEventListener('pointermove', (event) => {
-  if (!chartDrag) return;
-  const rect = rangeChartSvg.getBoundingClientRect();
-  const x = (event.clientX - rect.left) / rect.width * 420;
-  const tick = chartDrag.min + (Math.max(24, Math.min(396, x)) - 24) / 372 * (chartDrag.max - chartDrag.min);
-  dragRange(chartDrag.kind, tick, chartDrag.start);
-});
-function endChartDrag() { chartDrag = null; rangeChart?.classList.remove('is-dragging'); }
-rangeChartSvg?.addEventListener('pointerup', endChartDrag);
-rangeChartSvg?.addEventListener('pointercancel', endChartDrag);
-for (const [element, kind] of [[rangeLowerHandle, 'lower'], [rangeUpperHandle, 'upper']]) {
-  element?.addEventListener('keydown', (event) => {
-    if (!poolSnapshot || !selectedRange || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+for (const [button, edge] of [[poolFloorHandle, 'floor'], [poolCeilingHandle, 'ceiling']]) {
+  button?.addEventListener('pointerdown', (event) => {
+    if (!marketHasData || !selectedRange) return;
+    marketDrag = edge;
+    button.setPointerCapture(event.pointerId);
+    marketChart.priceScale('right').applyOptions({ autoScale: false });
     event.preventDefault();
-    const direction = event.key === 'ArrowLeft' ? -1 : 1;
-    dragRange(kind, selectedRange[kind] + direction * poolSnapshot.tick_spacing);
+  });
+  button?.addEventListener('pointermove', (event) => {
+    if (marketDrag !== edge) return;
+    const y = event.clientY - poolPricePlot.getBoundingClientRect().top;
+    const price = marketCandles.coordinateToPrice(Math.max(0, Math.min(210, y)));
+    moveMarketEdge(edge, price);
+  });
+  const end = () => { if (marketDrag === edge) { marketDrag = null; marketChart.priceScale('right').applyOptions({ autoScale: true }); renderMarketRange(); } };
+  button?.addEventListener('pointerup', end);
+  button?.addEventListener('pointercancel', end);
+  button?.addEventListener('lostpointercapture', end);
+  button?.addEventListener('keydown', (event) => {
+    if (!['ArrowUp', 'ArrowDown'].includes(event.key) || !selectedRange) return;
+    event.preventDefault();
+    const pool = selectedPool();
+    const nativeKind = (edge === 'floor') === pool.base_is_token0 ? 'lower' : 'upper';
+    const direction = (event.key === 'ArrowUp' ? 1 : -1) * (pool.base_is_token0 ? 1 : -1);
+    moveMarketEdge(edge, tickPrice(pool, selectedRange[nativeKind] + direction * pool.tick_spacing));
   });
 }
+
 poolForm?.addEventListener('submit', (event) => {
   event.preventDefault();
   if (isSubmitting) return showPoolError('Aguarde a resposta atual antes de enviar outra simulação.');

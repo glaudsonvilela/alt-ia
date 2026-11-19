@@ -9,7 +9,7 @@ import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
-from simulator import SimulationInputError, SimulationUnavailable, handle_simulation, pool_options, pool_snapshot, simulate_pool_request
+from simulator import SimulationInputError, SimulationUnavailable, handle_simulation, pool_chart, pool_options, pool_snapshot, simulate_pool_request
 
 
 MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -69,6 +69,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(400, {"error": "Escolha uma pool válida."})
             try:
                 self.respond(200, pool_snapshot(pool_ids[0]))
+            except SimulationInputError as error:
+                self.respond(400, {"error": str(error)})
+            except SimulationUnavailable as error:
+                self.respond(503, {"error": str(error)})
+        elif parsed.path == "/api/pool-chart":
+            query = parse_qs(parsed.query)
+            pool_ids, intervals = query.get("pool_id", []), query.get("interval", [])
+            if set(query) != {"pool_id", "interval"} or len(pool_ids) != 1 or len(intervals) != 1 or len(pool_ids[0]) > 120:
+                return self.respond(400, {"error": "Parâmetros do gráfico inválidos."})
+            try:
+                self.respond(200, pool_chart(pool_ids[0], intervals[0]))
             except SimulationInputError as error:
                 self.respond(400, {"error": str(error)})
             except SimulationUnavailable as error:

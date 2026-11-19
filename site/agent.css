@@ -9,10 +9,6 @@
 .agent-mini-eye::after{content:"";position:absolute;right:1px;bottom:2px;width:5px;height:8px;border-radius:60% 45% 50% 50%;background:#27202a}
 .agent-mode .welcome-character{background:transparent!important;border-radius:50%!important;--fire:#ef7844}
 .agent-mode .welcome-character::before{content:"";position:absolute;z-index:1;inset:0;border-radius:50%;background:radial-gradient(circle at 43% 69%,#ffe4ad 0%,#ffb66b 30%,var(--fire) 70%,#bd3b2c 100%)}
-.agent-flare{display:none}
-.agent-mode .agent-flare{display:block;position:absolute;z-index:0;left:var(--x);top:var(--y);width:0;height:0;transform:rotate(var(--a))}
-.agent-flare:nth-child(1){--x:7%;--y:43%;--a:-32deg;--d:-.21s;--h:14px}.agent-flare:nth-child(2){--x:15%;--y:22%;--a:-26deg;--d:-.46s;--h:20px}.agent-flare:nth-child(3){--x:30%;--y:5%;--a:-16deg;--d:-.12s;--h:25px}.agent-flare:nth-child(4){--x:45%;--y:-8%;--a:-6deg;--d:-.37s;--h:31px}.agent-flare:nth-child(5){--x:59%;--y:-10%;--a:10deg;--d:-.06s;--h:28px}.agent-flare:nth-child(6){--x:74%;--y:2%;--a:21deg;--d:-.28s;--h:23px}.agent-flare:nth-child(7){--x:87%;--y:22%;--a:30deg;--d:-.5s;--h:18px}.agent-flare:nth-child(8){--x:95%;--y:43%;--a:39deg;--d:-.17s;--h:13px}.agent-flare:nth-child(9){--x:25%;--y:0%;--a:-25deg;--d:-.4s;--h:14px}.agent-flare:nth-child(10){--x:70%;--y:-2%;--a:23deg;--d:-.23s;--h:16px}
-.agent-mode .agent-flare::before{content:"";position:absolute;left:-7px;bottom:0;width:14px;height:var(--h);background:linear-gradient(180deg,#ffca68,#f9843b 48%,#dc4430);clip-path:polygon(50% 0,61% 16%,80% 31%,70% 49%,100% 73%,75% 100%,20% 100%,0 69%,30% 45%,31% 29%);transform-origin:center bottom;animation:agent-flare .72s ease-in-out var(--d) infinite alternate}
 .agent-mode .welcome-character .eye-ball{z-index:3;width:31%;height:46%;background:#fff;box-shadow:none;clip-path:none;animation:none}
 .agent-mode .welcome-character .pupil{background:#352126}
 .agent-mode .welcome-character .pupil::after{content:"";position:absolute;left:23%;bottom:1px;width:55%;height:57%;border-radius:60% 50% 55% 55%;background:#ff8c43;clip-path:polygon(50% 0,83% 34%,100% 55%,86% 100%,12% 100%,0 58%,25% 35%);transform-origin:center bottom;animation:agent-eye-fire .47s ease-in-out infinite alternate}
@@ -31,7 +27,6 @@
 .agent-mode .chat-form:focus-within{border-color:#d99a83a6;box-shadow:0 18px 50px #0004,0 0 0 3px #d78c721e}
 .agent-mode .composer-footer button[type=submit]{background:#e99573}
 .agent-mode .mode-badge{border-color:#d78b7470;background:#d78b7416;color:#e5b3a2}
-@keyframes agent-flare{0%{transform:scale(.78,.72) rotate(-8deg);opacity:.86}100%{transform:scale(1.08,1.24) rotate(8deg);opacity:1}}
 @keyframes agent-eye-fire{0%{transform:scale(.76,.74) rotate(-9deg);background:#f7c36b}100%{transform:scale(1.1,1.18) rotate(9deg);background:#ff7139}}
 @keyframes agent-char{0%{color:#fff5e9;text-shadow:0 0 4px #ffb370}12%{color:#ffbd70;text-shadow:0 0 7px #ff873f}32%{color:#ed703d;text-shadow:0 0 3px #ed703d}55%{color:#8c7772;text-shadow:none}78%{color:#504b4c;text-shadow:none}100%{color:#f6f4f8;text-shadow:none}}
 @keyframes agent-smoke{from{opacity:.7;transform:translateY(1px) scale(.7)}to{opacity:0;transform:translateY(-31px) translateX(6px) scale(1.6)}}
@@ -56,4 +51,4 @@
 .agent-cursor[hidden]{display:none}
 @media(min-width:1250px){.site.agent-mode:has(.agent-window:not([hidden])) .conversation-scroll{padding-right:450px}.site.agent-mode:has(.agent-window:not([hidden])) .composer-area{width:calc(100% - 490px);margin-left:28px}}
 @media(max-width:899px),(pointer:coarse){#agent-toggle{display:none!important}.agent-window{display:none!important}}
-@media(prefers-reduced-motion:reduce){.agent-mode .agent-flare::before,.agent-mode .welcome-character .pupil::after,.agent-mode .agent-smoke,.agent-mode .welcome-wordmark span.is-burnt,.agent-mode .welcome-wordmark span.is-burnt::before,.agent-mode .welcome-wordmark span.is-burnt::after{animation:none}}
+@media(prefers-reduced-motion:reduce){.agent-mode .welcome-character .pupil::after,.agent-mode .agent-smoke,.agent-mode .welcome-wordmark span.is-burnt,.agent-mode .welcome-wordmark span.is-burnt::before,.agent-mode .welcome-wordmark span.is-burnt::after{animation:none}}

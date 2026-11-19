@@ -34,6 +34,55 @@ class AgentBrowserTests(unittest.TestCase):
         self.assertEqual(len(result["steps"]), 1)
         self.assertEqual(worker.call_args_list[1].args[0], "POST")
 
+    def test_public_search_submits_with_enter_and_reads_results(self):
+        before = {"url": "https://duckduckgo.com/", "title": "DuckDuckGo", "text": "Search",
+                  "elements": [{"index": 10, "kind": "textarea", "label": "Search with DuckDuckGo", "inputType": ""}]}
+        filled = {**before, "text": "bitcoin news"}
+        results = {"url": "https://duckduckgo.com/?q=bitcoin+news", "title": "bitcoin news", "text": "Resultados de bitcoin news",
+                   "elements": []}
+        with patch.object(agent_browser, "worker_call", side_effect=[before, filled, results]) as worker, \
+             patch.object(agent_browser, "choose_action", side_effect=[{"action": "fill", "index": 10, "value": "bitcoin news"},
+                                                                 {"action": "finish", "answer": "Encontrei os resultados."}]):
+            result = agent_browser.run("pesquisa sobre bitcoin news", "a" * 48, "nvapi-test")
+        self.assertEqual(result["reply"], "Encontrei os resultados.")
+        self.assertEqual(worker.call_args_list[2].args[1], "/sessions/" + "a" * 48 + "/key")
+        self.assertEqual(worker.call_args_list[2].args[3], {"key": "Enter"})
+
+    def test_other_form_does_not_submit(self):
+        snapshot = {"url": "https://example.com/", "title": "Example", "text": "Mensagem",
+                    "elements": [{"index": 1, "kind": "textarea", "label": "Search", "inputType": ""}]}
+        with patch.object(agent_browser, "worker_call", side_effect=[snapshot, snapshot]) as worker, \
+             patch.object(agent_browser, "choose_action", side_effect=[{"action": "fill", "index": 1, "value": "olá"},
+                                                                 {"action": "finish", "answer": "Pronto."}]):
+            agent_browser.run("Preencha o campo", "a" * 48, "nvapi-test")
+        self.assertEqual(worker.call_count, 2)
+
+    def test_agent_can_choose_first_site_from_blank_page(self):
+        blank = {"url": "about:blank", "title": "", "text": "", "elements": []}
+        result_page = {"url": "https://duckduckgo.com/", "title": "DuckDuckGo", "text": "Search", "elements": []}
+        with patch.object(agent_browser, "worker_call", side_effect=[blank, result_page]) as worker, \
+             patch.object(agent_browser, "choose_action", side_effect=[{"action": "navigate", "url": "https://duckduckgo.com/"},
+                                                                  {"action": "finish", "answer": "Página aberta."}]):
+            result = agent_browser.run("Pesquise bitcoin", "a" * 48, "nvapi-test")
+        self.assertEqual(result["reply"], "Página aberta.")
+        self.assertEqual(worker.call_args_list[1].args[1], "/sessions/" + "a" * 48 + "/navigate")
+
+    def test_play_video_returns_embedded_video_without_loading_youtube_in_worker(self):
+        result_page = {"url": "https://duckduckgo.com/?q=cyberpunk+music", "title": "Pesquisa", "text": "Vídeos",
+                       "elements": [{"index": 4, "kind": "a", "label": "Cyberpunk soundtrack", "risky": False,
+                                     "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}]}
+        with patch.object(agent_browser, "worker_call", return_value=result_page) as worker, \
+             patch.object(agent_browser, "choose_action", return_value={"action": "click", "index": 4}):
+            result = agent_browser.run("Quero assistir vídeo de música cyberpunk", "a" * 48, "nvapi-test")
+        self.assertEqual(result["video"]["id"], "dQw4w9WgXcQ")
+        self.assertEqual(worker.call_count, 1)
+
+    def test_unrelated_youtube_link_is_not_treated_as_video_playback(self):
+        self.assertFalse(agent_browser.requested_video("Resuma as notícias do YouTube"))
+        self.assertIsNone(agent_browser.youtube_video("https://evil.example/watch?v=dQw4w9WgXcQ"))
+        self.assertEqual(agent_browser.youtube_video("https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                                                     "https://www.youtube.com › watch?v=dQw4w9WgXcQ")["title"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

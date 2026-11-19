@@ -67,6 +67,22 @@
 .agent-privacy{margin:8px 0 0;color:#89838f;font-size:10px;line-height:1.4}
 .agent-cursor{position:absolute;z-index:2;width:10px;height:10px;border:1px solid #fff;border-radius:50%;background:#e99573;box-shadow:0 0 0 4px #e9957355;pointer-events:none;transition:left .35s ease,top .35s ease}
 .agent-cursor[hidden]{display:none}
+.agent-dock[hidden]{display:none!important}
+.agent-dock{position:fixed;z-index:20;right:18px;bottom:18px;width:min(310px,calc(100vw - 36px));padding:10px;border:1px solid #e9957355;border-radius:16px;background:#24252d;box-shadow:0 16px 42px #0009}
+.agent-dock>button{display:block;width:100%;padding:5px 4px 11px;border:0;background:none;color:#f4d2c6;font-size:12px;font-weight:650;text-align:left;cursor:pointer}
+.agent-dock img{display:block;width:100%;aspect-ratio:1100/720;margin-bottom:8px;object-fit:contain;border:1px solid #ffffff1e;border-radius:9px;background:#15151b}
+.agent-dock img:not([src]){display:none}
+.agent-dock form{display:flex;gap:7px}
+.agent-dock input{flex:1;min-width:0;padding:9px 10px;border:1px solid #ffffff25;border-radius:9px;background:#30313b;color:#f5f2f6;font:inherit;font-size:12px;outline:none}
+.agent-dock input:focus{border-color:#e99573}
+.agent-dock form button{width:36px;border:0;border-radius:9px;background:#e99573;color:#241d1d;font-size:19px;cursor:pointer}
+.agent-video{width:min(680px,100%);margin-top:16px;overflow:hidden;border:1px solid #ffffff24;border-radius:15px;background:#22232b}
+.agent-video iframe{display:block;width:100%;aspect-ratio:16/9;border:0;background:#111}
+.agent-video-caption{display:flex;align-items:center;gap:10px;padding:11px 13px;color:#a9a5b2;font-size:11px}
+.agent-video-caption strong{flex:1;min-width:0;margin:0;overflow:hidden;color:#eae6ed;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.agent-video-caption a{flex:none;color:#e8a58b;text-decoration:none}
+.agent-video-caption a:hover{text-decoration:underline}
+@media(max-width:680px){.agent-video-caption{flex-wrap:wrap}.agent-video-caption strong{flex-basis:100%}}
 @media(min-width:1250px){
   .site.agent-mode:has(.agent-window:not([hidden])){--agent-browser-width:clamp(630px,calc(100vw - 620px),760px)}
   .site.agent-mode .agent-window{width:var(--agent-browser-width,600px)}
@@ -79,5 +95,5 @@
   .site.agent-mode:has(.agent-window:not([hidden])) .agent-grid{grid-template-columns:1fr}
   .site.agent-mode:has(.agent-window:not([hidden])) .agent-grid button{min-height:54px;padding:8px 11px}
 }
-@media(max-width:899px),(pointer:coarse){#agent-toggle{display:none!important}.agent-window{display:none!important}}
+@media(max-width:899px),(pointer:coarse){#agent-toggle{display:none!important}.agent-window,.agent-dock{display:none!important}}
 @media(prefers-reduced-motion:reduce){.agent-mode .welcome-character::after{transition:none}.agent-mode .welcome-character .pupil::after,.agent-menu-face::before,.agent-menu-face::after,.agent-window-face::before,.agent-window-face::after,.agent-face-eye::after,.agent-mode .agent-smoke,.agent-mode .welcome-wordmark span.is-burnt,.agent-mode .welcome-wordmark span.is-burnt::before,.agent-mode .welcome-wordmark span.is-burnt::after{animation:none}}

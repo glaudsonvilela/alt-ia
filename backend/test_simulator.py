@@ -44,6 +44,16 @@ CHART = {"schema": "altside_pool_chart_v1", "pool_id": CATALOG["pools"][0]["id"]
 
 
 class SimulatorTests(unittest.TestCase):
+    def test_in_range_earnings_are_explicit_fee_scenarios(self):
+        basis = {"pool": {"pair": "WETH/USDC", "network": "Base Mainnet", "base_symbol": "WETH", "quote_symbol": "USDC"},
+                 "capital": "1000", "source": {"canonical": True, "block_number": 123}}
+        self.assertEqual(simulator.in_range_days("Quanto eu ganharia se a pool permanecesse nessa range por 7 dias?"), 7)
+        result = simulator.simulate_in_range_days(basis, 7)
+        rows = result["simulation"]["scenarios"]["rows"]
+        self.assertEqual([row["pnl"] for row in rows], ["0,00 USDC", "+3,50 USDC", "+7,00 USDC"])
+        self.assertIn("não são rendimentos previstos", result["reply"])
+        self.assertEqual(result["mode"], "pool")
+
     def test_multichain_catalog_marks_live_and_history_capabilities(self):
         robinhood = {**CATALOG["pools"][0], "id": "robinhood:uniswap-v3:weth-usdg-001",
                      "network": {"name": "Robinhood Chain Mainnet"}, "capabilities": {"simulation_engine": "robinhood_usdg_entry_preview"}}
@@ -200,6 +210,21 @@ class SimulatorTests(unittest.TestCase):
         with patch.object(simulator, "_json_request", return_value=invalid):
             with self.assertRaises(simulator.SimulationUnavailable):
                 simulator.handle_simulation("Simule swap de 100 USDC para WETH")
+
+    def test_short_pool_followup_uses_previous_parameters(self):
+        previous = {"kind": "pool", "pool_id": CATALOG["pools"][0]["id"], "capital_quote": "1000",
+                    "range_ticks": 1260, "slippage_bps": 20, "tick_lower": -202080, "tick_upper": -200820}
+        new_capital = simulator.pool_followup_request("e com 2000 USDC?", previous)
+        self.assertEqual(new_capital["capital_quote"], "2000")
+        self.assertEqual(new_capital["range_ticks"], 1260)
+        new_range = simulator.pool_followup_request("e faixa de 1800 ticks?", previous)
+        self.assertEqual(new_range["range_ticks"], 1800)
+        self.assertNotIn("tick_lower", new_range)
+        self.assertIsNone(simulator.pool_followup_request("e as notícias?", previous))
+
+    def test_implicit_price_shock_requires_pool_context(self):
+        self.assertIsNone(simulator.parse_price_shock("e se cair 20%?"))
+        self.assertEqual(simulator.parse_price_shock("e se cair 20%?", allow_implicit=True), ("BASE", -simulator.Decimal("20")))
 
 
 if __name__ == "__main__":

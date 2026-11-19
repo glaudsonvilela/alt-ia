@@ -10,6 +10,10 @@ class NewsAgentTests(unittest.TestCase):
         self.assertEqual(plan("Resumo das notícias de hoje"), {"scope": "daily"})
         self.assertEqual(plan("notícias da HYPE")["asset"], "HYPE")
         self.assertIsNone(plan("Simule a pool HYPE se subir 35%"))
+        self.assertEqual(plan("sobre a hyper", "news")["asset"], "HYPE")
+        self.assertEqual(plan("sobre bitcoin", "news")["asset"], "BTC")
+        self.assertIsNone(plan("sobre bitcoin"))
+        self.assertIsNone(plan("e se cair 20%?", "news"))
 
     def test_daily_uses_only_todays_dated_public_news(self):
         today = datetime.now(LOCAL_TIME).date()

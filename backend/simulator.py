@@ -634,7 +634,7 @@ SHOCK_VERB = r"(?:subir|sobe|aumentar|aumenta|valorizar|valoriza|alta|cair|cai|d
 SHOCK_NUMBER = r"(\d+(?:[.,]\d{1,2})?)\s*%"
 
 
-def parse_price_shock(text):
+def parse_price_shock(text, allow_implicit=False):
     """Recognize an explicit token movement, never infer a percentage from prose."""
     token = r"\b(USDC|WETH|ETH|WBTC|BTC|USDT|CBBTC|USDG|KHYPE|UBTC|WHYPE|SOL|HYPE)\b"
     patterns = (
@@ -652,9 +652,14 @@ def parse_price_shock(text):
             pair_pattern = rf"\b(?:pre[cç]o|par)\b\s+(?:\w+\s+){{0,3}}?({SHOCK_VERB})\s+(?:\w+\s+){{0,2}}?{SHOCK_NUMBER}"
             pair_match = re.search(pair_pattern, text, re.I)
             if not pair_match:
-                return None
-            verb, amount = pair_match.groups()
-            symbol = "BASE"
+                implicit = re.search(rf"\b({SHOCK_VERB})\s+(?:de\s+)?{SHOCK_NUMBER}", text, re.I) if allow_implicit else None
+                if not implicit:
+                    return None
+                verb, amount = implicit.groups()
+                symbol = "BASE"
+            else:
+                verb, amount = pair_match.groups()
+                symbol = "BASE"
     change = Decimal(amount.replace(",", "."))
     if change <= 0 or change > 1000:
         raise SimulationInputError("Informe uma variação maior que 0% e de até 1000%.")
@@ -662,6 +667,85 @@ def parse_price_shock(text):
     if fall and change >= 100:
         raise SimulationInputError("Uma queda de preço precisa ser menor que 100%.")
     return symbol.upper(), -change if fall else change
+
+
+def pool_followup_request(text, previous):
+    """Keep the selected pool when a short follow-up changes capital, range or period."""
+    if not isinstance(previous, dict) or previous.get("kind") not in ("pool", "historical_pool"):
+        return None
+    if len(text.split()) > 18 or re.search(r"\b(swap|not[ií]cias?|news|outra\s+pool|outra\s+rede)\b", text, re.I):
+        return None
+    updated = dict(previous)
+    changed = False
+    ticks = re.search(r"\b(\d{2,5})\s*ticks?\b", text, re.I)
+    if ticks:
+        updated["range_ticks"] = int(ticks.group(1))
+        updated.pop("tick_lower", None)
+        updated.pop("tick_upper", None)
+        changed = True
+    if previous["kind"] == "historical_pool":
+        period = re.search(r"\b(7|30|90)\s*dias?\b", text, re.I)
+        if period:
+            updated["period_days"] = int(period.group(1))
+            changed = True
+    capital = re.search(r"\b(?:capital|valor|com|investir|alocar)\s+(?:de\s+)?(\d+(?:[.,]\d{1,18})?)\s*(?:USDC|USDT|USDG)?\b", text, re.I)
+    if not capital:
+        capital = re.search(r"\b(\d+(?:[.,]\d{1,18})?)\s+(?:USDC|USDT|USDG)\b", text, re.I)
+    if capital and not re.search(r"\d+(?:[.,]\d+)?\s*%", text):
+        updated["capital_quote"] = capital.group(1).replace(",", ".")
+        changed = True
+    return updated if changed else None
+
+
+def in_range_days(text):
+    """Recognize a forward-looking stay-in-range earnings question."""
+    if not re.search(r"\b(?:faixa|range|pool|posi[cç][aã]o|dentro)\b", text, re.I):
+        return None
+    if not re.search(r"\b(?:ganh\w*|rend\w*|lucro|taxas?|retorno|receb\w*|permanec\w*|fic\w*)\b", text, re.I):
+        return None
+    match = re.search(r"\b(\d{1,3})\s*dias?\b", text, re.I)
+    days = int(match.group(1)) if match else None
+    return days if days is not None and 1 <= days <= 365 else None
+
+
+def simulate_in_range_days(basis, days):
+    """Illustrate fee-rate sensitivities; time in range alone cannot determine fees."""
+    if not isinstance(basis, dict):
+        return {"reply": "📊 Para calcular sua pool, preciso primeiro da pool, capital e faixa.",
+                "input_request": {"kind": "pool"}, "follow_up": "😊 Qual pool e capital você quer usar?", "mode": "pool"}
+    pool = basis["pool"]
+    capital = Decimal(str(basis["capital"]))
+    if not capital.is_finite() or capital <= 0 or type(days) is not int or not 1 <= days <= 365:
+        raise SimulationInputError("Capital ou período inválido.")
+    unit = pool["quote_symbol"]
+    digits = 2 if unit.upper() in ("USDC", "USDT", "USDG") else 6
+    rates = (Decimal("0"), Decimal("0.0005"), Decimal("0.001"))
+    rows = []
+    for rate in rates:
+        fee = capital * rate * days
+        rows.append({"label": "Sem taxas" if rate == 0 else f"{_money(rate * 100, 2)}%/dia",
+                     "price": f"{_money(rate * 100, 2)}%/dia",
+                     "value": f"{_money(capital + fee, digits)} {unit}",
+                     "pnl": f"+{_money(fee, digits)} {unit}" if fee else f"{_money(fee, digits)} {unit}",
+                     "tone": "gain" if fee else "flat"})
+    source = {**basis["source"], "engine": "Alt-IA · cenários matemáticos",
+              "validity": "Taxas/dia são hipóteses educativas, não APY observado nem previsão."}
+    sim = {"kind": "pool", "title": f"{days} dias na faixa", "subtitle": f"{pool['pair']} · {pool['network']}",
+           "metrics": [{"label": "Capital inicial", "value": f"{_money(capital, digits)} {unit}"},
+                       {"label": "Período", "value": f"{days} dias"},
+                       {"label": "Taxas reais previstas", "value": "Indeterminadas"}],
+           "source": source,
+           "scenarios": {"unit": unit, "base_symbol": pool["base_symbol"],
+                         "caption": "💸 Exemplos de taxas para sua posição · valores brutos",
+                         "headers": ["Hipótese", "Taxa diária", "Valor final", "Taxas ganhas"],
+                         "rows": rows,
+                         "note": "Fórmula: capital × taxa diária hipotética × dias. Taxas não compostas. Permanecer na faixa não determina a taxa recebida."},
+           "assumptions": ["Preço dos dois ativos constante apenas para isolar as taxas; ficar na faixa não significa preço constante.",
+                           "Volume de swaps, sua participação na liquidez ativa e taxas futuras não foram medidos.",
+                           "Sem gas, slippage, impostos ou custos de saída."],
+           "url": PUBLIC_URL, "_scenario_basis": basis}
+    return {"reply": f"📊 Se a pool {pool['pair']} ficar na faixa por {days} dias, o ganho com taxas depende dos swaps e da sua participação na liquidez ativa. A tabela mostra exemplos matemáticos para {_money(capital, digits)} {unit}; não são rendimentos previstos. Mesmo dentro da faixa, o preço pode mudar e gerar ganho ou perda no capital.",
+            "simulation": sim, "follow_up": f"😊 Quer ver o que acontece se {pool['base_symbol']} subir 10% nessa pool?", "mode": "pool"}
 
 
 def is_quant_pool_question(text):

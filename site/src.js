@@ -60,6 +60,22 @@ function safeNews(value) {
       summary: String(item.summary || '').slice(0, 260), published_at: String(item.published_at || '').slice(0, 40), time_known: item.time_known === true }));
 }
 
+function safePoolRequest(value) {
+  if (!value || !['pool', 'historical_pool'].includes(value.kind) || typeof value.pool_id !== 'string'
+      || typeof value.capital_quote !== 'string' || !Number.isSafeInteger(value.range_ticks)) return null;
+  if (!/^\d+(?:[.,]\d{1,18})?$/.test(value.capital_quote) || value.pool_id.length > 120) return null;
+  const result = { kind: value.kind, pool_id: value.pool_id, capital_quote: value.capital_quote, range_ticks: value.range_ticks };
+  if (value.kind === 'pool') {
+    if (!Number.isSafeInteger(value.slippage_bps)) return null;
+    result.slippage_bps = value.slippage_bps;
+    if (Number.isSafeInteger(value.tick_lower) && Number.isSafeInteger(value.tick_upper)) {
+      result.tick_lower = value.tick_lower;
+      result.tick_upper = value.tick_upper;
+    }
+  } else if (Number.isSafeInteger(value.period_days)) result.period_days = value.period_days;
+  return result;
+}
+
 function safeSimulation(value) {
   if (!value || !['swap', 'pool', 'historical_pool'].includes(value.kind) || !Array.isArray(value.metrics) || !value.source) return null;
   const isHistorical = value.kind === 'historical_pool';
@@ -72,6 +88,8 @@ function safeSimulation(value) {
   const scenario = value.scenarios;
   const scenarios = scenario && typeof scenario.unit === 'string' && typeof scenario.base_symbol === 'string' && Array.isArray(scenario.rows)
     ? { unit: clean(scenario.unit, 12), base_symbol: clean(scenario.base_symbol, 12), caption: clean(scenario.caption, 120), note: clean(scenario.note, 280),
+        headers: Array.isArray(scenario.headers) && scenario.headers.length === 4 && scenario.headers.every((item) => typeof item === 'string')
+          ? scenario.headers.map((item) => clean(item, 40)) : null,
         rows: scenario.rows.slice(0, 7).filter((row) => row && ['gain', 'loss', 'flat'].includes(row.tone)
           && ['label', 'price', 'value', 'pnl'].every((key) => typeof row[key] === 'string'))
           .map((row) => ({ label: clean(row.label, 30), price: clean(row.price, 30), value: clean(row.value, 30), pnl: clean(row.pnl, 30), tone: row.tone })) }
@@ -103,6 +121,9 @@ function readConversations() {
         messages: item.messages.filter((message) => message && (message.role === 'user' || message.role === 'ai') && typeof message.text === 'string').slice(-100)
           .map((message) => ({ role: message.role, text: message.text, simulation: message.role === 'ai' ? safeSimulation(message.simulation) : null,
             news: message.role === 'ai' ? safeNews(message.news) : [],
+            mode: message.role === 'ai' && ['news', 'pool', 'historical_pool', 'general'].includes(message.mode) ? message.mode : '',
+            newsTopic: message.role === 'ai' && typeof message.newsTopic === 'string' ? message.newsTopic.slice(0, 30) : '',
+            poolRequest: message.role === 'ai' ? safePoolRequest(message.poolRequest) : null,
             scenarioToken: message.role === 'ai' && typeof message.scenarioToken === 'string' ? message.scenarioToken.slice(0, 12000) : '',
             followUp: message.role === 'ai' && typeof message.followUp === 'string' ? message.followUp.slice(0, 280) : '' }))
       }));
@@ -257,7 +278,7 @@ function createSimulationCard(simulation) {
     caption.textContent = simulation.scenarios.caption || `📊 Se o preço de ${simulation.scenarios.base_symbol} mudar · valores em ${simulation.scenarios.unit}`;
     const head = document.createElement('thead');
     const headerRow = document.createElement('tr');
-    [simulation.kind === 'historical_pool' ? 'Data' : 'Cenário', 'Preço', 'Valor', 'Ganho/perda'].forEach((label) => {
+    (simulation.scenarios.headers || [simulation.kind === 'historical_pool' ? 'Data' : 'Cenário', 'Preço', 'Valor', 'Ganho/perda']).forEach((label) => {
       const heading = document.createElement('th');
       heading.scope = 'col';
       heading.textContent = label;
@@ -876,7 +897,10 @@ chatForm?.addEventListener('submit', async (event) => {
     activeId = conversation.id;
   }
   const isFirstMessage = conversation.messages.length === 0;
-  const previousPool = [...conversation.messages].reverse().find((message) => message.role === 'ai' && message.simulation?.kind === 'pool');
+  const previousAnswer = [...conversation.messages].reverse().find((message) => message.role === 'ai');
+  const previousMode = previousAnswer?.mode || (previousAnswer?.news?.length || previousAnswer?.text?.startsWith('🗞️')
+    ? 'news' : previousAnswer?.simulation?.kind || 'general');
+  const previousPool = previousMode === 'pool' ? previousAnswer : null;
   conversation.messages.push({ role: 'user', text });
   conversation.updatedAt = Date.now();
   conversation.messages = conversation.messages.slice(-100);
@@ -909,7 +933,10 @@ chatForm?.addEventListener('submit', async (event) => {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: context, ...(simulationRequest ? { simulation_request: simulationRequest } : {}),
+      body: JSON.stringify({ messages: context, chat_context: {
+        mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.news || [] : [],
+        pool_request: previousMode === 'pool' || previousMode === 'historical_pool' ? previousAnswer?.poolRequest || null : null
+      }, ...(simulationRequest ? { simulation_request: simulationRequest } : {}),
         ...(previousPool?.scenarioToken ? { scenario_token: previousPool.scenarioToken } : {}),
         ...(previousPool?.simulation ? { scenario_context: {
           kind: previousPool.simulation.kind, title: previousPool.simulation.title, subtitle: previousPool.simulation.subtitle,
@@ -921,6 +948,9 @@ chatForm?.addEventListener('submit', async (event) => {
     const target = conversations.find((item) => item.id === conversationId);
     if (!target) return;
     target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation), news: safeNews(data.news),
+      mode: ['news', 'pool', 'historical_pool', 'general'].includes(data.mode) ? data.mode : 'general',
+      newsTopic: typeof data.news_topic === 'string' ? data.news_topic.slice(0, 30) : '',
+      poolRequest: safePoolRequest(data.pool_request),
       scenarioToken: typeof data.scenario_token === 'string' ? data.scenario_token.slice(0, 12000) : '',
       followUp: typeof data.follow_up === 'string' ? data.follow_up.slice(0, 280) : '' });
     target.updatedAt = Date.now();

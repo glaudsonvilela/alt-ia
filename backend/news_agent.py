@@ -26,23 +26,34 @@ ASSETS = {
     "AVAX": ("avalanche", "avax"), "ADA": ("cardano", "ada"),
     "DOGE": ("dogecoin", "doge"), "UNI": ("uniswap", "uni"),
 }
+NEWS_CONTEXT_REPLY = re.compile(r"^\s*(?:e\s+)?(?:sobre|da|do|de|e|a|o|quero\s+saber\s+sobre|me\s+fale\s+de|mostre\s+(?:a|o|de))\b", re.I)
+OTHER_TASK = re.compile(r"\b(simul\w*|swap|pool|capital|faixa|ticks?|slippage|pre[cç]o|quanto|ganh\w*|perd\w*|subir|cair)\b", re.I)
 _cache = {}
 _cache_lock = threading.Lock()
 
 
-def plan(text):
-    """Make a narrow plan from the last user message, never earlier chat."""
-    if not NEWS_WORDS.search(text):
+def plan(text, previous=None):
+    """Resolve an explicit news request or a short follow-up to the last news turn."""
+    explicit = bool(NEWS_WORDS.search(text))
+    contextual = previous == "news" and len(text.split()) <= 12 and not OTHER_TASK.search(text)
+    if not explicit and not contextual:
         return None
     lowered = text.casefold()
     for symbol, aliases in ASSETS.items():
-        if any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", lowered, re.I) for alias in aliases):
+        lookup = (*aliases, "hyper", "hyperevm") if symbol == "HYPE" else aliases
+        if any(re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", lowered, re.I) for alias in lookup):
             return {"scope": "asset", "asset": symbol, "aliases": aliases}
-    match = re.search(r"\b(?:not[ií]cias?|news|manchetes)\s+(?:de|do|da|sobre|para)\s+(?:a\s+moeda\s+|o\s+ativo\s+|o\s+token\s+)?([\w-]{2,30})", lowered, re.I)
-    if match and match.group(1) not in ("hoje", "ontem", "dia", "mercado", "cripto", "crypto", "defi", "agora"):
+    match = re.search(r"\b(?:not[ií]cias?|news|manchetes)\s+(?:de|do|da|sobre|para)\s+(?:(?:a|o)\s+)?(?:(?:moeda|ativo|token)\s+)?([\w-]{2,30})", lowered, re.I)
+    if not match and contextual and (NEWS_CONTEXT_REPLY.search(text) or len(text.split()) <= 3):
+        match = re.search(r"\b(?:sobre|da|do|de|e|a|o)\s+(?:(?:a|o)\s+)?([\w-]{2,30})", lowered, re.I)
+        if not match and len(text.split()) == 1 and len(text.strip()) <= 6:
+            match = re.fullmatch(r"([\w-]{2,30})", lowered)
+    if match and match.group(1) not in ("hoje", "ontem", "dia", "mercado", "cripto", "crypto", "defi", "agora", "outra", "outro", "moeda", "ativo", "token", "obrigado", "valeu"):
         asset = match.group(1).upper()
         return {"scope": "asset", "asset": asset, "aliases": (asset.casefold(),)}
-    return {"scope": "daily"}
+    if explicit:
+        return {"scope": "daily"}
+    return {"scope": "need_asset"} if contextual else None
 
 
 def _load(path, body=None, ttl=180):
@@ -149,23 +160,25 @@ def _present(plan_value, selected, count, today):
     date_label = today.strftime("%d/%m/%Y")
     if plan_value["scope"] == "daily":
         if not selected:
-            return {"reply": f"🗞️ Ainda não há notícias publicadas hoje ({date_label}) no feed do Research Lab. Vou conferir novamente quando você pedir.", "follow_up": "Quer consultar as notícias de uma moeda específica?", "news": []}
+            return {"reply": f"🗞️ Ainda não há notícias publicadas hoje ({date_label}) no feed do Research Lab. Vou conferir novamente quando você pedir.", "follow_up": "Quer consultar as notícias de uma moeda específica?", "news": [], "mode": "news", "news_topic": ""}
         intro = f"🗞️ Resumo de hoje ({date_label}): o Research Lab reuniu {count} notícia{'s' if count != 1 else ''} até agora. Separei destaques de cripto e macro, com fontes e datas."
         question = "Quer que eu filtre as notícias de uma moeda específica?"
         selected = _pick_daily(selected)
     else:
         asset = plan_value["asset"]
         if not selected:
-            return {"reply": f"🗞️ Não encontrei notícias recentes de {asset} no acervo público do Research Lab.", "follow_up": "Quer ver o resumo geral de hoje?", "news": []}
+            return {"reply": f"🗞️ Não encontrei notícias recentes de {asset} no acervo público do Research Lab.", "follow_up": "Quer ver o resumo geral de hoje?", "news": [], "mode": "news", "news_topic": asset}
         intro = f"🗞️ Notícias de {asset}: encontrei {count} resultado{'s' if count != 1 else ''} no acervo público. Separei as manchetes mais recentes."
         question = f"Quer que eu analise o possível impacto dessas notícias em uma pool de {asset}?"
-    return {"reply": intro, "follow_up": question, "news": selected[:7], "news_source": "Altside Research Lab"}
+    return {"reply": intro, "follow_up": question, "news": selected[:7], "news_source": "Altside Research Lab", "mode": "news", "news_topic": plan_value.get("asset", "")}
 
 
-def run(text):
-    decision = plan(text)
+def run(text, previous=None):
+    decision = plan(text, previous)
     if decision is None:
         return None
+    if decision["scope"] == "need_asset":
+        return {"reply": "🗞️ Claro! Posso filtrar as notícias para você.", "follow_up": "De qual moeda você quer notícias?", "news": [], "mode": "news", "news_topic": ""}
     today = datetime.now(LOCAL_TIME).date()
     if decision["scope"] == "daily":
         feed = _load("/api/state", ttl=180)

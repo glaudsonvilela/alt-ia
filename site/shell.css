@@ -130,8 +130,8 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 
 .pool-dialog{position:fixed;inset:0;width:min(610px,calc(100vw - 28px));max-width:none;max-height:min(94dvh,890px);padding:0;border:1px solid #c392ed58;border-radius:26px;background:#191821;color:#f8f5fb;box-shadow:0 34px 110px #000b,0 0 90px #8650b329;overflow:auto;scrollbar-width:none}
 .pool-dialog::-webkit-scrollbar{display:none}
-.pool-dialog::backdrop{background:#09080dc7;backdrop-filter:blur(12px)}
-.pool-dialog[open]{animation:pool-window-enter .26s ease-out both}
+.pool-dialog::backdrop{background:#09080dc7;backdrop-filter:blur(12px);animation:pool-backdrop-enter .3s ease-out both}
+.pool-dialog[open]{animation:pool-window-enter .61s cubic-bezier(.2,.8,.2,1) both}
 .pool-dialog-card{position:relative;min-height:100%;padding:24px 32px 27px;overflow:hidden;background:radial-gradient(circle at 82% 9%,#573c783b,transparent 38%),linear-gradient(160deg,#25212e,#1a1b24 62%)}
 .pool-dialog-art{position:relative;height:64px;pointer-events:none}
 .pool-orbit{position:absolute;display:block;width:43px;height:43px;opacity:.87;animation:pool-orbit-dance 5s ease-in-out infinite}
@@ -182,7 +182,8 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 .pool-submit-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:#20172422;transition:transform .3s cubic-bezier(.2,1.4,.4,1),background .2s}
 .pool-submit-icon svg{display:block;width:25px;height:25px}.pool-submit-face{fill:#332239}
 .pool-submit:hover .pool-submit-icon{transform:rotate(-9deg) scale(1.08);background:#20172438}
-@keyframes pool-window-enter{from{opacity:0;transform:translateY(9px) scale(.988)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes pool-window-enter{from{opacity:0;transform:translateY(42px) scale(.94);filter:blur(5px)}72%{opacity:1;transform:translateY(-4px) scale(1.015);filter:blur(0)}to{opacity:1;transform:translateY(0) scale(1);filter:blur(0)}}
+@keyframes pool-backdrop-enter{from{opacity:0}to{opacity:1}}
 @keyframes pool-face-hop{0%,100%{transform:translateY(0) rotate(-7deg) scale(1)}40%{transform:translateY(-7px) rotate(4deg) scale(.96,1.04)}62%{transform:translateY(0) rotate(-4deg) scale(1.06,.94)}}
 @keyframes pool-orbit-dance{0%,100%{transform:translateY(0) rotate(15deg)}50%{transform:translateY(-9px) rotate(30deg)}}
 @keyframes pool-spark-twinkle{0%,100%{opacity:.5;transform:scale(.8) rotate(-15deg)}50%{opacity:1;transform:scale(1.2) rotate(12deg)}}

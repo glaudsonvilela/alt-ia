@@ -22,6 +22,10 @@ class SimulationUnavailable(Exception):
     pass
 
 
+class SimulationInputError(Exception):
+    pass
+
+
 def _json_request(path, payload=None):
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = urllib.request.Request(
@@ -97,6 +101,76 @@ def _source(raw, kind):
     }
 
 
+def pool_options():
+    catalog = _json_request("/markets/pools")
+    options = []
+    for pool in catalog.get("pools", []):
+        if pool.get("capabilities", {}).get("simulation_engine") != "canonical_entry_preview":
+            continue
+        try:
+            option = {
+                "id": pool["id"],
+                "pair": pool["display_pair"],
+                "network": pool["network"]["name"],
+                "protocol": pool["protocol"]["name"],
+                "base_symbol": pool["base_token"]["symbol"],
+                "quote_symbol": pool["quote_token"]["symbol"],
+                "tick_spacing": int(pool["tick_spacing"]),
+            }
+        except (KeyError, TypeError, ValueError):
+            continue
+        if option["tick_spacing"] > 0 and re.fullmatch(r"[a-z0-9:.-]{1,120}", option["id"]):
+            options.append(option)
+    return options[:20]
+
+
+def _run_pool(pool, amount, range_ticks, bps):
+    if range_ticks < pool["tick_spacing"] * 2 or range_ticks > 50000:
+        raise SimulationInputError(f"A faixa desta pool precisa ter entre {pool['tick_spacing'] * 2} e 50000 ticks.")
+    raw = _json_request(f"/simulate/pools/{quote(pool['id'], safe=':')}/entry", {"capital_quote": amount, "range_ticks": range_ticks, "slippage_bps": bps})
+    if raw.get("simulation_type") != "canonical_concentrated_liquidity_entry_preview" or raw.get("pool_id") != pool["id"]:
+        raise SimulationUnavailable("O motor retornou uma prévia de pool inesperada.")
+    allocation = (raw.get("allocation") or {}).get("formatted") or {}
+    base_symbol = pool["base_symbol"]
+    quote_symbol = pool["quote_symbol"]
+    sim = {
+        "kind": "pool",
+        "title": f"Entrada {pool['pair']}",
+        "subtitle": f"{pool['network']} · {pool['protocol']}",
+        "metrics": [
+            {"label": "Capital", "value": f"{amount} {quote_symbol}"},
+            {"label": f"{base_symbol} necessário", "value": f"{allocation.get('base_required')} {base_symbol}"},
+            {"label": f"{quote_symbol} necessário", "value": f"{allocation.get('quote_required')} {quote_symbol}"},
+            {"label": "Capital não usado", "value": f"{allocation.get('unused_quote')} {quote_symbol}"},
+        ],
+        "source": _source(raw, "pool"),
+        "assumptions": [f"Faixa: {range_ticks} ticks", f"Slippage: {bps / 100:g}%", "Prévia de entrada; rendimento futuro não estimado."],
+        "url": PUBLIC_URL,
+    }
+    if any("None" in metric["value"] for metric in sim["metrics"]):
+        raise SimulationUnavailable("O motor retornou uma alocação incompleta.")
+    return {"reply": "O motor Altside calculou a alocação de entrada para esta pool. A faixa e os custos assumidos estão abaixo.", "simulation": sim}
+
+
+def simulate_pool_request(request):
+    if not isinstance(request, dict) or set(request) != {"kind", "pool_id", "capital_quote", "range_ticks", "slippage_bps"} or request.get("kind") != "pool":
+        raise SimulationInputError("Parâmetros da simulação inválidos.")
+    pool = next((option for option in pool_options() if option["id"] == request["pool_id"]), None)
+    if pool is None:
+        raise SimulationInputError("Pool indisponível para esta prévia.")
+    amount = request["capital_quote"]
+    if not isinstance(amount, str) or not re.fullmatch(r"\d+(?:[.,]\d{1,18})?", amount):
+        raise SimulationInputError("Informe um capital decimal válido.")
+    amount = _decimal(amount)
+    if amount is None:
+        raise SimulationInputError("Informe um capital maior que zero e até 10 milhões.")
+    ticks = request["range_ticks"]
+    bps = request["slippage_bps"]
+    if type(ticks) is not int or type(bps) is not int or not 0 <= bps <= 500:
+        raise SimulationInputError("Faixa ou slippage inválidos.")
+    return _run_pool(pool, amount, ticks, bps)
+
+
 def _swap(text):
     assets = [m.group(1).upper() for m in TOKEN_RE.finditer(text)]
     assets = ["WETH" if value == "ETH" else value for value in assets]
@@ -140,60 +214,35 @@ def _swap(text):
 def _pool(text):
     if re.search(r"\b(comparar|compare|comparação)\b", text, re.I):
         return {"reply": "Posso simular a entrada em uma pool por vez nesta etapa. Diga o par, a rede e o capital; depois envie a segunda pool para comparar as prévias."}
-    catalog = _json_request("/markets/pools")
-    pools = [p for p in catalog.get("pools", []) if p.get("capabilities", {}).get("simulation_engine") == "canonical_entry_preview"]
+    pools = pool_options()
     tokens = {"WETH" if m.group(1).upper() == "ETH" else m.group(1).upper() for m in TOKEN_RE.finditer(text)}
     if len(tokens) < 2:
-        return {"reply": "Para simular uma entrada em pool, informe o par, a rede e o capital. Exemplo: simule 1000 USDC na pool WETH/USDC da Base."}
-    candidates = [p for p in pools if {p.get("base_token", {}).get("symbol", "").upper(), p.get("quote_token", {}).get("symbol", "").upper()} == tokens]
+        return {"reply": "Vamos configurar sua entrada na pool. Escolha o par, o capital e a faixa na janela de simulação.", "input_request": {"kind": "pool"}}
+    candidates = [p for p in pools if {p["base_symbol"].upper(), p["quote_symbol"].upper()} == tokens]
     lower = text.lower()
     if "base" in lower:
-        candidates = [p for p in candidates if p.get("network", {}).get("name", "").lower().startswith("base")]
+        candidates = [p for p in candidates if p["network"].lower().startswith("base")]
     elif "ethereum" in lower or "mainnet" in lower:
-        candidates = [p for p in candidates if "ethereum" in p.get("network", {}).get("name", "").lower()]
+        candidates = [p for p in candidates if "ethereum" in p["network"].lower()]
     if "aerodrome" in lower:
-        candidates = [p for p in candidates if "aerodrome" in p.get("protocol", {}).get("name", "").lower()]
+        candidates = [p for p in candidates if "aerodrome" in p["protocol"].lower()]
     if "uniswap" in lower:
-        candidates = [p for p in candidates if "uniswap" in p.get("protocol", {}).get("name", "").lower()]
+        candidates = [p for p in candidates if "uniswap" in p["protocol"].lower()]
     if not candidates:
-        return {"reply": "Não encontrei uma prévia de entrada canônica para esse par no catálogo atual do Altside. Tente WETH/USDC na Base ou cbBTC/USDC na Base."}
+        return {"reply": "Não encontrei esse par nas pools com prévia canônica. Escolha uma das pools disponíveis na janela de simulação.", "input_request": {"kind": "pool"}}
     if len(candidates) > 1:
-        choices = "; ".join(f"{p['display_pair']} · {p['network']['name']} · {p['protocol']['name']}" for p in candidates[:5])
-        return {"reply": f"Encontrei mais de uma pool para esse par. Qual delas você quer? {choices}."}
+        return {"reply": "Encontrei mais de uma pool para esse par. Escolha o protocolo na janela de simulação.", "input_request": {"kind": "pool"}}
     pool = candidates[0]
-    quote_symbol = pool["quote_token"]["symbol"]
+    quote_symbol = pool["quote_symbol"]
     amount = _amount_for(text, quote_symbol)
-    if amount is None:
-        return {"reply": f"Qual capital em {quote_symbol} devo usar para {pool['display_pair']} na {pool['network']['name']}?"}
     tick_match = re.search(r"(\d{2,6})\s*ticks?\b", text, re.I)
-    range_ticks = int(tick_match.group(1)) if tick_match else 1200
-    if range_ticks < int(pool["tick_spacing"]) * 2 or range_ticks > 50000:
-        return {"reply": f"Informe uma faixa em ticks entre {int(pool['tick_spacing']) * 2} e 50000 para esta pool."}
+    range_ticks = int(tick_match.group(1)) if tick_match else max(1200, pool["tick_spacing"] * 2)
     bps = _slippage(text)
-    if bps is None:
-        return {"reply": "Informe uma tolerância de slippage entre 0% e 5%."}
-    raw = _json_request(f"/simulate/pools/{quote(pool['id'], safe=':')}/entry", {"capital_quote": amount, "range_ticks": range_ticks, "slippage_bps": bps})
-    if raw.get("simulation_type") != "canonical_concentrated_liquidity_entry_preview" or raw.get("pool_id") != pool["id"]:
-        raise SimulationUnavailable("O motor retornou uma prévia de pool inesperada.")
-    allocation = (raw.get("allocation") or {}).get("formatted") or {}
-    base_symbol = pool["base_token"]["symbol"]
-    sim = {
-        "kind": "pool",
-        "title": f"Entrada {pool['display_pair']}",
-        "subtitle": f"{pool['network']['name']} · {pool['protocol']['name']}",
-        "metrics": [
-            {"label": "Capital", "value": f"{amount} {quote_symbol}"},
-            {"label": f"{base_symbol} necessário", "value": f"{allocation.get('base_required')} {base_symbol}"},
-            {"label": f"{quote_symbol} necessário", "value": f"{allocation.get('quote_required')} {quote_symbol}"},
-            {"label": "Capital não usado", "value": f"{allocation.get('unused_quote')} {quote_symbol}"},
-        ],
-        "source": _source(raw, "pool"),
-        "assumptions": [f"Faixa: {range_ticks} ticks" + (" (padrão)" if not tick_match else ""), f"Slippage: {bps / 100:g}%", "Prévia de entrada; rendimento futuro não estimado."],
-        "url": PUBLIC_URL,
-    }
-    if any("None" in metric["value"] for metric in sim["metrics"]):
-        raise SimulationUnavailable("O motor retornou uma alocação incompleta.")
-    return {"reply": "O motor Altside calculou a alocação de entrada para esta pool. A faixa e os custos assumidos estão abaixo.", "simulation": sim}
+    if amount is None or tick_match is None or bps is None or range_ticks < pool["tick_spacing"] * 2 or range_ticks > 50000:
+        return {"reply": "Complete o capital, a faixa e o slippage na janela para calcular a prévia desta pool.", "input_request": {
+            "kind": "pool", "pool_id": pool["id"], "capital_quote": amount or "", "range_ticks": range_ticks if range_ticks <= 50000 else 1200, "slippage_bps": bps if bps is not None else 20,
+        }}
+    return _run_pool(pool, amount, range_ticks, bps)
 
 
 def handle_simulation(text):

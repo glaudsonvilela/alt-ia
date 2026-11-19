@@ -10,8 +10,8 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=22">
-  <script defer src="/app.js?v=22"></script>
+  <link rel="stylesheet" href="/shell.css?v=24">
+  <script defer src="/app.js?v=24"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -72,7 +72,7 @@
             <p>Descreva um cenário de mercado, uma pool ou uma estratégia. A Alt-IA pode ajudar você a explorar possibilidades.</p>
             <div class="prompt-grid" aria-label="Sugestões de mensagem">
               <button type="button" data-prompt="Simule swap de 100 USDC para WETH com slippage de 0,2%"><span class="prompt-icon orange">↗</span><strong>Simular um swap</strong><small>100 USDC para WETH</small></button>
-              <button type="button" data-prompt="Simule entrada de 1000 USDC na pool WETH/USDC da Base com faixa de 1200 ticks"><span class="prompt-icon violet">◈</span><strong>Simular uma pool</strong><small>WETH/USDC na Base</small></button>
+              <button type="button" data-action="configure-pool"><span class="prompt-icon violet">◈</span><strong>Simular uma pool</strong><small>Defina capital e faixa</small></button>
               <button type="button" data-prompt="Analisar o risco de uma operação de lending"><span class="prompt-icon blue">◎</span><strong>Analisar risco</strong><small>Operação de lending</small></button>
               <button type="button" data-prompt="Explorar uma estratégia DeFi no simulador Altside"><span class="prompt-icon green">✳</span><strong>Explorar estratégia</strong><small>Cenários DeFi</small></button>
             </div>
@@ -89,5 +89,26 @@
       </main>
     </div>
   </div>
+
+  <dialog class="pool-dialog" id="pool-dialog" aria-labelledby="pool-dialog-title">
+    <div class="pool-dialog-card">
+      <div class="pool-dialog-art" aria-hidden="true"><i class="pool-orbit pool-orbit-one"></i><i class="pool-orbit pool-orbit-two"></i><span class="pool-face eye-pod"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i></span><i class="pool-spark">✦</i></div>
+      <button class="pool-dialog-close" id="pool-dialog-close" type="button" aria-label="Fechar configuração">×</button>
+      <div class="pool-dialog-copy"><span class="pool-dialog-kicker">ALT-IA · SIMULAÇÃO</span><h2 id="pool-dialog-title">Desenhe sua entrada.</h2><p>Escolha a pool e ajuste os parâmetros antes de consultar o motor Altside.</p></div>
+      <form id="pool-config-form">
+        <label for="pool-select">Pool</label>
+        <select id="pool-select" required><option value="">Carregando pools…</option></select>
+        <div class="pool-field-grid">
+          <div><label for="pool-capital">Capital <span id="pool-capital-unit">USDC</span></label><input id="pool-capital" type="text" inputmode="decimal" autocomplete="off" placeholder="Ex.: 1000" required></div>
+          <div><label for="pool-range">Faixa em ticks</label><input id="pool-range" type="number" inputmode="numeric" step="1" min="1" max="50000" value="1200" required></div>
+        </div>
+        <div class="pool-range-hint" id="pool-range-hint">A faixa define a largura da posição em torno do preço atual.</div>
+        <div class="pool-slippage-row"><label for="pool-slippage">Slippage máximo</label><div class="pool-slippage-input"><input id="pool-slippage" type="text" inputmode="decimal" value="0,2" aria-describedby="pool-slippage-hint" required><span>%</span></div></div>
+        <p id="pool-slippage-hint" class="pool-dialog-hint">Prévia somente leitura. Nenhuma transação é enviada.</p>
+        <p class="pool-form-error" id="pool-form-error" role="alert" hidden></p>
+        <button class="pool-submit" type="submit">Calcular prévia <span aria-hidden="true">↗</span></button>
+      </form>
+    </div>
+  </dialog>
 </body>
 </html>

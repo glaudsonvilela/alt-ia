@@ -53,6 +53,24 @@ class SimulatorTests(unittest.TestCase):
         self.assertEqual(request.call_args.args[1], {"capital_quote": "1000", "range_ticks": 1200, "slippage_bps": 20})
         self.assertEqual(result["simulation"]["metrics"][1]["value"], "0.2 WETH")
 
+    def test_incomplete_pool_request_opens_configuration(self):
+        with patch.object(simulator, "_json_request", return_value=CATALOG) as request:
+            result = simulator.handle_simulation("Quero simular uma pool WETH/USDC da Base")
+        request.assert_called_once_with("/markets/pools")
+        self.assertEqual(result["input_request"]["kind"], "pool")
+        self.assertEqual(result["input_request"]["pool_id"], CATALOG["pools"][0]["id"])
+
+    def test_structured_pool_request_rejects_unknown_pool(self):
+        with patch.object(simulator, "_json_request", return_value=CATALOG):
+            with self.assertRaises(simulator.SimulationInputError):
+                simulator.simulate_pool_request({"kind": "pool", "pool_id": "unknown", "capital_quote": "1000", "range_ticks": 1200, "slippage_bps": 20})
+
+    def test_structured_pool_request_uses_selected_parameters(self):
+        with patch.object(simulator, "_json_request", side_effect=[CATALOG, POOL]) as request:
+            result = simulator.simulate_pool_request({"kind": "pool", "pool_id": CATALOG["pools"][0]["id"], "capital_quote": "2500,50", "range_ticks": 1800, "slippage_bps": 35})
+        self.assertEqual(request.call_args.args[1], {"capital_quote": "2500.50", "range_ticks": 1800, "slippage_bps": 35})
+        self.assertEqual(result["simulation"]["kind"], "pool")
+
     def test_noncanonical_result_is_rejected(self):
         invalid = {**SWAP, "source": {"canonical": False, "block_number": 456}}
         with patch.object(simulator, "_json_request", return_value=invalid):

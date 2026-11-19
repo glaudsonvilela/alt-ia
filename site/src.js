@@ -13,8 +13,20 @@ const sidebar = document.querySelector('#sidebar');
 const sidebarOverlay = document.querySelector('#sidebar-overlay');
 const mobileMenu = document.querySelector('#mobile-menu');
 const sidebarClose = document.querySelector('#sidebar-close');
+const poolDialog = document.querySelector('#pool-dialog');
+const poolDialogClose = document.querySelector('#pool-dialog-close');
+const poolForm = document.querySelector('#pool-config-form');
+const poolSelect = document.querySelector('#pool-select');
+const poolCapital = document.querySelector('#pool-capital');
+const poolCapitalUnit = document.querySelector('#pool-capital-unit');
+const poolRange = document.querySelector('#pool-range');
+const poolRangeHint = document.querySelector('#pool-range-hint');
+const poolSlippage = document.querySelector('#pool-slippage');
+const poolFormError = document.querySelector('#pool-form-error');
 const storageKey = 'alt-ia-conversations-v1';
 const activeKey = 'alt-ia-active-v1';
+let poolOptions = null;
+let pendingSimulationRequest = null;
 
 function safeSimulation(value) {
   if (!value || !['swap', 'pool'].includes(value.kind) || !Array.isArray(value.metrics) || !value.source) return null;
@@ -299,6 +311,87 @@ document.querySelectorAll('[data-prompt]').forEach((suggestion) => {
   });
 });
 
+function showPoolError(message) {
+  if (!poolFormError) return;
+  poolFormError.textContent = message;
+  poolFormError.hidden = !message;
+}
+
+function selectedPool() {
+  return poolOptions?.find((pool) => pool.id === poolSelect?.value) || null;
+}
+
+function updatePoolFields(ensureMinimum = false) {
+  const pool = selectedPool();
+  if (!pool) return;
+  poolCapitalUnit.textContent = pool.quote_symbol;
+  const minimum = pool.tick_spacing * 2;
+  poolRange.min = String(minimum);
+  if (ensureMinimum && (!Number.isInteger(Number(poolRange.value)) || Number(poolRange.value) < minimum)) poolRange.value = String(Math.max(1200, minimum));
+  const ticks = Number(poolRange.value);
+  const approximateHalfWidth = (Math.pow(1.0001, ticks / 2) - 1) * 100;
+  poolRangeHint.textContent = Number.isFinite(approximateHalfWidth)
+    ? `Faixa aproximada de ±${approximateHalfWidth.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% em torno do preço atual. Mínimo: ${minimum} ticks.`
+    : `Mínimo para esta pool: ${minimum} ticks.`;
+}
+
+async function openPoolDialog(prefill = {}) {
+  if (!poolDialog) return;
+  showPoolError('');
+  if (!poolDialog.open) poolDialog.showModal();
+  if (!poolOptions) {
+    poolSelect.replaceChildren(new Option('Carregando pools…', ''));
+    poolSelect.disabled = true;
+    try {
+      const response = await fetch('/api/pool-options', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data.pools)) throw new Error(data.error || 'Não foi possível carregar as pools.');
+      poolOptions = data.pools.filter((pool) => pool && typeof pool.id === 'string' && typeof pool.pair === 'string' && typeof pool.quote_symbol === 'string' && Number.isInteger(pool.tick_spacing) && pool.tick_spacing > 0);
+      if (!poolOptions.length) throw new Error('Não há pools disponíveis para prévia agora.');
+    } catch (error) {
+      poolOptions = null;
+      showPoolError(error.message || 'Não foi possível carregar as pools.');
+      poolSelect.replaceChildren(new Option('Pools indisponíveis', ''));
+      return;
+    } finally {
+      poolSelect.disabled = false;
+    }
+  }
+  poolSelect.replaceChildren(...poolOptions.map((pool) => new Option(`${pool.pair} · ${pool.network} · ${pool.protocol}`, pool.id)));
+  const defaultPool = poolOptions.find((pool) => pool.pair === 'WETH/USDC' && pool.network.toLowerCase().startsWith('base')) || poolOptions[0];
+  poolSelect.value = poolOptions.some((pool) => pool.id === prefill.pool_id) ? prefill.pool_id : defaultPool.id;
+  poolCapital.value = typeof prefill.capital_quote === 'string' ? prefill.capital_quote : '';
+  poolRange.value = Number.isInteger(prefill.range_ticks) ? String(prefill.range_ticks) : '1200';
+  poolSlippage.value = Number.isInteger(prefill.slippage_bps) ? String(prefill.slippage_bps / 100).replace('.', ',') : '0,2';
+  updatePoolFields(true);
+  poolCapital.focus();
+}
+
+document.querySelector('[data-action="configure-pool"]')?.addEventListener('click', () => openPoolDialog());
+poolDialogClose?.addEventListener('click', () => poolDialog?.close());
+poolDialog?.addEventListener('click', (event) => { if (event.target === poolDialog) poolDialog.close(); });
+poolSelect?.addEventListener('change', () => updatePoolFields(true));
+poolRange?.addEventListener('input', () => updatePoolFields());
+poolForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (isSubmitting) return showPoolError('Aguarde a resposta atual antes de enviar outra simulação.');
+  const pool = selectedPool();
+  const capital = poolCapital.value.trim().replace(',', '.');
+  const ticks = Number(poolRange.value);
+  const slippageText = poolSlippage.value.trim().replace(',', '.');
+  const slippage = Number(slippageText);
+  if (!pool) return showPoolError('Escolha uma pool.');
+  if (!/^\d+(?:\.\d{1,18})?$/.test(capital) || Number(capital) <= 0 || Number(capital) > 10_000_000) return showPoolError('Informe um capital válido, maior que zero e até 10 milhões.');
+  if (!Number.isInteger(ticks) || ticks < pool.tick_spacing * 2 || ticks > 50000) return showPoolError(`A faixa precisa ter entre ${pool.tick_spacing * 2} e 50000 ticks.`);
+  if (!/^\d+(?:\.\d{1,2})?$/.test(slippageText) || slippage < 0 || slippage > 5) return showPoolError('O slippage deve estar entre 0% e 5%, com até duas casas decimais.');
+  showPoolError('');
+  pendingSimulationRequest = { kind: 'pool', pool_id: pool.id, capital_quote: capital, range_ticks: ticks, slippage_bps: Math.round(slippage * 100) };
+  chatInput.value = `Simule entrada de ${capital} ${pool.quote_symbol} na pool ${pool.pair} da ${pool.network} (${pool.protocol}), faixa de ${ticks} ticks e slippage de ${slippage.toLocaleString('pt-BR')}%`;
+  resizeComposer();
+  poolDialog.close();
+  chatForm.requestSubmit();
+});
+
 chatInput?.addEventListener('input', resizeComposer);
 chatInput?.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -337,6 +430,8 @@ chatForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const text = chatInput?.value.trim();
   if (!text || isSubmitting) return;
+  const simulationRequest = pendingSimulationRequest;
+  pendingSimulationRequest = null;
   let conversation = conversations.find((item) => item.id === activeId);
   if (!conversation) {
     conversation = { id: crypto.randomUUID(), title: titleFrom(text), pinned: false, updatedAt: Date.now(), messages: [] };
@@ -363,6 +458,7 @@ chatForm?.addEventListener('submit', async (event) => {
     chatMessages.append(pending);
     chatMessages.scrollTop = chatMessages.scrollHeight;
   }
+  let requestedConfig = null;
   try {
     const context = [];
     for (const message of conversation.messages.slice(-20)) {
@@ -374,7 +470,7 @@ chatForm?.addEventListener('submit', async (event) => {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: context })
+      body: JSON.stringify({ messages: context, ...(simulationRequest ? { simulation_request: simulationRequest } : {}) })
     });
     const data = await response.json();
     if (!response.ok || typeof data.reply !== 'string') throw new Error(data.error || 'Não foi possível obter uma resposta. Tente novamente.');
@@ -385,6 +481,7 @@ chatForm?.addEventListener('submit', async (event) => {
     persist();
     renderHistory();
     if (activeId === conversationId) renderConversation();
+    if (data.input_request?.kind === 'pool') requestedConfig = data.input_request;
   } catch (error) {
     if (activeId === conversationId) {
       renderConversation();
@@ -398,6 +495,7 @@ chatForm?.addEventListener('submit', async (event) => {
     chatForm.querySelector('button[type="submit"]').disabled = false;
     chatMessages.removeAttribute('aria-busy');
     pending.remove();
+    if (requestedConfig && activeId === conversationId) openPoolDialog(requestedConfig);
   }
 });
 

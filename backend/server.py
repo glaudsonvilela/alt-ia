@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from simulator import SimulationUnavailable, handle_simulation
+from simulator import SimulationInputError, SimulationUnavailable, handle_simulation, pool_options, simulate_pool_request
 
 
 MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -55,6 +55,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/healthz":
             self.respond(200, {"status": "ok", "model": MODEL})
+        elif self.path == "/api/pool-options":
+            try:
+                self.respond(200, {"pools": pool_options()})
+            except SimulationUnavailable as error:
+                self.respond(503, {"error": str(error)})
         else:
             self.respond(404, {"error": "Não encontrado."})
 
@@ -75,6 +80,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self.rfile.read(length))
             raw_messages = payload["messages"]
+            simulation_request = payload.get("simulation_request")
             if not isinstance(raw_messages, list) or not 1 <= len(raw_messages) <= 20:
                 raise ValueError
             messages = []
@@ -99,7 +105,7 @@ class Handler(BaseHTTPRequestHandler):
         if not slots.acquire(blocking=False):
             return self.respond(429, {"error": "A Alt-IA está ocupada. Tente novamente em instantes."})
         try:
-            simulation = handle_simulation(messages[-1]["content"])
+            simulation = simulate_pool_request(simulation_request) if simulation_request is not None else handle_simulation(messages[-1]["content"])
             if simulation is not None:
                 return self.respond(200, simulation)
             request_body = json.dumps({
@@ -133,6 +139,8 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(502, {"error": "Não foi possível obter uma resposta. Tente novamente."})
         except SimulationUnavailable as error:
             self.respond(503, {"error": str(error)})
+        except SimulationInputError as error:
+            self.respond(400, {"error": str(error)})
         finally:
             slots.release()
 

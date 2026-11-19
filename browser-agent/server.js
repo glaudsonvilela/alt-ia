@@ -2,6 +2,7 @@ import http from 'node:http';
 import net from 'node:net';
 import dns from 'node:dns/promises';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright-core';
 
@@ -66,7 +67,18 @@ proxy.on('connect', async (req, socket, head) => {
 });
 await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
 const proxyPort = proxy.address().port;
-const browser = await chromium.launch({ headless: true, chromiumSandbox: true, proxy: { server: `http://127.0.0.1:${proxyPort}`, bypass: '' } });
+const chromeProcess = spawn('xvfb-run', ['-a', chromium.executablePath(),
+  '--user-data-dir=/tmp/alt-ia-chrome', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=9223',
+  '--no-first-run', '--no-default-browser-check', '--disable-dev-shm-usage', '--window-size=1100,720',
+  `--proxy-server=http://127.0.0.1:${proxyPort}`, '--proxy-bypass-list=<-loopback>', 'about:blank'],
+{ stdio: ['ignore', 'ignore', 'inherit'] });
+process.once('exit', () => chromeProcess.kill('SIGTERM'));
+let browser;
+for (let attempt = 0; attempt < 40 && !browser; attempt += 1) {
+  try { browser = await chromium.connectOverCDP('http://127.0.0.1:9223', { timeout: 1000 }); }
+  catch { await new Promise(resolve => setTimeout(resolve, 300)); }
+}
+if (!browser) throw Error('Navegador temporário não iniciou.');
 
 function json(res, status, value) {
   const body = JSON.stringify(value);
@@ -123,7 +135,8 @@ http.createServer(async (req, res) => {
   try {
     if (req.method === 'POST' && parts.length === 1 && parts[0] === 'sessions') {
       if (sessions.size >= MAX_SESSIONS) return json(res, 429, { error: 'Navegadores ocupados. Tente novamente em instantes.' });
-      const context = await browser.newContext({ viewport: { width: 1100, height: 720 }, acceptDownloads: false, serviceWorkers: 'block', permissions: [] });
+      const context = await browser.newContext({ viewport: { width: 1100, height: 720 },
+        acceptDownloads: false, serviceWorkers: 'block', permissions: [] });
       await context.route('**/*', async route => {
         const url = route.request().url();
         if (url === 'about:blank' || url.startsWith('data:') && route.request().resourceType() === 'image') return route.continue();
@@ -160,7 +173,10 @@ http.createServer(async (req, res) => {
     if (action === 'navigate') {
       const url = await safeUrl(String(data.url || ''));
       session.status = `Abrindo ${new URL(url).hostname}`;
-      await session.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+      try {
+        const response = await session.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        session.status = response?.ok() ? 'Pronto para navegar' : response ? `Site indisponível (${response.status()}).` : 'Página aberta.';
+      } catch { session.status = 'Não foi possível carregar esta página.'; }
     } else if (action === 'click') {
       const index = Number(data.index);
       if (!Number.isInteger(index) || index < 0 || index > 99) throw Error('Elemento inválido.');

@@ -37,10 +37,12 @@
 .agent-grid button:focus-visible{outline:2px solid #e99573;outline-offset:3px}
 .agent-grid[aria-busy=true] button{cursor:wait;opacity:.7}
 .agent-grid[aria-busy=true] button:hover{transform:none}
-.agent-grid .prompt-icon.agent-whatsapp{background:#62d69d20}
-.agent-grid .prompt-icon.agent-x{background:#a6adbc1e}
-.agent-grid .prompt-icon.agent-gmail{background:#e9957320}
-.agent-grid .prompt-icon.agent-duckduckgo{background:#f6a47120}
+.agent-grid .prompt-icon{border:1px solid currentColor}
+.agent-grid .prompt-icon svg{width:27px;height:27px}
+.agent-grid .prompt-icon.agent-whatsapp{background:#44c98c17;border-color:#4fcb8f38;color:#78dda5}
+.agent-grid .prompt-icon.agent-x{background:#c4cad012;border-color:#c4cad02b;color:#e2e5e9}
+.agent-grid .prompt-icon.agent-gmail{background:#e9957314;border-color:#e9957335;color:#edab9a}
+.agent-grid .prompt-icon.agent-duckduckgo{background:#efa47416;border-color:#efa47438;color:#f6ae7b}
 .agent-shortcut-status{width:min(700px,100%);margin:10px 0 0;color:#c9aca1;font-size:11px;line-height:1.4}
 .agent-shortcut-status[hidden]{display:none}
 @keyframes agent-eye-fire{0%{transform:scale(.76,.74) rotate(-9deg);background:#f7c36b}100%{transform:scale(1.1,1.18) rotate(9deg);background:#ff7139}}
@@ -48,7 +50,7 @@
 @keyframes agent-char{0%{color:#fff5e9;text-shadow:0 0 4px #ffb370}12%{color:#ffbd70;text-shadow:0 0 7px #ff873f}32%{color:#ed703d;text-shadow:0 0 3px #ed703d}55%{color:#8c7772;text-shadow:none}78%{color:#504b4c;text-shadow:none}100%{color:#f6f4f8;text-shadow:none}}
 @keyframes agent-smoke{0%{opacity:0;transform:translate(0,3px) scale(.55)}15%{opacity:.58}55%{opacity:.38}100%{opacity:0;transform:translate(var(--smoke-drift,8px),var(--smoke-rise,-55px)) scale(var(--smoke-grow,1.8))}}
 @keyframes agent-letter-smoke{from{opacity:.75;transform:translateY(0) scale(.75)}to{opacity:0;transform:translateY(-30px) translateX(5px) scale(1.8)}}
-.agent-window{position:fixed;z-index:15;top:84px;right:18px;width:min(430px,calc(100vw - 36px));padding:12px;border:1px solid #ffffff24;border-radius:16px;background:#22232b;box-shadow:0 22px 62px #0009;animation:mode-menu-in .25s ease-out both}
+.agent-window{position:fixed;z-index:15;top:84px;right:18px;width:min(600px,calc(100vw - 36px));max-height:calc(100dvh - 100px);overflow:auto;padding:12px;border:1px solid #ffffff24;border-radius:16px;background:#22232b;box-shadow:0 22px 62px #0009;animation:mode-menu-in .25s ease-out both}
 .agent-window-head{display:grid;grid-template-columns:34px 1fr 24px;gap:10px;align-items:center}
 .agent-window-face{width:34px;height:34px;--face-size:28px}
 .agent-window-head strong,.agent-window-head small{display:block}
@@ -65,6 +67,6 @@
 .agent-privacy{margin:8px 0 0;color:#89838f;font-size:10px;line-height:1.4}
 .agent-cursor{position:absolute;z-index:2;width:10px;height:10px;border:1px solid #fff;border-radius:50%;background:#e99573;box-shadow:0 0 0 4px #e9957355;pointer-events:none;transition:left .35s ease,top .35s ease}
 .agent-cursor[hidden]{display:none}
-@media(min-width:1250px){.site.agent-mode:has(.agent-window:not([hidden])) .conversation-scroll{padding-right:450px}.site.agent-mode:has(.agent-window:not([hidden])) .composer-area{width:calc(100% - 490px);margin-left:28px}}
+@media(min-width:1250px){.site.agent-mode:has(.agent-window:not([hidden])) .conversation-scroll{padding-left:28px;padding-right:620px}.site.agent-mode:has(.agent-window:not([hidden])) .composer-area{width:calc(100% - 668px);margin-left:28px}.site.agent-mode:has(.agent-window:not([hidden])) .composer-hint{display:none}}
 @media(max-width:899px),(pointer:coarse){#agent-toggle{display:none!important}.agent-window{display:none!important}}
 @media(prefers-reduced-motion:reduce){.agent-mode .welcome-character::after{transition:none}.agent-mode .welcome-character .pupil::after,.agent-menu-face::before,.agent-menu-face::after,.agent-window-face::before,.agent-window-face::after,.agent-face-eye::after,.agent-mode .agent-smoke,.agent-mode .welcome-wordmark span.is-burnt,.agent-mode .welcome-wordmark span.is-burnt::before,.agent-mode .welcome-wordmark span.is-burnt::after{animation:none}}

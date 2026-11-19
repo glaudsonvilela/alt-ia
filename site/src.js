@@ -23,10 +23,19 @@ const poolRange = document.querySelector('#pool-range');
 const poolRangeHint = document.querySelector('#pool-range-hint');
 const poolSlippage = document.querySelector('#pool-slippage');
 const poolFormError = document.querySelector('#pool-form-error');
+const rangeChart = document.querySelector('#range-chart');
+const rangeChartSvg = document.querySelector('#range-chart-svg');
+const rangeSelection = document.querySelector('#range-selection');
+const rangeLowerHandle = document.querySelector('#range-lower-handle');
+const rangeUpperHandle = document.querySelector('#range-upper-handle');
 const storageKey = 'alt-ia-conversations-v1';
 const activeKey = 'alt-ia-active-v1';
 let poolOptions = null;
 let pendingSimulationRequest = null;
+let poolSnapshot = null;
+let selectedRange = null;
+let chartRequestSeq = 0;
+let chartDrag = null;
 
 function safeSimulation(value) {
   if (!value || !['swap', 'pool'].includes(value.kind) || !Array.isArray(value.metrics) || !value.source) return null;
@@ -321,6 +330,85 @@ function selectedPool() {
   return poolOptions?.find((pool) => pool.id === poolSelect?.value) || null;
 }
 
+function chartDomain() {
+  const spacing = poolSnapshot.tick_spacing;
+  const half = Math.max(1800, Math.ceil((selectedRange.upper - selectedRange.lower) * 1.15 / spacing) * spacing);
+  return { min: poolSnapshot.current_tick - half, max: poolSnapshot.current_tick + half };
+}
+
+function chartX(tick) {
+  const { min, max } = chartDomain();
+  return 24 + (tick - min) / (max - min) * 372;
+}
+
+function renderRangeChart() {
+  if (!poolSnapshot || !selectedRange) return;
+  const lowerX = chartX(selectedRange.lower);
+  const upperX = chartX(selectedRange.upper);
+  rangeSelection.setAttribute('x', String(lowerX));
+  rangeSelection.setAttribute('width', String(upperX - lowerX));
+  for (const [id, x] of [['range-lower-halo', lowerX], ['range-lower-handle', lowerX], ['range-upper-halo', upperX], ['range-upper-handle', upperX]]) {
+    document.getElementById(id).setAttribute('cx', String(x));
+  }
+  const { min, max } = chartDomain();
+  for (const [element, value] of [[rangeLowerHandle, selectedRange.lower], [rangeUpperHandle, selectedRange.upper]]) {
+    element.setAttribute('aria-valuemin', String(min));
+    element.setAttribute('aria-valuemax', String(max));
+    element.setAttribute('aria-valuenow', String(value));
+    element.setAttribute('aria-valuetext', `Tick ${value}`);
+  }
+  document.getElementById('range-lower-value').textContent = `Início ${selectedRange.lower.toLocaleString('pt-BR')}`;
+  document.getElementById('range-current-value').textContent = `Atual ${poolSnapshot.current_tick.toLocaleString('pt-BR')}`;
+  document.getElementById('range-upper-value').textContent = `Fim ${selectedRange.upper.toLocaleString('pt-BR')}`;
+  poolRange.value = String(selectedRange.upper - selectedRange.lower);
+  const lowDistance = (1 - Math.pow(1.0001, selectedRange.lower - poolSnapshot.current_tick)) * 100;
+  const highDistance = (Math.pow(1.0001, selectedRange.upper - poolSnapshot.current_tick) - 1) * 100;
+  poolRangeHint.textContent = `Distância no eixo de ticks: −${lowDistance.toLocaleString('pt-BR', {maximumFractionDigits: 1})}% / +${highDistance.toLocaleString('pt-BR', {maximumFractionDigits: 1})}%. Limites ajustados ao espaçamento da pool.`;
+}
+
+function centerRange(width) {
+  if (!poolSnapshot) return;
+  const spacing = poolSnapshot.tick_spacing;
+  const current = poolSnapshot.current_tick;
+  const half = Math.max(spacing, width / 2);
+  const lower = Math.floor((current - half) / spacing) * spacing;
+  const upper = Math.ceil((current + half) / spacing) * spacing;
+  selectedRange = { lower, upper };
+  renderRangeChart();
+}
+
+async function loadPoolSnapshot() {
+  const pool = selectedPool();
+  const requestSeq = ++chartRequestSeq;
+  poolSnapshot = null;
+  selectedRange = null;
+  rangeChart.classList.remove('is-ready');
+  document.getElementById('range-lower-value').textContent = '—';
+  document.getElementById('range-current-value').textContent = 'Tick atual —';
+  document.getElementById('range-upper-value').textContent = '—';
+  document.getElementById('range-chart-block').textContent = 'Consultando pool…';
+  document.getElementById('range-chart-price').textContent = 'Aguardando preço atual';
+  if (!pool) return;
+  try {
+    const response = await fetch(`/api/pool-snapshot?pool_id=${encodeURIComponent(pool.id)}`, { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || data.pool_id !== pool.id || !Number.isInteger(data.current_tick) || !Number.isInteger(data.tick_spacing)) throw new Error(data.error || 'Estado da pool indisponível.');
+    if (requestSeq !== chartRequestSeq || !poolDialog.open) return;
+    poolSnapshot = data;
+    document.getElementById('range-chart-block').textContent = `Bloco ${data.block_number.toLocaleString('pt-BR')}`;
+    const price = Number(data.price?.quote_per_base);
+    document.getElementById('range-chart-price').textContent = Number.isFinite(price) && price > 0
+      ? `Preço indicativo · 1 ${pool.base_symbol} ≈ ${price.toLocaleString('pt-BR', { maximumFractionDigits: 6 })} ${pool.quote_symbol}`
+      : 'Preço indicativo indisponível · ajuste pela escala de ticks';
+    centerRange(Number(poolRange.value) || 1200);
+    rangeChart.classList.add('is-ready');
+  } catch (error) {
+    if (requestSeq !== chartRequestSeq || !poolDialog.open) return;
+    document.getElementById('range-chart-block').textContent = 'Sem dados ao vivo';
+    document.getElementById('range-chart-price').textContent = 'Use o campo de ticks para configurar a faixa.';
+  }
+}
+
 function updatePoolFields(ensureMinimum = false) {
   const pool = selectedPool();
   if (!pool) return;
@@ -333,6 +421,7 @@ function updatePoolFields(ensureMinimum = false) {
   poolRangeHint.textContent = Number.isFinite(approximateHalfWidth)
     ? `Faixa aproximada de ±${approximateHalfWidth.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% em torno do preço atual. Mínimo: ${minimum} ticks.`
     : `Mínimo para esta pool: ${minimum} ticks.`;
+  if (poolSnapshot && Number.isInteger(ticks) && ticks >= minimum && ticks <= 50000) centerRange(ticks);
 }
 
 async function openPoolDialog(prefill = {}) {
@@ -363,15 +452,69 @@ async function openPoolDialog(prefill = {}) {
   poolCapital.value = typeof prefill.capital_quote === 'string' ? prefill.capital_quote : '';
   poolRange.value = Number.isInteger(prefill.range_ticks) ? String(prefill.range_ticks) : '1200';
   poolSlippage.value = Number.isInteger(prefill.slippage_bps) ? String(prefill.slippage_bps / 100).replace('.', ',') : '0,2';
+  poolSnapshot = null;
+  selectedRange = null;
   updatePoolFields(true);
+  loadPoolSnapshot();
   poolCapital.focus();
 }
 
 document.querySelector('[data-action="configure-pool"]')?.addEventListener('click', () => openPoolDialog());
 poolDialogClose?.addEventListener('click', () => poolDialog?.close());
 poolDialog?.addEventListener('click', (event) => { if (event.target === poolDialog) poolDialog.close(); });
-poolSelect?.addEventListener('change', () => updatePoolFields(true));
-poolRange?.addEventListener('input', () => updatePoolFields());
+poolDialog?.addEventListener('close', () => { chartRequestSeq++; chartDrag = null; });
+poolSelect?.addEventListener('change', () => { poolSnapshot = null; selectedRange = null; updatePoolFields(true); loadPoolSnapshot(); });
+poolRange?.addEventListener('change', () => updatePoolFields());
+
+function dragRange(kind, targetTick, start = selectedRange) {
+  if (!poolSnapshot || !selectedRange || !start) return;
+  const spacing = poolSnapshot.tick_spacing;
+  const current = poolSnapshot.current_tick;
+  const { min, max } = chartDomain();
+  const minAligned = Math.ceil(min / spacing) * spacing;
+  const maxAligned = Math.floor(max / spacing) * spacing;
+  const snapped = Math.round(targetTick / spacing) * spacing;
+  if (kind === 'lower') selectedRange.lower = Math.max(minAligned, start.upper - 50000, Math.min(snapped, Math.floor((current - 1) / spacing) * spacing, start.upper - 2 * spacing));
+  if (kind === 'upper') selectedRange.upper = Math.min(maxAligned, start.lower + 50000, Math.max(snapped, Math.ceil((current + 1) / spacing) * spacing, start.lower + 2 * spacing));
+  if (kind === 'band') {
+    const width = start.upper - start.lower;
+    const delta = Math.round((targetTick - chartDrag.startTick) / spacing) * spacing;
+    const lower = Math.max(minAligned, Math.ceil((current + 1) / spacing) * spacing - width, Math.min(start.lower + delta, maxAligned - width, Math.floor((current - 1) / spacing) * spacing));
+    selectedRange.lower = lower;
+    selectedRange.upper = lower + width;
+  }
+  renderRangeChart();
+}
+
+rangeChartSvg?.addEventListener('pointerdown', (event) => {
+  const kind = event.target?.dataset?.handle;
+  if (!poolSnapshot || !selectedRange || !['lower', 'upper', 'band'].includes(kind)) return;
+  const rect = rangeChartSvg.getBoundingClientRect();
+  const { min, max } = chartDomain();
+  const x = (event.clientX - rect.left) / rect.width * 420;
+  chartDrag = { kind, start: { ...selectedRange }, startTick: min + (Math.max(24, Math.min(396, x)) - 24) / 372 * (max - min), min, max };
+  rangeChartSvg.setPointerCapture(event.pointerId);
+  rangeChart.classList.add('is-dragging');
+  event.preventDefault();
+});
+rangeChartSvg?.addEventListener('pointermove', (event) => {
+  if (!chartDrag) return;
+  const rect = rangeChartSvg.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width * 420;
+  const tick = chartDrag.min + (Math.max(24, Math.min(396, x)) - 24) / 372 * (chartDrag.max - chartDrag.min);
+  dragRange(chartDrag.kind, tick, chartDrag.start);
+});
+function endChartDrag() { chartDrag = null; rangeChart?.classList.remove('is-dragging'); }
+rangeChartSvg?.addEventListener('pointerup', endChartDrag);
+rangeChartSvg?.addEventListener('pointercancel', endChartDrag);
+for (const [element, kind] of [[rangeLowerHandle, 'lower'], [rangeUpperHandle, 'upper']]) {
+  element?.addEventListener('keydown', (event) => {
+    if (!poolSnapshot || !selectedRange || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowLeft' ? -1 : 1;
+    dragRange(kind, selectedRange[kind] + direction * poolSnapshot.tick_spacing);
+  });
+}
 poolForm?.addEventListener('submit', (event) => {
   event.preventDefault();
   if (isSubmitting) return showPoolError('Aguarde a resposta atual antes de enviar outra simulação.');
@@ -386,6 +529,10 @@ poolForm?.addEventListener('submit', (event) => {
   if (!/^\d+(?:\.\d{1,2})?$/.test(slippageText) || slippage < 0 || slippage > 5) return showPoolError('O slippage deve estar entre 0% e 5%, com até duas casas decimais.');
   showPoolError('');
   pendingSimulationRequest = { kind: 'pool', pool_id: pool.id, capital_quote: capital, range_ticks: ticks, slippage_bps: Math.round(slippage * 100) };
+  if (poolSnapshot?.pool_id === pool.id && selectedRange && selectedRange.upper - selectedRange.lower === ticks) {
+    pendingSimulationRequest.tick_lower = selectedRange.lower;
+    pendingSimulationRequest.tick_upper = selectedRange.upper;
+  }
   chatInput.value = `Simule entrada de ${capital} ${pool.quote_symbol} na pool ${pool.pair} da ${pool.network} (${pool.protocol}), faixa de ${ticks} ticks e slippage de ${slippage.toLocaleString('pt-BR')}%`;
   resizeComposer();
   poolDialog.close();

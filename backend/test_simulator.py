@@ -29,6 +29,13 @@ SWAP = {
     "input": {"asset": "USDC", "amount": "100"},
     "output": {"asset": "WETH", "expected_amount": "0.05", "minimum_amount": "0.0499"},
 }
+SNAPSHOT = {
+    "snapshot_type": "altside_selected_pool_live_snapshot",
+    "pool_id": CATALOG["pools"][0]["id"],
+    "source": {"canonical": True, "block_number": 789},
+    "state": {"tick": -201496},
+    "price": {"status": "available", "quote_per_base": "1776.5"},
+}
 
 
 class SimulatorTests(unittest.TestCase):
@@ -70,6 +77,29 @@ class SimulatorTests(unittest.TestCase):
             result = simulator.simulate_pool_request({"kind": "pool", "pool_id": CATALOG["pools"][0]["id"], "capital_quote": "2500,50", "range_ticks": 1800, "slippage_bps": 35})
         self.assertEqual(request.call_args.args[1], {"capital_quote": "2500.50", "range_ticks": 1800, "slippage_bps": 35})
         self.assertEqual(result["simulation"]["kind"], "pool")
+
+    def test_snapshot_returns_canonical_tick_for_range_chart(self):
+        with patch.object(simulator, "_json_request", side_effect=[CATALOG, SNAPSHOT]) as request:
+            result = simulator.pool_snapshot(CATALOG["pools"][0]["id"])
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(result["current_tick"], -201496)
+        self.assertEqual(result["block_number"], 789)
+
+    def test_dragged_bounds_are_sent_to_engine(self):
+        payload = {"kind": "pool", "pool_id": CATALOG["pools"][0]["id"], "capital_quote": "1000",
+                   "range_ticks": 1260, "slippage_bps": 20, "tick_lower": -202080, "tick_upper": -200820}
+        with patch.object(simulator, "_json_request", side_effect=[CATALOG, POOL]) as request:
+            result = simulator.simulate_pool_request(payload)
+        self.assertEqual(request.call_args.args[1]["tick_lower"], -202080)
+        self.assertEqual(request.call_args.args[1]["tick_upper"], -200820)
+        self.assertIn("-202080 a -200820", result["simulation"]["assumptions"][0])
+
+    def test_unaligned_dragged_bounds_are_rejected(self):
+        payload = {"kind": "pool", "pool_id": CATALOG["pools"][0]["id"], "capital_quote": "1000",
+                   "range_ticks": 1260, "slippage_bps": 20, "tick_lower": -202081, "tick_upper": -200821}
+        with patch.object(simulator, "_json_request", return_value=CATALOG):
+            with self.assertRaises(simulator.SimulationInputError):
+                simulator.simulate_pool_request(payload)
 
     def test_noncanonical_result_is_rejected(self):
         invalid = {**SWAP, "source": {"canonical": False, "block_number": 456}}

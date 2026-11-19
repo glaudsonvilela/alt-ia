@@ -124,10 +124,34 @@ def pool_options():
     return options[:20]
 
 
-def _run_pool(pool, amount, range_ticks, bps):
+def pool_snapshot(pool_id):
+    pool = next((item for item in pool_options() if item["id"] == pool_id), None)
+    if pool is None:
+        raise SimulationInputError("Pool indisponível para esta prévia.")
+    raw = _json_request(f"/markets/pools/{quote(pool_id, safe=':')}/snapshot")
+    source, state, price = raw.get("source") or {}, raw.get("state") or {}, raw.get("price") or {}
+    tick = state.get("tick")
+    block = source.get("block_number")
+    if (raw.get("snapshot_type") != "altside_selected_pool_live_snapshot" or raw.get("pool_id") != pool_id
+            or source.get("canonical") is not True or type(tick) is not int or type(block) is not int or block <= 0):
+        raise SimulationUnavailable("O motor não retornou um estado canônico válido para esta pool.")
+    return {
+        "pool_id": pool_id,
+        "current_tick": tick,
+        "tick_spacing": pool["tick_spacing"],
+        "block_number": block,
+        "price": {"quote_per_base": price.get("quote_per_base") if price.get("status") == "available" else None,
+                  "base_symbol": pool["base_symbol"], "quote_symbol": pool["quote_symbol"]},
+    }
+
+
+def _run_pool(pool, amount, range_ticks, bps, explicit_ticks=None):
     if range_ticks < pool["tick_spacing"] * 2 or range_ticks > 50000:
         raise SimulationInputError(f"A faixa desta pool precisa ter entre {pool['tick_spacing'] * 2} e 50000 ticks.")
-    raw = _json_request(f"/simulate/pools/{quote(pool['id'], safe=':')}/entry", {"capital_quote": amount, "range_ticks": range_ticks, "slippage_bps": bps})
+    payload = {"capital_quote": amount, "range_ticks": range_ticks, "slippage_bps": bps}
+    if explicit_ticks is not None:
+        payload.update({"tick_lower": explicit_ticks[0], "tick_upper": explicit_ticks[1]})
+    raw = _json_request(f"/simulate/pools/{quote(pool['id'], safe=':')}/entry", payload)
     if raw.get("simulation_type") != "canonical_concentrated_liquidity_entry_preview" or raw.get("pool_id") != pool["id"]:
         raise SimulationUnavailable("O motor retornou uma prévia de pool inesperada.")
     allocation = (raw.get("allocation") or {}).get("formatted") or {}
@@ -144,7 +168,7 @@ def _run_pool(pool, amount, range_ticks, bps):
             {"label": "Capital não usado", "value": f"{allocation.get('unused_quote')} {quote_symbol}"},
         ],
         "source": _source(raw, "pool"),
-        "assumptions": [f"Faixa: {range_ticks} ticks", f"Slippage: {bps / 100:g}%", "Prévia de entrada; rendimento futuro não estimado."],
+        "assumptions": [f"Faixa: {explicit_ticks[0]} a {explicit_ticks[1]} ticks" if explicit_ticks else f"Faixa: {range_ticks} ticks", f"Slippage: {bps / 100:g}%", "Prévia de entrada; rendimento futuro não estimado."],
         "url": PUBLIC_URL,
     }
     if any("None" in metric["value"] for metric in sim["metrics"]):
@@ -153,7 +177,8 @@ def _run_pool(pool, amount, range_ticks, bps):
 
 
 def simulate_pool_request(request):
-    if not isinstance(request, dict) or set(request) != {"kind", "pool_id", "capital_quote", "range_ticks", "slippage_bps"} or request.get("kind") != "pool":
+    required = {"kind", "pool_id", "capital_quote", "range_ticks", "slippage_bps"}
+    if not isinstance(request, dict) or not required <= set(request) or set(request) - required not in (set(), {"tick_lower", "tick_upper"}) or request.get("kind") != "pool":
         raise SimulationInputError("Parâmetros da simulação inválidos.")
     pool = next((option for option in pool_options() if option["id"] == request["pool_id"]), None)
     if pool is None:
@@ -168,7 +193,15 @@ def simulate_pool_request(request):
     bps = request["slippage_bps"]
     if type(ticks) is not int or type(bps) is not int or not 0 <= bps <= 500:
         raise SimulationInputError("Faixa ou slippage inválidos.")
-    return _run_pool(pool, amount, ticks, bps)
+    explicit_ticks = None
+    if "tick_lower" in request:
+        lower, upper = request["tick_lower"], request["tick_upper"]
+        spacing = pool["tick_spacing"]
+        if (type(lower) is not int or type(upper) is not int or lower < -887272 or upper > 887272
+                or lower >= upper or upper - lower != ticks or lower % spacing or upper % spacing):
+            raise SimulationInputError("Os limites da faixa não são válidos para esta pool.")
+        explicit_ticks = (lower, upper)
+    return _run_pool(pool, amount, ticks, bps, explicit_ticks)
 
 
 def _swap(text):

@@ -52,8 +52,15 @@ function safeSimulation(value) {
   const metrics = value.metrics.slice(0, 6).filter((item) => item && typeof item.label === 'string' && typeof item.value === 'string')
     .map((item) => ({ label: clean(item.label, 60), value: clean(item.value, 80) }));
   if (!metrics.length || !Number.isSafeInteger(value.source.block_number) || value.source.block_number <= 0) return null;
+  const scenario = value.scenarios;
+  const scenarios = scenario && typeof scenario.unit === 'string' && typeof scenario.base_symbol === 'string' && Array.isArray(scenario.rows)
+    ? { unit: clean(scenario.unit, 12), base_symbol: clean(scenario.base_symbol, 12), note: clean(scenario.note, 280),
+        rows: scenario.rows.slice(0, 7).filter((row) => row && ['gain', 'loss', 'flat'].includes(row.tone)
+          && ['label', 'price', 'value', 'pnl'].every((key) => typeof row[key] === 'string'))
+          .map((row) => ({ label: clean(row.label, 30), price: clean(row.price, 30), value: clean(row.value, 30), pnl: clean(row.pnl, 30), tone: row.tone })) }
+    : null;
   return {
-    kind: value.kind, title: clean(value.title), subtitle: clean(value.subtitle), metrics,
+    kind: value.kind, title: clean(value.title), subtitle: clean(value.subtitle), metrics, scenarios,
     source: { engine: 'Altside · Rust', block_number: value.source.block_number,
       block_timestamp: Number.isSafeInteger(value.source.block_timestamp) ? value.source.block_timestamp : null,
       captured_at: clean(value.source.captured_at, 40), validity: clean(value.source.validity, 180) },
@@ -75,7 +82,8 @@ function readConversations() {
         pinned: item.pinned === true,
         updatedAt: Number(item.updatedAt) || Date.now(),
         messages: item.messages.filter((message) => message && (message.role === 'user' || message.role === 'ai') && typeof message.text === 'string').slice(-100)
-          .map((message) => ({ role: message.role, text: message.text, simulation: message.role === 'ai' ? safeSimulation(message.simulation) : null }))
+          .map((message) => ({ role: message.role, text: message.text, simulation: message.role === 'ai' ? safeSimulation(message.simulation) : null,
+            followUp: message.role === 'ai' && typeof message.followUp === 'string' ? message.followUp.slice(0, 280) : '' }))
       }));
   } catch {
     return [];
@@ -217,6 +225,41 @@ function createSimulationCard(simulation) {
     cell.append(label, value);
     grid.append(cell);
   });
+  let scenarioBlock = null;
+  if (simulation.scenarios?.rows?.length) {
+    scenarioBlock = document.createElement('div');
+    scenarioBlock.className = 'simulation-scenario-block';
+    const table = document.createElement('table');
+    table.className = 'simulation-scenarios';
+    const caption = document.createElement('caption');
+    caption.textContent = `📊 Se o preço de ${simulation.scenarios.base_symbol} mudar · valores em ${simulation.scenarios.unit}`;
+    const head = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    ['Cenário', 'Preço', 'Valor final', 'Ganho/perda'].forEach((label) => {
+      const heading = document.createElement('th');
+      heading.scope = 'col';
+      heading.textContent = label;
+      headerRow.append(heading);
+    });
+    head.append(headerRow);
+    const body = document.createElement('tbody');
+    simulation.scenarios.rows.forEach((row) => {
+      const tr = document.createElement('tr');
+      tr.className = `scenario-${row.tone}`;
+      [row.label, row.price, row.value, row.pnl].forEach((value, index) => {
+        const cell = document.createElement(index === 0 ? 'th' : 'td');
+        if (index === 0) cell.scope = 'row';
+        cell.textContent = value;
+        tr.append(cell);
+      });
+      body.append(tr);
+    });
+    table.append(caption, head, body);
+    const note = document.createElement('p');
+    note.className = 'simulation-scenario-note';
+    note.textContent = simulation.scenarios.note;
+    scenarioBlock.append(table, note);
+  }
   const provenance = document.createElement('div');
   provenance.className = 'simulation-provenance';
   const block = document.createElement('span');
@@ -234,11 +277,13 @@ function createSimulationCard(simulation) {
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = 'Abrir simulador Altside ↗';
-  card.append(eyebrow, title, subtitle, grid, provenance, notes, link);
+  card.append(eyebrow, title, subtitle, grid);
+  if (scenarioBlock) card.append(scenarioBlock);
+  card.append(provenance, notes, link);
   return card;
 }
 
-function createMessage(role, text, simulation = null) {
+function createMessage(role, text, simulation = null, followUp = '') {
   const row = document.createElement('article');
   row.className = `message-row message-${role}`;
   if (role === 'ai') {
@@ -269,6 +314,12 @@ function createMessage(role, text, simulation = null) {
   paragraph.textContent = text;
   body.append(paragraph);
   if (role === 'ai' && simulation) body.append(createSimulationCard(simulation));
+  if (role === 'ai' && followUp) {
+    const question = document.createElement('p');
+    question.className = 'message-follow-up';
+    question.textContent = followUp;
+    body.append(question);
+  }
   row.append(body);
   return row;
 }
@@ -281,7 +332,7 @@ function renderConversation() {
     if (welcome) chatMessages.append(welcome);
   } else {
     const fragment = document.createDocumentFragment();
-    conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation)));
+  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp)));
     chatMessages.append(fragment);
   }
   requestAnimationFrame(() => { chatMessages.scrollTop = conversation?.messages.length ? chatMessages.scrollHeight : 0; });
@@ -711,8 +762,9 @@ chatForm?.addEventListener('submit', async (event) => {
     for (const message of conversation.messages.slice(-20)) {
       if (message.role === 'ai' && message.text.startsWith('Recebi sua mensagem. A API da Alt-IA ainda')) continue;
       const role = message.role === 'ai' ? 'assistant' : 'user';
-      if (context.at(-1)?.role === role) context.at(-1).content += `\n\n${message.text}`;
-      else context.push({ role, content: message.text });
+      const content = message.followUp ? `${message.text}\n\n${message.followUp}` : message.text;
+      if (context.at(-1)?.role === role) context.at(-1).content += `\n\n${content}`;
+      else context.push({ role, content });
     }
     const response = await fetch('/api/chat', {
       method: 'POST',
@@ -723,7 +775,8 @@ chatForm?.addEventListener('submit', async (event) => {
     if (!response.ok || typeof data.reply !== 'string') throw new Error(data.error || 'Não foi possível obter uma resposta. Tente novamente.');
     const target = conversations.find((item) => item.id === conversationId);
     if (!target) return;
-    target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation) });
+    target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation),
+      followUp: typeof data.follow_up === 'string' ? data.follow_up.slice(0, 280) : '' });
     target.updatedAt = Date.now();
     persist();
     renderHistory();

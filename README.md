@@ -12,6 +12,7 @@
 
 - `site/`: interface, animações, fontes, imagens e configuração do Nginx.
 - `backend/`: API Python que atende o chat, encaminha perguntas gerais ao NVIDIA Nemotron 120B e consulta o motor Rust do Altside para prévias de simulação.
+- `backend/ALT_IA.md`: instruções de tom, clareza e limites das respostas da Alt-IA, carregadas pelo servidor como mensagem de sistema.
 
 ## Desenvolvimento
 
@@ -26,6 +27,8 @@ O site usa o `app.js` compilado. Para executar o backend, configure `ALT_IA_KEY_
 As conversas são salvas no navegador. Pedidos de swap USDC/WETH na Ethereum e entrada nas pools canônicas suportadas usam as rotas públicas de leitura do Altside. O servidor valida o tipo de resposta, o bloco canônico e o caráter somente leitura antes de exibir os valores. Se faltarem valor ou par, o chat pede os dados necessários; as demais perguntas seguem para o modelo. Nenhuma rota de carteira ou execução de transação é chamada.
 
 Para entradas em pools, a interface oferece uma janela de configuração com pool, capital, faixa em ticks e slippage. O gráfico de preço mostra velas históricas reais da própria pool obtidas pela rota do Altside, com intervalos de 15 minutos a 1 dia e linhas arrastáveis de piso e teto. O preço atual e o bloco vêm separadamente do snapshot canônico; o histórico via GeckoTerminal é informativo e pode estar defasado. Os limites explícitos, alinhados ao espaçamento da pool, são enviados ao motor Rust. Se o histórico ou o snapshot estiver indisponível, o campo numérico continua disponível e o motor calcula a faixa pelo modo de largura. As opções vêm do catálogo atual do Altside; a seleção é enviada como parâmetros estruturados e validada novamente no backend. A mesma janela abre quando um pedido em texto deixa parâmetros de pool pendentes.
+
+Após a prévia canônica de entrada, o backend mostra uma tabela ilustrativa de sensibilidade para quedas e altas de 10% e 20% no preço do token base. O valor da posição usa a matemática contínua de liquidez concentrada, ancorada na alocação e nos limites retornados pelo motor Altside. São hipóteses instantâneas, sem taxas futuras de LP, gás, slippage efetivo ou impostos; não são previsão nem cotação de saída. O chat sempre encerra a resposta com uma pergunta relacionada ao assunto.
 
 ```bash
 python3 -m unittest discover -s backend -p 'test_*.py' -v

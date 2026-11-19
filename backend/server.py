@@ -17,14 +17,8 @@ ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
 KEY_FILE = os.environ.get("ALT_IA_KEY_FILE", "/run/secrets/alt-ia-key")
 HOST = os.environ.get("ALT_IA_HOST", "172.17.0.1")
 PORT = int(os.environ.get("ALT_IA_PORT", "8811"))
-SYSTEM_PROMPT = (
-    "Você é a Alt-IA, assistente em português do simulador de blockchain e DeFi Altside. "
-    "Ajude a explorar cenários, swaps, pools, lending e riscos com clareza. "
-    "O servidor pode calcular prévias de swap USDC/WETH e entrada em algumas pools com o motor Rust do Altside. "
-    "Quando houver uma prévia, ela aparece em um cartão separado com bloco e premissas. "
-    "Para pedidos fora dessas capacidades, não afirme que executou simulação nem consultou dados atuais. "
-    "Você não conecta carteiras nem envia transações. Não dê garantias de retorno."
-)
+with open(os.path.join(os.path.dirname(__file__), "ALT_IA.md"), encoding="utf-8") as instructions_file:
+    SYSTEM_PROMPT = instructions_file.read()
 
 with open(KEY_FILE, encoding="utf-8") as secret_file:
     API_KEY = secret_file.read().strip()
@@ -151,7 +145,10 @@ class Handler(BaseHTTPRequestHandler):
             answer = result["choices"][0]["message"]["content"]
             if not isinstance(answer, str) or not answer.strip():
                 raise ValueError("Resposta vazia")
-            self.respond(200, {"reply": answer.strip(), "model": MODEL})
+            answer = answer.strip()
+            if not answer.endswith("?"):
+                answer += "\n\n😊 Quer explorar algum ponto ou testar um cenário diferente?"
+            self.respond(200, {"reply": answer, "model": MODEL})
         except urllib.error.HTTPError as error:
             if error.code == 429:
                 self.respond(503, {"error": "O modelo está ocupado. Tente novamente em instantes."})

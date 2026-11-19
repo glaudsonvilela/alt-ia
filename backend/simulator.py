@@ -9,6 +9,7 @@ import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
+from scenarios import pool_price_scenarios
 
 
 ALTSIDE_BASE = os.environ.get("ALTSIDE_API_BASE_URL", "https://app.bigbanana.io").rstrip("/")
@@ -199,12 +200,17 @@ def _run_pool(pool, amount, range_ticks, bps, explicit_ticks=None):
             {"label": "Capital não usado", "value": f"{allocation.get('unused_quote')} {quote_symbol}"},
         ],
         "source": _source(raw, "pool"),
-        "assumptions": [f"Faixa: {explicit_ticks[0]} a {explicit_ticks[1]} ticks" if explicit_ticks else f"Faixa: {range_ticks} ticks", f"Slippage: {bps / 100:g}%", "Prévia de entrada; rendimento futuro não estimado."],
+        "assumptions": [f"Faixa: {explicit_ticks[0]} a {explicit_ticks[1]} ticks" if explicit_ticks else f"Faixa: {range_ticks} ticks", f"Slippage: {bps / 100:g}%", "Taxas futuras e rendimento líquido não estimados."],
         "url": PUBLIC_URL,
     }
     if any("None" in metric["value"] for metric in sim["metrics"]):
         raise SimulationUnavailable("O motor retornou uma alocação incompleta.")
-    return {"reply": "O motor Altside calculou a alocação de entrada para esta pool. A faixa e os custos assumidos estão abaixo.", "simulation": sim}
+    try:
+        sim["scenarios"] = pool_price_scenarios(raw, pool, amount)
+    except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError):
+        sim["assumptions"].append("Cenários de preço indisponíveis para esta prévia.")
+    return {"reply": "Prontinho! 🦀 O motor Altside calculou sua entrada. Veja a alocação e, quando disponível, quanto o capital mudaria em cenários de preço 👇", "simulation": sim,
+            "follow_up": f"😊 Quer comparar outra faixa ou outro capital para {base_symbol}?"}
 
 
 def simulate_pool_request(request):
@@ -239,16 +245,16 @@ def _swap(text):
     assets = [m.group(1).upper() for m in TOKEN_RE.finditer(text)]
     assets = ["WETH" if value == "ETH" else value for value in assets]
     if len(assets) < 2:
-        return {"reply": "Para simular o swap, informe o token de entrada, o de saída e o valor. Exemplo: simule swap de 100 USDC para WETH."}
+        return {"reply": "Claro! 😊 Para simular o swap, diga o token de entrada, o de saída e o valor. Ex.: 100 USDC para WETH."}
     token_in, token_out = assets[:2]
     if {token_in, token_out} != {"USDC", "WETH"}:
-        return {"reply": "A cotação de swap conectada ao motor Altside agora cobre apenas USDC ↔ WETH na Ethereum. Informe um desses pares para uma prévia verificável."}
+        return {"reply": "Por enquanto, consigo calcular swaps USDC ↔ WETH na Ethereum. 🔄 Me diga o valor para montar a prévia."}
     amount = _amount_for(text, "ETH" if token_in == "WETH" and re.search(r"\bETH\b", text, re.I) else token_in)
     if amount is None:
-        return {"reply": f"Qual valor de {token_in} devo simular? Exemplo: simule swap de 100 {token_in} para {token_out}."}
+        return {"reply": f"Qual valor de {token_in} você quer testar? 😊 Ex.: 100 {token_in} para {token_out}."}
     bps = _slippage(text)
     if bps is None:
-        return {"reply": "Informe uma tolerância de slippage entre 0% e 5%."}
+        return {"reply": "Pode escolher um slippage entre 0% e 5%? 🔎"}
     raw = _json_request("/simulate/swap-quote", {"token_in": token_in, "token_out": token_out, "amount_in": amount, "slippage_bps": bps})
     if raw.get("quote_type") != "uniswap_v3_exact_input_single":
         raise SimulationUnavailable("O motor retornou um tipo de cotação inesperado.")
@@ -272,16 +278,17 @@ def _swap(text):
     }
     if any("None" in metric["value"] for metric in sim["metrics"]):
         raise SimulationUnavailable("O motor retornou uma cotação incompleta.")
-    return {"reply": "O motor Altside calculou esta prévia de swap com dados canônicos. Confira os valores e o bloco de origem abaixo.", "simulation": sim}
+    return {"reply": "Prontinho! 🔄 Aqui está a cotação calculada pelo Altside. Para mostrar ganho ou perda futura, preciso de um preço de saída; esta prévia ainda não é uma previsão. 👇", "simulation": sim,
+            "follow_up": f"😊 Quer testar outro valor ou informar um preço de saída para {token_out}?"}
 
 
 def _pool(text):
     if re.search(r"\b(comparar|compare|comparação)\b", text, re.I):
-        return {"reply": "Posso simular a entrada em uma pool por vez nesta etapa. Diga o par, a rede e o capital; depois envie a segunda pool para comparar as prévias."}
+        return {"reply": "Vamos por partes 😊 Posso calcular uma pool por vez. Diga o par, a rede e o capital; depois comparamos a segunda."}
     pools = pool_options()
     tokens = {"WETH" if m.group(1).upper() == "ETH" else m.group(1).upper() for m in TOKEN_RE.finditer(text)}
     if len(tokens) < 2:
-        return {"reply": "Vamos configurar sua entrada na pool. Escolha o par, o capital e a faixa na janela de simulação.", "input_request": {"kind": "pool"}}
+        return {"reply": "Vamos simular! 🦀 Escolha a pool, o capital e a faixa na janela que abriu.", "input_request": {"kind": "pool"}}
     candidates = [p for p in pools if {p["base_symbol"].upper(), p["quote_symbol"].upper()} == tokens]
     lower = text.lower()
     if "base" in lower:
@@ -293,9 +300,9 @@ def _pool(text):
     if "uniswap" in lower:
         candidates = [p for p in candidates if "uniswap" in p["protocol"].lower()]
     if not candidates:
-        return {"reply": "Não encontrei esse par nas pools com prévia canônica. Escolha uma das pools disponíveis na janela de simulação.", "input_request": {"kind": "pool"}}
+        return {"reply": "Ainda não encontrei esse par entre as pools que posso calcular. 🔎 Escolha uma das opções na janela de simulação.", "input_request": {"kind": "pool"}}
     if len(candidates) > 1:
-        return {"reply": "Encontrei mais de uma pool para esse par. Escolha o protocolo na janela de simulação.", "input_request": {"kind": "pool"}}
+        return {"reply": "Achei mais de uma pool para esse par. 😊 Escolha o protocolo na janela de simulação.", "input_request": {"kind": "pool"}}
     pool = candidates[0]
     quote_symbol = pool["quote_symbol"]
     amount = _amount_for(text, quote_symbol)
@@ -303,15 +310,18 @@ def _pool(text):
     range_ticks = int(tick_match.group(1)) if tick_match else max(1200, pool["tick_spacing"] * 2)
     bps = _slippage(text)
     if amount is None or tick_match is None or bps is None or range_ticks < pool["tick_spacing"] * 2 or range_ticks > 50000:
-        return {"reply": "Complete o capital, a faixa e o slippage na janela para calcular a prévia desta pool.", "input_request": {
+        return {"reply": "Falta pouco! 🦀 Complete o capital, a faixa e o slippage na janela para eu calcular a tabela.", "input_request": {
             "kind": "pool", "pool_id": pool["id"], "capital_quote": amount or "", "range_ticks": range_ticks if range_ticks <= 50000 else 1200, "slippage_bps": bps if bps is not None else 20,
         }}
     return _run_pool(pool, amount, range_ticks, bps)
 
 
 def handle_simulation(text):
+    result = None
     if SWAP_RE.search(text):
-        return _swap(text)
-    if POOL_RE.search(text) and re.search(r"\b(simular|simule|simulação|entrar|entrada|investir|alocar|comparar|compare)\b", text, re.I):
-        return _pool(text)
-    return None
+        result = _swap(text)
+    elif POOL_RE.search(text) and re.search(r"\b(simular|simule|simulação|entrar|entrada|investir|alocar|comparar|compare)\b", text, re.I):
+        result = _pool(text)
+    if result is not None and not result.get("simulation") and not result["reply"].rstrip().endswith("?"):
+        result["reply"] += "\n\n😊 Quer que eu te ajude a montar essa simulação?"
+    return result

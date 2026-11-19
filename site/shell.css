@@ -130,8 +130,8 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 
 .pool-dialog{position:fixed;inset:0;width:min(610px,calc(100vw - 28px));max-width:none;max-height:min(94dvh,890px);padding:0;border:1px solid #c392ed58;border-radius:26px;background:#191821;color:#f8f5fb;box-shadow:0 34px 110px #000b,0 0 90px #8650b329;overflow:auto;scrollbar-width:none}
 .pool-dialog::-webkit-scrollbar{display:none}
-.pool-dialog::backdrop{background:#09080dc7;backdrop-filter:blur(12px);animation:shortcut-backdrop-enter .48s ease-out both}
-.pool-dialog[open]{animation:shortcut-window-enter .7s cubic-bezier(.18,.86,.2,1) both}
+.pool-dialog::backdrop{background:#09080dc7;backdrop-filter:blur(12px)}
+.pool-dialog[open]{animation:pool-window-enter .26s ease-out both}
 .pool-dialog-card{position:relative;min-height:100%;padding:24px 32px 27px;overflow:hidden;background:radial-gradient(circle at 82% 9%,#573c783b,transparent 38%),linear-gradient(160deg,#25212e,#1a1b24 62%)}
 .pool-dialog-art{position:relative;height:64px;pointer-events:none}
 .pool-orbit{position:absolute;display:block;width:43px;height:43px;opacity:.87;animation:pool-orbit-dance 5s ease-in-out infinite}
@@ -182,13 +182,7 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 .pool-submit-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:10px;background:#20172422;transition:transform .3s cubic-bezier(.2,1.4,.4,1),background .2s}
 .pool-submit-icon svg{display:block;width:25px;height:25px}.pool-submit-face{fill:#332239}
 .pool-submit:hover .pool-submit-icon{transform:rotate(-9deg) scale(1.08);background:#20172438}
-@keyframes shortcut-window-enter{0%{opacity:0;transform:translate3d(var(--launch-dx,0px),var(--launch-dy,34px),0) scale(.75) rotate(-2deg);filter:blur(9px)}58%{opacity:1;transform:translate3d(0,-8px,0) scale(1.025) rotate(.6deg);filter:blur(0)}78%{transform:translate3d(0,3px,0) scale(.993) rotate(-.2deg)}100%{opacity:1;transform:translate3d(0,0,0) scale(1) rotate(0);filter:blur(0)}}
-@keyframes shortcut-backdrop-enter{from{opacity:0;backdrop-filter:blur(0)}to{opacity:1;backdrop-filter:blur(12px)}}
-@keyframes shortcut-content-enter{from{opacity:0;transform:translateY(13px)}to{opacity:1;transform:translateY(0)}}
-.pool-dialog[open] .pool-dialog-art{animation:shortcut-content-enter .52s .09s both}
-.pool-dialog[open] .pool-dialog-copy{animation:shortcut-content-enter .5s .17s both}
-.pool-dialog[open] .lending-market{animation:shortcut-content-enter .5s .23s both}
-.pool-dialog[open] form{animation:shortcut-content-enter .5s .29s both}
+@keyframes pool-window-enter{from{opacity:0;transform:translateY(9px) scale(.988)}to{opacity:1;transform:translateY(0) scale(1)}}
 @keyframes pool-face-hop{0%,100%{transform:translateY(0) rotate(-7deg) scale(1)}40%{transform:translateY(-7px) rotate(4deg) scale(.96,1.04)}62%{transform:translateY(0) rotate(-4deg) scale(1.06,.94)}}
 @keyframes pool-orbit-dance{0%,100%{transform:translateY(0) rotate(15deg)}50%{transform:translateY(-9px) rotate(30deg)}}
 @keyframes pool-spark-twinkle{0%,100%{opacity:.5;transform:scale(.8) rotate(-15deg)}50%{opacity:1;transform:scale(1.2) rotate(12deg)}}
@@ -209,25 +203,3 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 .lending-scale{display:flex;justify-content:space-between;color:#938aa2;font-size:10px;font-variant-numeric:tabular-nums}
 .lending-dialog .pool-dialog-hint{margin:5px 0 1px;line-height:1.5}
 @media(max-width:520px){.lending-field-grid{grid-template-columns:1fr;gap:13px}.lending-dialog .pool-dialog-card{padding:20px 20px 23px}.lending-dialog .pool-dialog-art{height:55px}.lending-market{margin-bottom:14px}.lending-stress{margin-top:13px}}
-
-.prompt-grid button[data-action]{position:relative;overflow:hidden}
-.prompt-grid button[data-action]::after{content:"";position:absolute;inset:-50%;border-radius:50%;background:radial-gradient(circle,#c89bea50 0,#c89bea18 24%,transparent 61%);opacity:0;transform:scale(.15);pointer-events:none}
-.prompt-grid button.is-launching::after{animation:shortcut-trigger-ripple .6s ease-out both}
-.prompt-grid button.is-launching .prompt-icon{animation:shortcut-trigger-icon .52s cubic-bezier(.2,1,.22,1) both}
-@keyframes shortcut-trigger-ripple{20%{opacity:1}100%{opacity:0;transform:scale(1.2)}}
-@keyframes shortcut-trigger-icon{0%,100%{transform:translateY(0) scale(1)}38%{transform:translateY(-5px) scale(1.17)}64%{transform:translateY(2px) scale(.92)}}
-
-.lending-art .pool-orbit-one{left:12px;top:23px;width:30px;height:30px;border-radius:50%;background:#78d2e0;opacity:.72}
-.lending-art .pool-orbit-two{right:62px;top:13px;width:29px;height:29px;border-radius:10px;background:#a48af0;opacity:.8}
-.lending-guardian{position:absolute;left:56px;top:-4px;display:block;width:73px;height:73px;animation:lending-guardian-bob 3.4s ease-in-out infinite}
-.lending-guardian svg{display:block;width:100%;height:100%;overflow:visible}
-.lending-guardian-eyes{transform-box:fill-box;transform-origin:center;animation:lending-guardian-blink 4.7s ease-in-out infinite}
-.lending-art-spark{position:absolute;left:149px;top:8px;color:#a8d8f2;font-size:23px;animation:pool-spark-twinkle 2.8s ease-in-out infinite}
-@keyframes lending-guardian-bob{0%,100%{transform:translateY(0) rotate(-3deg)}48%{transform:translateY(-5px) rotate(3deg)}}
-@keyframes lending-guardian-blink{0%,42%,46%,100%{transform:scaleY(1)}44%{transform:scaleY(.08)}}
-.lending-submit{background:linear-gradient(110deg,#80d5e5,#91b4f1 53%,#b69cf1);color:#18314a;box-shadow:0 10px 25px #6484ca2d}
-.lending-submit .pool-submit-icon{background:#233b6729}
-.lending-submit .pool-submit-icon svg{width:24px;height:24px}
-.lending-gauge-needle{transform-origin:16px 22px;transition:transform .42s cubic-bezier(.22,1.3,.35,1)}
-.lending-submit:hover .lending-gauge-needle{transform:rotate(24deg)}
-@media(max-width:540px){.lending-guardian{left:44px;top:-6px;width:69px;height:69px}.lending-art .pool-orbit-one{left:3px}.lending-art .pool-orbit-two{right:50px}.lending-art-spark{left:130px}}

@@ -20,6 +20,8 @@ const agentImage = document.querySelector('#agent-image');
 const agentCursor = document.querySelector('#agent-cursor');
 const modeBadge = document.querySelector('#mode-badge');
 const nerdGrid = document.querySelector('#nerd-grid');
+const agentGrid = document.querySelector('#agent-grid');
+const agentShortcutStatus = document.querySelector('#agent-shortcut-status');
 const normalGrid = document.querySelector('.prompt-grid');
 const composerNote = document.querySelector('#composer-note');
 const historyNav = document.querySelector('#conversation-history');
@@ -242,6 +244,8 @@ function applyNerdModeUI() {
   }
   if (normalGrid) normalGrid.hidden = active || agent;
   if (nerdGrid) nerdGrid.hidden = !active;
+  if (agentGrid) agentGrid.hidden = !agent;
+  if (agentShortcutStatus && !agent) agentShortcutStatus.hidden = true;
   if (agentIntro) agentIntro.hidden = !agent;
   if (agentWindow) agentWindow.hidden = !(agent && agentStarted);
   const kicker = welcome?.querySelector('.welcome-kicker');
@@ -835,6 +839,35 @@ async function startAgentSession() {
   })();
   return agentStartPromise;
 }
+const agentSites = {
+  whatsapp: 'https://web.whatsapp.com/',
+  x: 'https://x.com/',
+  gmail: 'https://mail.google.com/',
+  duckduckgo: 'https://duckduckgo.com/',
+};
+agentGrid?.querySelectorAll('[data-agent-site]').forEach((button) => button.addEventListener('click', async () => {
+  if (!isAgentMode() || agentGrid.getAttribute('aria-busy') === 'true') return;
+  const url = agentSites[button.dataset.agentSite];
+  if (!url) return;
+  const label = button.querySelector('strong')?.textContent || 'site';
+  agentGrid.setAttribute('aria-busy', 'true');
+  agentGrid.querySelectorAll('button').forEach((item) => { item.disabled = true; });
+  if (agentShortcutStatus) { agentShortcutStatus.textContent = `Abrindo ${label}…`; agentShortcutStatus.hidden = false; }
+  try {
+    await startAgentSession();
+    if (!isAgentMode() || !agentStarted) return;
+    if (agentStatus) agentStatus.textContent = `Abrindo ${label}…`;
+    await agentRequest('navigate', { url });
+    await refreshAgentWindow();
+    if (agentShortcutStatus) agentShortcutStatus.hidden = true;
+  } catch (error) {
+    if (agentShortcutStatus) { agentShortcutStatus.textContent = error.message; agentShortcutStatus.hidden = false; }
+    if (agentStatus) agentStatus.textContent = error.message;
+  } finally {
+    agentGrid.removeAttribute('aria-busy');
+    agentGrid.querySelectorAll('button').forEach((item) => { item.disabled = false; });
+  }
+}));
 async function stopAgentSession() {
   agentStarted = false;
   applyNerdModeUI();
@@ -973,7 +1006,7 @@ nerdToggle?.addEventListener('click', async () => {
   ], { duration: 285, easing: 'cubic-bezier(.3,0,.65,1)', fill: 'forwards' });
   let landing;
   const welcomeItems = welcome?.isConnected
-    ? [welcome.querySelector('.welcome-kicker'), welcome.querySelector('h1'), welcome.querySelector(':scope > p'), oldMode ? nerdGrid : normalGrid].filter(Boolean)
+    ? [welcome.querySelector('.welcome-kicker'), welcome.querySelector('h1'), welcome.querySelector(':scope > p'), isAgentMode() ? agentGrid : oldMode ? nerdGrid : normalGrid].filter(Boolean)
     : [];
   const leaving = welcomeItems.length ? animate(welcomeItems, { opacity: [1, 0], y: [0, -9], filter: ['blur(0px)', 'blur(4px)'] }, { duration: 0.2, ease: 'easeIn' }) : null;
   const noteLeaving = composerNote ? animate(composerNote, { opacity: [1, 0], y: [0, -5] }, { duration: 0.18, ease: 'easeIn' }) : null;
@@ -1031,7 +1064,7 @@ agentToggle?.addEventListener('click', async () => {
   const mascot = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? null : modeMascot();
   const pop = mascot?.animate([{ transform: 'scale(1)', opacity: 1 }, { transform: 'scale(1.36)', opacity: 1 },
     { transform: 'scale(.08)', opacity: 0 }], { duration: 290, easing: 'ease-in', fill: 'forwards' });
-  const items = welcome?.isConnected ? [welcome.querySelector('.welcome-kicker'), welcome.querySelector('h1'), welcome.querySelector(':scope > p'), agentIntro, nerdGrid, normalGrid].filter(Boolean) : [];
+  const items = welcome?.isConnected ? [welcome.querySelector('.welcome-kicker'), welcome.querySelector('h1'), welcome.querySelector(':scope > p'), agentGrid, nerdGrid, normalGrid].filter(Boolean) : [];
   const leaving = items.length ? animate(items, { opacity: [1, 0], y: [0, -8] }, { duration: .2 }) : null;
   try {
     await Promise.all([pop?.finished, leaving?.finished].filter(Boolean));

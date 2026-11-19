@@ -32,6 +32,17 @@
 .agent-mode .chat-form:focus-within{border-color:#d99a83a6;box-shadow:0 18px 50px #0004,0 0 0 3px #d78c721e}
 .agent-mode .composer-footer button[type=submit]{background:#e99573}
 .agent-mode .mode-badge{border-color:#d78b7470;background:#d78b7416;color:#e5b3a2}
+.agent-grid button{cursor:pointer}
+.agent-grid button:hover{border-color:#e995736b;background:#e9957310}
+.agent-grid button:focus-visible{outline:2px solid #e99573;outline-offset:3px}
+.agent-grid[aria-busy=true] button{cursor:wait;opacity:.7}
+.agent-grid[aria-busy=true] button:hover{transform:none}
+.agent-grid .prompt-icon.agent-whatsapp{background:#62d69d20}
+.agent-grid .prompt-icon.agent-x{background:#a6adbc1e}
+.agent-grid .prompt-icon.agent-gmail{background:#e9957320}
+.agent-grid .prompt-icon.agent-duckduckgo{background:#f6a47120}
+.agent-shortcut-status{width:min(700px,100%);margin:10px 0 0;color:#c9aca1;font-size:11px;line-height:1.4}
+.agent-shortcut-status[hidden]{display:none}
 @keyframes agent-eye-fire{0%{transform:scale(.76,.74) rotate(-9deg);background:#f7c36b}100%{transform:scale(1.1,1.18) rotate(9deg);background:#ff7139}}
 @keyframes agent-icon-smoke{0%{opacity:0;transform:translate(0,2px) scale(.7)}25%{opacity:.45}100%{opacity:0;transform:translate(5px,-13px) scale(1.5)}}
 @keyframes agent-char{0%{color:#fff5e9;text-shadow:0 0 4px #ffb370}12%{color:#ffbd70;text-shadow:0 0 7px #ff873f}32%{color:#ed703d;text-shadow:0 0 3px #ed703d}55%{color:#8c7772;text-shadow:none}78%{color:#504b4c;text-shadow:none}100%{color:#f6f4f8;text-shadow:none}}

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Alt-IA · Agente</title>
-  <link rel="stylesheet" href="/agent-companion.css?v=2">
+  <link rel="stylesheet" href="/agent-companion.css?v=3">
 </head>
 <body>
   <header>
@@ -14,6 +14,7 @@
   <main>
     <div class="preview-shell">
       <img id="preview" alt="Prévia do navegador do agente" hidden>
+      <iframe id="video" title="Vídeo do agente" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" hidden></iframe>
       <span id="placeholder">Aguardando a próxima navegação…</span>
     </div>
     <p id="speech" aria-live="polite">Estou por aqui. O que exploramos agora? 🔎</p>
@@ -22,6 +23,6 @@
     <input id="task" type="text" maxlength="1500" placeholder="Peça algo ao agente…" aria-label="Mensagem para o agente">
     <button type="submit" aria-label="Enviar ao agente">↑</button>
   </form>
-  <script src="/agent-companion.js?v=3" defer></script>
+  <script src="/agent-companion.js?v=5" defer></script>
 </body>
 </html>

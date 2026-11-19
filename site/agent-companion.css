@@ -14,7 +14,8 @@ small{color:#aaa5b2;font-size:11px}
 main{display:flex;flex:1;flex-direction:column;gap:8px;min-height:0}
 .preview-shell{display:grid;place-items:center;flex:1;min-height:0;border:1px solid #ffffff1c;border-radius:9px;background:#14151b}
 #preview{display:block;width:100%;height:100%;min-height:0;object-fit:contain}
-#preview[hidden],#placeholder[hidden]{display:none}
+#video{display:block;width:100%;height:100%;min-height:0;border:0}
+#preview[hidden],#video[hidden],#placeholder[hidden]{display:none}
 #placeholder{color:#8f8b96;font-size:11px}
 #speech{flex:none;max-height:48px;min-height:18px;margin:0;overflow:auto;color:#ddd5dd}
 form{display:flex;gap:7px;flex:none}

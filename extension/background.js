@@ -30,12 +30,12 @@ async function reconcile() {
     if (existing) return;
     await chrome.storage.session.remove('companionWindowId');
   }
-  const width = 360;
-  const height = 320;
+  const width = 400;
+  const height = 390;
   const popup = await chrome.windows.create({
     url: companionUrl,
     type: 'popup',
-    focused: false,
+    focused: true,
     width,
     height,
     left: Math.max(0, browserWindow.left + browserWindow.width - width - 16),
@@ -59,6 +59,9 @@ chrome.tabs.onActivated.addListener(({ windowId }) => {
     const { companionWindowId } = await chrome.storage.session.get('companionWindowId');
     if (windowId !== companionWindowId) await reconcile();
   });
+});
+chrome.windows.onFocusChanged.addListener(() => {
+  serial(reconcile);
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
   serial(async () => {

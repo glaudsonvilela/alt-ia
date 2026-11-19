@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Alt-IA · Janela do agente",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Mostra o agente Alt-IA em uma mini janela ao trocar de aba.",
   "permissions": ["windows", "storage"],
   "host_permissions": ["https://ai.bigbanana.io/*"],

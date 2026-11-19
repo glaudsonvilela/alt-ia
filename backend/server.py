@@ -254,9 +254,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(401, {"error": "Inicie o Modo Agente."})
         try:
             if path == "/api/agent/state":
-                state = worker_call("GET", session_path(session_id, "/snapshot"), API_KEY)
-                state.pop("text", None)
-                state.pop("elements", None)
+                state = worker_call("GET", session_path(session_id, "/status"), API_KEY)
                 with agent_running_lock:
                     state["running"] = session_id in agent_running
                 cookie = f"alt_ia_agent={cookie_value(session_id, API_KEY)}; HttpOnly; Secure; SameSite=Strict; Path=/api/agent; Max-Age=720"

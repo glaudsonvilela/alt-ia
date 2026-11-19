@@ -129,16 +129,23 @@ async function startVideoPlayer(frame, hint, track = true) {
     if (!frame.isConnected) return;
     let mutedFallback = false;
     const player = new YT.Player(frame, { events: {
-      onReady: ({ target }) => { target.playVideo(); },
+      onReady: ({ target }) => {
+        target.setVolume(100);
+        target.unMute();
+        if (!(frame.parentElement?.id === 'agent-media' && document.hidden && document.documentElement.dataset.altAgentExtension === 'true')) target.playVideo();
+      },
       onAutoplayBlocked: ({ target }) => {
         if (mutedFallback) return;
         mutedFallback = true;
         target.mute();
         target.playVideo();
-        hint.textContent = 'Tocando sem som · toque no vídeo para ativar';
+        hint.textContent = 'O navegador bloqueou o som automático · toque no vídeo para ativar';
       },
       onStateChange: ({ target, data }) => {
-        if (data === YT.PlayerState.PLAYING && !target.isMuted()) hint.textContent = 'Tocando com som';
+        if (data === YT.PlayerState.PLAYING) {
+          if (target.isMuted() && !mutedFallback) target.unMute();
+          hint.textContent = target.isMuted() ? 'O navegador bloqueou o som automático · toque no vídeo para ativar' : 'Tocando com som';
+        }
       },
       onError: () => { hint.textContent = 'Abra no YouTube para assistir'; }
     } });
@@ -901,6 +908,10 @@ newChatButton?.addEventListener('click', () => {
 });
 let agentStarted = false;
 let agentRefreshing = false;
+let agentLastStatePollAt = 0;
+let agentWasRunning = false;
+let agentLastShotKey = '';
+let agentCurrentVideo = null;
 let agentStartPromise = null;
 let agentOwnerId = null;
 let agentPipWindow = null;
@@ -1014,6 +1025,10 @@ async function sendAgentDockTask(task) {
 
 const agentCompanionChannel = new BroadcastChannel('alt-ia-agent-companion');
 agentCompanionChannel.addEventListener('message', async ({ data }) => {
+  if (data?.type === 'media-request') {
+    agentCompanionChannel.postMessage({ type: 'media', video: agentCurrentVideo });
+    return;
+  }
   if (data?.type !== 'task' || typeof data.task !== 'string' || !agentStarted) return;
   const result = await sendAgentDockTask(data.task.trim());
   agentCompanionChannel.postMessage({ type: 'reply', id: data.id, ...result });
@@ -1071,6 +1086,9 @@ function openAgentPip() {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && agentStarted && document.documentElement.dataset.altAgentExtension !== 'true') openAgentPip();
   else if (!document.hidden && agentPipWindow && !agentPipWindow.closed) agentPipWindow.close();
+  if (document.documentElement.dataset.altAgentExtension === 'true' && agentMediaPlayer) {
+    try { if (document.hidden) agentMediaPlayer.pauseVideo(); else agentMediaPlayer.playVideo(); } catch { /* The player may already be closed. */ }
+  }
 });
 async function agentRequest(path, payload = {}, method = 'POST') {
   const response = await fetch(`/api/agent/${path}`, { method, headers: { 'Content-Type': 'application/json' },
@@ -1088,7 +1106,7 @@ async function startAgentSession() {
       await agentRequest('start');
       agentStarted = true;
       applyNerdModeUI();
-      await refreshAgentWindow();
+      await refreshAgentWindow(true);
     } catch (error) { if (agentStatus) agentStatus.textContent = error.message; throw error; }
     finally { agentStartPromise = null; }
   })();
@@ -1113,7 +1131,7 @@ agentGrid?.querySelectorAll('[data-agent-site]').forEach((button) => button.addE
     if (!isAgentMode() || !agentStarted) return;
     if (agentStatus) agentStatus.textContent = `Abrindo ${label}…`;
     await agentRequest('navigate', { url });
-    await refreshAgentWindow();
+    await refreshAgentWindow(true);
     if (agentShortcutStatus) agentShortcutStatus.hidden = true;
   } catch (error) {
     if (agentShortcutStatus) { agentShortcutStatus.textContent = error.message; agentShortcutStatus.hidden = false; }
@@ -1127,6 +1145,8 @@ async function stopAgentSession() {
   stopAgentMedia();
   updateAgentDockMedia(null);
   agentStarted = false;
+  agentLastShotKey = '';
+  agentLastStatePollAt = 0;
   agentOwnerId = null;
   agentPipHasReply = false;
   if (agentPipWindow && !agentPipWindow.closed) agentPipWindow.close();
@@ -1135,23 +1155,30 @@ async function stopAgentSession() {
   if (agentUrl) agentUrl.textContent = 'Sessão isolada · dados apagados ao encerrar';
   try { await agentRequest('session', {}, 'DELETE'); } catch { /* Idle expiration also closes the context. */ }
 }
-async function refreshAgentWindow() {
+async function refreshAgentWindow(force = false) {
   if (!agentStarted || agentRefreshing || (document.hidden && !agentPipWindow)) return;
   const playing = agentScreen?.classList.contains('is-playing');
-  if (playing && Date.now() - agentMediaLastStateAt < 15000) return;
-  if (playing) agentMediaLastStateAt = Date.now();
+  const now = Date.now();
+  if (!force && now - agentLastStatePollAt < (playing ? 30000 : agentWasRunning ? 5000 : 20000)) return;
+  agentLastStatePollAt = now;
   agentRefreshing = true;
   try {
     const response = await fetch('/api/agent/state', { cache: 'no-store' });
     const state = await response.json();
     if (!response.ok) throw new Error(state.error || 'Sessão encerrada.');
+    agentWasRunning = Boolean(state.running);
     if (agentStatus && !agentScreen?.classList.contains('is-playing')) agentStatus.textContent = state.status || (state.running ? 'Navegando e analisando…' : 'Pronto');
     if (agentPipStatus && (state.running || !agentPipHasReply) && !agentDockBusy) agentPipStatus.textContent = state.status || 'Pronto';
     if (state.running && !agentPipHasReply && state.title) agentDockSpeech.textContent = `Estou vendo “${state.title.slice(0, 90)}” e conferindo os detalhes. 🔎`;
     if (agentUrl && !agentScreen?.classList.contains('is-playing')) agentUrl.textContent = state.url === 'about:blank' ? 'Sessão isolada · dados apagados ao encerrar' : state.url;
-    if (!playing && state.url && state.url !== 'about:blank' && agentImage && isAgentMode()) agentImage.src = `/api/agent/image?t=${Date.now()}`;
-    if (!playing && state.url && state.url !== 'about:blank' && agentDockImage && !agentDock.hidden) agentDockImage.src = `/api/agent/image?t=${Date.now()}`;
-    if (!playing && state.url && state.url !== 'about:blank' && agentPipImage) agentPipImage.src = `/api/agent/image?t=${Date.now()}`;
+    const shotKey = `${state.url}:${state.updated}`;
+    if (!playing && state.url && state.url !== 'about:blank' && (force || shotKey !== agentLastShotKey)) {
+      const imageUrl = `/api/agent/image?t=${Date.now()}`;
+      if (agentImage && isAgentMode()) agentImage.src = imageUrl;
+      if (agentDockImage && !agentDock.hidden) agentDockImage.src = imageUrl;
+      if (agentPipImage) agentPipImage.src = imageUrl;
+      agentLastShotKey = shotKey;
+    }
     if (agentCursor) {
       agentCursor.hidden = !state.cursor || state.url === 'about:blank';
       if (!agentCursor.hidden) { agentCursor.style.left = `${state.cursor.x / 11}%`; agentCursor.style.top = `${state.cursor.y / 7.2}%`; }
@@ -1173,10 +1200,10 @@ window.addEventListener('pagehide', () => {
 const agentScreen = document.querySelector('.agent-screen');
 let agentMediaPlayer = null;
 let agentMediaGeneration = 0;
-let agentMediaLastStateAt = 0;
 function stopAgentMedia() {
   agentMediaGeneration += 1;
-  agentMediaLastStateAt = 0;
+  agentCurrentVideo = null;
+  agentCompanionChannel.postMessage({ type: 'media', video: null });
   if (agentMediaPlayer) { try { agentMediaPlayer.destroy(); } catch { /* Player already stopped. */ } }
   agentMediaPlayer = null;
   agentMedia?.replaceChildren();
@@ -1187,6 +1214,8 @@ function showAgentMedia(value) {
   const video = safeVideo(value);
   if (!video || !agentMedia || !agentScreen) return;
   stopAgentMedia();
+  agentCurrentVideo = video;
+  agentCompanionChannel.postMessage({ type: 'media', video });
   updateAgentDockMedia(video);
   if (isAgentMode() && agentWindow) {
     agentWindow.hidden = false;
@@ -1215,7 +1244,7 @@ let agentInputQueue = Promise.resolve();
 function queueAgentInput(path, payload) {
   agentInputQueue = agentInputQueue.catch(() => {}).then(async () => {
     await agentRequest(path, payload);
-    await refreshAgentWindow();
+    await refreshAgentWindow(true);
   });
   return agentInputQueue;
 }
@@ -1224,8 +1253,8 @@ agentScreen?.addEventListener('click', async (event) => {
   agentScreen.focus();
   if (!agentImage?.hasAttribute('src')) return;
   const rect = agentImage.getBoundingClientRect();
-  const scale = Math.min(rect.width / 1100, rect.height / 720);
-  const x = (event.clientX - rect.left - (rect.width - 1100 * scale) / 2) / scale;
+  const scale = Math.min(rect.width / 1280, rect.height / 720);
+  const x = (event.clientX - rect.left - (rect.width - 1280 * scale) / 2) / scale;
   const y = (event.clientY - rect.top - (rect.height - 720 * scale) / 2) / scale;
   try { await queueAgentInput('manual-click', { x, y }); }
   catch (error) { if (agentStatus) agentStatus.textContent = error.message; }

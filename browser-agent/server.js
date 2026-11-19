@@ -70,7 +70,7 @@ const proxyPort = proxy.address().port;
 const chromeProcess = spawn('xvfb-run', ['-a', chromium.executablePath(),
   '--user-data-dir=/tmp/alt-ia-chrome', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=9223',
   '--no-sandbox',
-  '--no-first-run', '--no-default-browser-check', '--disable-dev-shm-usage', '--window-size=1100,720',
+  '--no-first-run', '--no-default-browser-check', '--disable-dev-shm-usage', '--window-size=1280,720',
   `--proxy-server=http://127.0.0.1:${proxyPort}`, '--proxy-bypass-list=<-loopback>', 'about:blank'],
 { stdio: ['ignore', 'ignore', 'inherit'] });
 process.once('exit', () => chromeProcess.kill('SIGTERM'));
@@ -128,7 +128,7 @@ async function closeSession(id) {
   sessions.delete(id);
   await session.context.close().catch(() => {});
 }
-setInterval(() => { for (const [id, session] of sessions) if (Date.now() - session.updated > IDLE_MS) void closeSession(id); }, 30000).unref();
+setInterval(() => { for (const [id, session] of sessions) if (Date.now() - session.lastAccess > IDLE_MS) void closeSession(id); }, 30000).unref();
 
 http.createServer(async (req, res) => {
   if (req.headers['x-browser-token'] !== token) return json(res, 403, { error: 'Acesso negado.' });
@@ -136,7 +136,7 @@ http.createServer(async (req, res) => {
   try {
     if (req.method === 'POST' && parts.length === 1 && parts[0] === 'sessions') {
       if (sessions.size >= MAX_SESSIONS) return json(res, 429, { error: 'Navegadores ocupados. Tente novamente em instantes.' });
-      const context = await browser.newContext({ viewport: { width: 1100, height: 720 }, deviceScaleFactor: 2 / 3,
+      const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1,
         acceptDownloads: false, serviceWorkers: 'block', permissions: [] });
       await context.route('**/*', async route => {
         const url = route.request().url();
@@ -147,7 +147,7 @@ http.createServer(async (req, res) => {
       page.setDefaultTimeout(12000);
       page.on('download', download => download.cancel());
       const id = crypto.randomBytes(24).toString('hex');
-      const session = { context, page, status: 'Pronto para abrir um site.', updated: Date.now(), cursor: null };
+      const session = { context, page, status: 'Pronto para abrir um site.', updated: Date.now(), lastAccess: Date.now(), cursor: null };
       context.on('page', popup => {
         if (popup === session.page) return;
         session.page = popup;
@@ -160,11 +160,15 @@ http.createServer(async (req, res) => {
     }
     const session = sessions.get(parts[1]);
     if (parts[0] !== 'sessions' || !session) return json(res, 404, { error: 'Sessão encerrada.' });
-    session.updated = Date.now();
+    session.lastAccess = Date.now();
     if (req.method === 'DELETE' && parts.length === 2) { await closeSession(parts[1]); return json(res, 200, { closed: true }); }
+    if (req.method === 'GET' && parts[2] === 'status') return json(res, 200, {
+      url: session.page.url(), title: (await session.page.title().catch(() => '')).slice(0, 200),
+      status: session.status, updated: session.updated, cursor: session.cursor || null,
+    });
     if (req.method === 'GET' && parts[2] === 'snapshot') return json(res, 200, await snapshot(session));
     if (req.method === 'GET' && parts[2] === 'image') {
-      const image = await session.page.screenshot({ type: 'jpeg', quality: 48, scale: 'device', timeout: 8000 });
+      const image = await session.page.screenshot({ type: 'jpeg', quality: 52, scale: 'device', timeout: 8000 });
       res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store', 'Content-Length': image.length });
       return res.end(image);
     }
@@ -211,7 +215,7 @@ http.createServer(async (req, res) => {
       await session.page.mouse.wheel(0, dy);
     } else if (action === 'manual-click') {
       const x = Number(data.x), y = Number(data.y);
-      if (![x, y].every(Number.isFinite) || x < 0 || x > 1100 || y < 0 || y > 720) throw Error('Clique inválido.');
+      if (![x, y].every(Number.isFinite) || x < 0 || x > 1280 || y < 0 || y > 720) throw Error('Clique inválido.');
       await session.page.mouse.click(x, y);
       session.status = 'Clique manual';
       session.cursor = { x, y };

@@ -289,6 +289,8 @@ function applyNerdModeUI() {
   const topic = nerdTopic();
   site?.classList.toggle('nerd-mode', active);
   site?.classList.toggle('agent-mode', agent);
+  site?.classList.toggle('agent-session-open', agent && agentStarted);
+  document.documentElement.dataset.altAgentActive = agentStarted ? 'true' : 'false';
   const mascot = welcome?.querySelector('.welcome-character');
   if (mascot) {
     mascot.style.backgroundColor = active ? '#81a6ed' : '#ad73d8';
@@ -301,9 +303,8 @@ function applyNerdModeUI() {
   if (agentIntro) agentIntro.hidden = !agent;
   if (agentWindow) {
     agentWindow.hidden = !(agent && agentStarted);
-    agentWindow.classList.toggle('agent-window-inline', agent && agentStarted);
-    if (agent && agentStarted && agentWindow.parentElement !== chatMessages) chatMessages?.append(agentWindow);
-    else if ((!agent || !agentStarted) && agentWindow.parentElement === chatMessages) agentWindowHome?.append(agentWindow);
+    agentWindow.classList.remove('agent-window-inline');
+    if (agentWindow.parentElement !== agentWindowHome) agentWindowHome?.append(agentWindow);
   }
   if (agentDock) agentDock.hidden = !agentStarted || agent || Boolean(agentPipWindow && !agentPipWindow.closed);
   const kicker = welcome?.querySelector('.welcome-kicker');
@@ -849,7 +850,6 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
 function renderConversation() {
   if (!chatMessages) return;
   activeVideoPlayers.splice(0).forEach((player) => { try { player.destroy(); } catch { /* Player already removed. */ } });
-  if (agentWindow?.parentElement === chatMessages) agentWindowHome?.append(agentWindow);
   chatMessages.replaceChildren();
   const conversation = conversations.find((item) => item.id === activeId);
   applyNerdModeUI();
@@ -860,7 +860,6 @@ function renderConversation() {
   conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode ? null : message.video)));
     chatMessages.append(fragment);
   }
-  if (isAgentMode() && agentStarted && agentWindow) chatMessages.append(agentWindow);
   requestAnimationFrame(() => { chatMessages.scrollTop = conversation?.messages.length ? chatMessages.scrollHeight : 0; });
 }
 
@@ -985,15 +984,18 @@ async function sendAgentDockTask(task) {
   persist(); renderHistory();
   if (activeId === conversation.id) renderConversation();
   let resultMedia = null;
+  let replyText = '';
   try {
     const data = await agentRequest('run', { task });
     resultMedia = data.video;
+    replyText = data.reply;
     updateAgentDockMedia(resultMedia);
     conversation.messages.push({ role: 'ai', text: data.reply, mode: 'agent', video: safeVideo(data.video) });
     agentPipHasReply = true;
     if (agentPipStatus) agentPipStatus.textContent = data.reply.slice(0, 180);
     agentDockSpeech.textContent = data.reply.slice(0, 180);
   } catch (error) {
+    replyText = error.message || 'Não consegui concluir. Tente novamente.';
     conversation.messages.push({ role: 'ai', text: error.message || 'Não consegui concluir. Tente novamente.', mode: 'agent' });
     agentPipHasReply = true;
     if (agentPipStatus) agentPipStatus.textContent = error.message;
@@ -1007,7 +1009,15 @@ async function sendAgentDockTask(task) {
     agentDockInput.disabled = false;
     agentDockSend.disabled = false;
   }
+  return { reply: replyText, video: safeVideo(resultMedia) };
 }
+
+const agentCompanionChannel = new BroadcastChannel('alt-ia-agent-companion');
+agentCompanionChannel.addEventListener('message', async ({ data }) => {
+  if (data?.type !== 'task' || typeof data.task !== 'string' || !agentStarted) return;
+  const result = await sendAgentDockTask(data.task.trim());
+  agentCompanionChannel.postMessage({ type: 'reply', id: data.id, ...result });
+});
 
 function openAgentPip() {
   if (!window.documentPictureInPicture || (agentPipWindow && !agentPipWindow.closed)) return;
@@ -1055,12 +1065,11 @@ function openAgentPip() {
       agentPipImage = null;
       applyNerdModeUI();
     });
-    pip.setInterval(() => { void refreshAgentWindow(); }, 2400);
     applyNerdModeUI();
   }).catch(() => { applyNerdModeUI(); });
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && agentStarted) openAgentPip();
+  if (document.hidden && agentStarted && document.documentElement.dataset.altAgentExtension !== 'true') openAgentPip();
   else if (!document.hidden && agentPipWindow && !agentPipWindow.closed) agentPipWindow.close();
 });
 async function agentRequest(path, payload = {}, method = 'POST') {
@@ -1128,6 +1137,9 @@ async function stopAgentSession() {
 }
 async function refreshAgentWindow() {
   if (!agentStarted || agentRefreshing || (document.hidden && !agentPipWindow)) return;
+  const playing = agentScreen?.classList.contains('is-playing');
+  if (playing && Date.now() - agentMediaLastStateAt < 15000) return;
+  if (playing) agentMediaLastStateAt = Date.now();
   agentRefreshing = true;
   try {
     const response = await fetch('/api/agent/state', { cache: 'no-store' });
@@ -1137,9 +1149,9 @@ async function refreshAgentWindow() {
     if (agentPipStatus && (state.running || !agentPipHasReply) && !agentDockBusy) agentPipStatus.textContent = state.status || 'Pronto';
     if (state.running && !agentPipHasReply && state.title) agentDockSpeech.textContent = `Estou vendo “${state.title.slice(0, 90)}” e conferindo os detalhes. 🔎`;
     if (agentUrl && !agentScreen?.classList.contains('is-playing')) agentUrl.textContent = state.url === 'about:blank' ? 'Sessão isolada · dados apagados ao encerrar' : state.url;
-    if (state.url && state.url !== 'about:blank' && agentImage && isAgentMode()) agentImage.src = `/api/agent/image?t=${Date.now()}`;
-    if (state.url && state.url !== 'about:blank' && agentDockImage && !agentDock.hidden) agentDockImage.src = `/api/agent/image?t=${Date.now()}`;
-    if (state.url && state.url !== 'about:blank' && agentPipImage) agentPipImage.src = `/api/agent/image?t=${Date.now()}`;
+    if (!playing && state.url && state.url !== 'about:blank' && agentImage && isAgentMode()) agentImage.src = `/api/agent/image?t=${Date.now()}`;
+    if (!playing && state.url && state.url !== 'about:blank' && agentDockImage && !agentDock.hidden) agentDockImage.src = `/api/agent/image?t=${Date.now()}`;
+    if (!playing && state.url && state.url !== 'about:blank' && agentPipImage) agentPipImage.src = `/api/agent/image?t=${Date.now()}`;
     if (agentCursor) {
       agentCursor.hidden = !state.cursor || state.url === 'about:blank';
       if (!agentCursor.hidden) { agentCursor.style.left = `${state.cursor.x / 11}%`; agentCursor.style.top = `${state.cursor.y / 7.2}%`; }
@@ -1161,8 +1173,10 @@ window.addEventListener('pagehide', () => {
 const agentScreen = document.querySelector('.agent-screen');
 let agentMediaPlayer = null;
 let agentMediaGeneration = 0;
+let agentMediaLastStateAt = 0;
 function stopAgentMedia() {
   agentMediaGeneration += 1;
+  agentMediaLastStateAt = 0;
   if (agentMediaPlayer) { try { agentMediaPlayer.destroy(); } catch { /* Player already stopped. */ } }
   agentMediaPlayer = null;
   agentMedia?.replaceChildren();
@@ -1176,8 +1190,7 @@ function showAgentMedia(value) {
   updateAgentDockMedia(video);
   if (isAgentMode() && agentWindow) {
     agentWindow.hidden = false;
-    agentWindow.classList.add('agent-window-inline');
-    if (agentWindow.parentElement !== chatMessages) chatMessages?.append(agentWindow);
+    site?.classList.add('agent-session-open');
   }
   const generation = agentMediaGeneration;
   const frame = document.createElement('iframe');

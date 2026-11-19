@@ -69,6 +69,7 @@ await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
 const proxyPort = proxy.address().port;
 const chromeProcess = spawn('xvfb-run', ['-a', chromium.executablePath(),
   '--user-data-dir=/tmp/alt-ia-chrome', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=9223',
+  '--no-sandbox',
   '--no-first-run', '--no-default-browser-check', '--disable-dev-shm-usage', '--window-size=1100,720',
   `--proxy-server=http://127.0.0.1:${proxyPort}`, '--proxy-bypass-list=<-loopback>', 'about:blank'],
 { stdio: ['ignore', 'ignore', 'inherit'] });
@@ -135,7 +136,7 @@ http.createServer(async (req, res) => {
   try {
     if (req.method === 'POST' && parts.length === 1 && parts[0] === 'sessions') {
       if (sessions.size >= MAX_SESSIONS) return json(res, 429, { error: 'Navegadores ocupados. Tente novamente em instantes.' });
-      const context = await browser.newContext({ viewport: { width: 1100, height: 720 },
+      const context = await browser.newContext({ viewport: { width: 1100, height: 720 }, deviceScaleFactor: 2 / 3,
         acceptDownloads: false, serviceWorkers: 'block', permissions: [] });
       await context.route('**/*', async route => {
         const url = route.request().url();
@@ -163,7 +164,7 @@ http.createServer(async (req, res) => {
     if (req.method === 'DELETE' && parts.length === 2) { await closeSession(parts[1]); return json(res, 200, { closed: true }); }
     if (req.method === 'GET' && parts[2] === 'snapshot') return json(res, 200, await snapshot(session));
     if (req.method === 'GET' && parts[2] === 'image') {
-      const image = await session.page.screenshot({ type: 'jpeg', quality: 58, timeout: 8000 });
+      const image = await session.page.screenshot({ type: 'jpeg', quality: 48, scale: 'device', timeout: 8000 });
       res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store', 'Content-Length': image.length });
       return res.end(image);
     }

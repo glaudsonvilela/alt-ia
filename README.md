@@ -39,6 +39,8 @@ O botão **+** do compositor ativa ou desativa o **Modo Nerd** por conversa. A t
 
 O botão **Rastrear wallet** abre uma janela para Bitcoin, Ethereum ou Solana. A Alt-IA consulta o endereço público no Altside; para Ethereum tenta incluir USDC, USDT, WETH, WBTC e DAI diretos via RPC, e para Solana tenta incluir USDC direto. Saldos com preço recente e confiável do DefiLlama compõem o gráfico de alocação. Os cartões de 24 horas, 7 e 30 dias calculam a variação de preço **com as quantidades atuais fixas**; não são lucro/prejuízo real, pois fluxos e operações passadas não são reconstituídos. Outros tokens, NFTs e posições DeFi podem ficar fora. A síntese da Alt-IA recebe apenas esses dados filtrados, enquanto o cartão numérico é calculado no servidor. Não há conexão, assinatura, transação ou monitoramento contínuo da carteira.
 
+No **Modo Agente**, a janela do navegador fica ao lado do chat. A captura enviada ao site usa 733 × 480 pixels e não é atualizada durante a reprodução de vídeo; nessa situação, o site consulta somente o estado da sessão a cada 15 segundos. O vídeo incorporado do YouTube escolhe sua própria qualidade. Para abrir a mini janela ao trocar para outra aba do Chrome ou Edge, instale a [extensão própria](extension/README.md). Ela observa apenas a aba da Alt-IA, abre a janela quando a aba deixa de estar ativa e a fecha ao voltar. O navegador temporário permanece em um contêiner sem capacidades extras, com sistema de arquivos somente de leitura, perfil seccomp e proxy que bloqueia endereços privados. Nesta VM, o Chromium novo só inicia com o sandbox interno desativado; a segurança da sessão depende dessas barreiras do contêiner.
+
 ```bash
 python3 -m unittest discover -s backend -p 'test_*.py' -v
 ```

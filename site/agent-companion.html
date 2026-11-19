@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Alt-IA · Agente</title>
+  <link rel="stylesheet" href="/agent-companion.css?v=2">
+</head>
+<body>
+  <header>
+    <span class="face" aria-hidden="true"><span class="core"><i></i><i></i></span></span>
+    <div><strong>Alt-IA · Agente</strong><small id="status">Acompanhando a navegação</small></div>
+  </header>
+  <main>
+    <div class="preview-shell">
+      <img id="preview" alt="Prévia do navegador do agente" hidden>
+      <span id="placeholder">Aguardando a próxima navegação…</span>
+    </div>
+    <p id="speech" aria-live="polite">Estou por aqui. O que exploramos agora? 🔎</p>
+  </main>
+  <form id="form">
+    <input id="task" type="text" maxlength="1500" placeholder="Peça algo ao agente…" aria-label="Mensagem para o agente">
+    <button type="submit" aria-label="Enviar ao agente">↑</button>
+  </form>
+  <script src="/agent-companion.js?v=3" defer></script>
+</body>
+</html>

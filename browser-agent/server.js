@@ -11,6 +11,8 @@ const sessions = new Map();
 const MAX_SESSIONS = 4;
 const IDLE_MS = 12 * 60 * 1000;
 const PORT = 8822;
+const dnsCache = new Map();
+const DNS_CACHE_MS = 30000;
 
 function publicIPv4(ip) {
   if (net.isIP(ip) !== 4) return false;
@@ -23,14 +25,27 @@ function publicIPv4(ip) {
 
 async function resolvePublic(host) {
   if (!host || host.length > 253 || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) throw Error('Endereço privado bloqueado.');
-  const { address } = await dns.lookup(host, { family: 4 });
-  if (!publicIPv4(address)) throw Error('Endereço privado bloqueado.');
-  return address;
+  const now = Date.now();
+  const cached = dnsCache.get(host);
+  if (cached && cached.expires > now) return cached.lookup;
+  if (dnsCache.size >= 256) dnsCache.delete(dnsCache.keys().next().value);
+  const lookup = dns.lookup(host, { family: 4 }).then(({ address }) => {
+    if (!publicIPv4(address)) throw Error('Endereço privado bloqueado.');
+    return address;
+  });
+  dnsCache.set(host, { lookup, expires: now + DNS_CACHE_MS });
+  lookup.catch(() => { if (dnsCache.get(host)?.lookup === lookup) dnsCache.delete(host); });
+  return lookup;
+}
+
+function allowedUrl(raw) {
+  const url = new URL(raw);
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || !url.hostname || raw.length > 1600) throw Error('URL inválida.');
+  return url;
 }
 
 async function safeUrl(raw) {
-  const url = new URL(raw);
-  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || !url.hostname || raw.length > 1600) throw Error('URL inválida.');
+  const url = allowedUrl(raw);
   await resolvePublic(url.hostname);
   return url.href;
 }
@@ -70,7 +85,8 @@ const proxyPort = proxy.address().port;
 const chromeProcess = spawn('xvfb-run', ['-a', chromium.executablePath(),
   '--user-data-dir=/tmp/alt-ia-chrome', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=9223',
   '--no-sandbox',
-  '--no-first-run', '--no-default-browser-check', '--disable-dev-shm-usage', '--window-size=1280,720',
+  '--no-first-run', '--no-default-browser-check', '--disable-dev-shm-usage', '--disable-background-networking',
+  '--disable-component-update', '--disable-default-apps', '--disable-sync', '--mute-audio', '--window-size=1280,720',
   `--proxy-server=http://127.0.0.1:${proxyPort}`, '--proxy-bypass-list=<-loopback>', 'about:blank'],
 { stdio: ['ignore', 'ignore', 'inherit'] });
 process.once('exit', () => chromeProcess.kill('SIGTERM'));
@@ -85,6 +101,10 @@ function json(res, status, value) {
   const body = JSON.stringify(value);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body) });
   res.end(body);
+}
+async function sessionStatus(session) {
+  return { url: session.page.url(), title: (await session.page.title().catch(() => '')).slice(0, 200),
+    status: session.status, updated: session.updated, cursor: session.cursor || null };
 }
 async function input(req) {
   let raw = '';
@@ -128,6 +148,10 @@ async function closeSession(id) {
   sessions.delete(id);
   await session.context.close().catch(() => {});
 }
+function touch(session) {
+  session.updated = Math.max(Date.now(), session.updated + 1);
+  session.image = null;
+}
 setInterval(() => { for (const [id, session] of sessions) if (Date.now() - session.lastAccess > IDLE_MS) void closeSession(id); }, 30000).unref();
 
 http.createServer(async (req, res) => {
@@ -141,16 +165,26 @@ http.createServer(async (req, res) => {
       await context.route('**/*', async route => {
         const url = route.request().url();
         if (url === 'about:blank' || url.startsWith('data:') && route.request().resourceType() === 'image') return route.continue();
-        try { await safeUrl(url); await route.continue(); } catch { await route.abort(); }
+        // The remote viewport is a still-image preview; media plays in the user's
+        // browser. Avoid decoding background video/audio in the VM.
+        if (route.request().resourceType() === 'media') return route.abort();
+        // The pinned-IP proxy checks every network request. Keep this browser hook
+        // synchronous so each image/script does not wait for a second DNS lookup.
+        try { allowedUrl(url); await route.continue(); } catch { await route.abort(); }
       });
       const page = await context.newPage();
       page.setDefaultTimeout(12000);
       page.on('download', download => download.cancel());
       const id = crypto.randomBytes(24).toString('hex');
-      const session = { context, page, status: 'Pronto para abrir um site.', updated: Date.now(), lastAccess: Date.now(), cursor: null };
+      const session = { context, page, status: 'Pronto para abrir um site.', updated: Date.now(), lastAccess: Date.now(), cursor: null,
+        image: null, cdp: null };
+      page.on('load', () => touch(session));
       context.on('page', popup => {
         if (popup === session.page) return;
         session.page = popup;
+        session.cdp = null;
+        session.image = null;
+        popup.on('load', () => touch(session));
         popup.setDefaultTimeout(12000);
         popup.on('download', download => download.cancel());
         session.status = 'Abrindo nova página';
@@ -162,13 +196,24 @@ http.createServer(async (req, res) => {
     if (parts[0] !== 'sessions' || !session) return json(res, 404, { error: 'Sessão encerrada.' });
     session.lastAccess = Date.now();
     if (req.method === 'DELETE' && parts.length === 2) { await closeSession(parts[1]); return json(res, 200, { closed: true }); }
-    if (req.method === 'GET' && parts[2] === 'status') return json(res, 200, {
-      url: session.page.url(), title: (await session.page.title().catch(() => '')).slice(0, 200),
-      status: session.status, updated: session.updated, cursor: session.cursor || null,
-    });
+    if (req.method === 'GET' && parts[2] === 'status') return json(res, 200, await sessionStatus(session));
     if (req.method === 'GET' && parts[2] === 'snapshot') return json(res, 200, await snapshot(session));
     if (req.method === 'GET' && parts[2] === 'image') {
-      const image = await session.page.screenshot({ type: 'jpeg', quality: 52, scale: 'device', timeout: 8000 });
+      if (!session.image || session.image.updated !== session.updated || session.image.page !== session.page) {
+        const page = session.page;
+        const updated = session.updated;
+        const promise = (async () => {
+          if (!session.cdp) session.cdp = await session.context.newCDPSession(page);
+          const frame = await session.cdp.send('Page.captureScreenshot', {
+            format: 'jpeg', quality: 48, captureBeyondViewport: false, fromSurface: true,
+          });
+          return Buffer.from(frame.data, 'base64');
+        })();
+        session.image = { page, updated, promise };
+      }
+      let image;
+      try { image = await session.image.promise; }
+      catch (error) { session.image = null; throw error; }
       res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store', 'Content-Length': image.length });
       return res.end(image);
     }
@@ -232,7 +277,8 @@ http.createServer(async (req, res) => {
       await session.page.mouse.wheel(0, Math.max(-800, Math.min(800, Number(data.dy) || 560)));
       session.status = 'Rolando a página';
     } else { return json(res, 404, { error: 'Ação desconhecida.' }); }
-    session.updated = Date.now();
-    return json(res, 200, await snapshot(session));
+    touch(session);
+    const brief = new URL(req.url, 'http://worker').searchParams.has('brief');
+    return json(res, 200, brief ? await sessionStatus(session) : await snapshot(session));
   } catch (error) { return json(res, 400, { error: String(error.message || 'Falha no navegador').slice(0, 180) }); }
 }).listen(PORT, '0.0.0.0');

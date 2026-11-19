@@ -303,9 +303,7 @@ class Handler(BaseHTTPRequestHandler):
             action = path.removeprefix("/api/agent/")
             if action not in actions:
                 return self.respond(404, {"error": "Ação desconhecida."})
-            state = worker_call("POST", session_path(session_id, "/" + action), API_KEY, payload, timeout=28)
-            state.pop("text", None)
-            state.pop("elements", None)
+            state = worker_call("POST", session_path(session_id, "/" + action) + "?brief=1", API_KEY, payload, timeout=28)
             return self.respond(200, state)
         except (ValueError, KeyError, TypeError, OSError) as error:
             return self.respond(400, {"error": str(error)[:180] or "Entrada inválida."})

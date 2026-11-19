@@ -2186,8 +2186,17 @@ function startMascotPhysics() {
   }
 
   function frame(now) {
+    if (!welcome?.isConnected) {
+      // The landing mascot is removed while a conversation is open. Avoid a
+      // 60 fps JavaScript loop behind the agent browser and video player.
+      setTimeout(() => requestAnimationFrame(frame), 250);
+      startTime = now;
+      lastLook = -1;
+      pauseStarted = 0;
+      return;
+    }
     requestAnimationFrame(frame);
-    if (!welcome?.isConnected || document.hidden) {
+    if (document.hidden) {
       startTime = now;
       lastLook = -1;
       pauseStarted = 0;

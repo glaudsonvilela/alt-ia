@@ -53,6 +53,13 @@ let marketRequestSeq = 0;
 let marketDrag = null;
 let marketHasData = false;
 
+function safeNews(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 7).filter((item) => item && typeof item.title === 'string' && typeof item.url === 'string' && /^https:\/\/[^\s/]+/.test(item.url))
+    .map((item) => ({ title: item.title.slice(0, 230), url: item.url.slice(0, 600), source: String(item.source || 'Fonte').slice(0, 65),
+      summary: String(item.summary || '').slice(0, 260), published_at: String(item.published_at || '').slice(0, 40), time_known: item.time_known === true }));
+}
+
 function safeSimulation(value) {
   if (!value || !['swap', 'pool', 'historical_pool'].includes(value.kind) || !Array.isArray(value.metrics) || !value.source) return null;
   const isHistorical = value.kind === 'historical_pool';
@@ -95,6 +102,7 @@ function readConversations() {
         updatedAt: Number(item.updatedAt) || Date.now(),
         messages: item.messages.filter((message) => message && (message.role === 'user' || message.role === 'ai') && typeof message.text === 'string').slice(-100)
           .map((message) => ({ role: message.role, text: message.text, simulation: message.role === 'ai' ? safeSimulation(message.simulation) : null,
+            news: message.role === 'ai' ? safeNews(message.news) : [],
             scenarioToken: message.role === 'ai' && typeof message.scenarioToken === 'string' ? message.scenarioToken.slice(0, 12000) : '',
             followUp: message.role === 'ai' && typeof message.followUp === 'string' ? message.followUp.slice(0, 280) : '' }))
       }));
@@ -299,7 +307,7 @@ function createSimulationCard(simulation) {
   return card;
 }
 
-function createMessage(role, text, simulation = null, followUp = '') {
+function createMessage(role, text, simulation = null, followUp = '', news = []) {
   const row = document.createElement('article');
   row.className = `message-row message-${role}`;
   if (role === 'ai') {
@@ -329,6 +337,40 @@ function createMessage(role, text, simulation = null, followUp = '') {
   const paragraph = document.createElement('p');
   paragraph.textContent = text;
   body.append(paragraph);
+  if (role === 'ai' && news?.length) {
+    const digest = document.createElement('div');
+    digest.className = 'news-digest';
+    news.forEach((item, index) => {
+      const link = document.createElement('a');
+      link.className = 'news-item';
+      link.href = item.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      const number = document.createElement('span');
+      number.className = 'news-item-number';
+      number.textContent = String(index + 1).padStart(2, '0');
+      const copy = document.createElement('span');
+      const title = document.createElement('strong');
+      title.textContent = item.title;
+      const meta = document.createElement('small');
+      const date = new Date(item.published_at);
+      meta.textContent = `${item.source} · ${Number.isNaN(date.getTime()) ? '' : date.toLocaleString('pt-BR', { dateStyle: 'short', ...(item.time_known ? { timeStyle: 'short' } : {}) })}`;
+      copy.append(title);
+      if (item.summary && item.summary.toLocaleLowerCase() !== item.title.toLocaleLowerCase()) {
+        const summary = document.createElement('span');
+        summary.className = 'news-item-summary';
+        summary.textContent = item.summary;
+        copy.append(summary);
+      }
+      copy.append(meta);
+      const arrow = document.createElement('span');
+      arrow.className = 'news-item-arrow';
+      arrow.textContent = '↗';
+      link.append(number, copy, arrow);
+      digest.append(link);
+    });
+    body.append(digest);
+  }
   if (role === 'ai' && simulation) body.append(createSimulationCard(simulation));
   if (role === 'ai' && followUp) {
     const question = document.createElement('p');
@@ -348,7 +390,7 @@ function renderConversation() {
     if (welcome) chatMessages.append(welcome);
   } else {
     const fragment = document.createDocumentFragment();
-  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp)));
+  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news)));
     chatMessages.append(fragment);
   }
   requestAnimationFrame(() => { chatMessages.scrollTop = conversation?.messages.length ? chatMessages.scrollHeight : 0; });
@@ -394,6 +436,13 @@ document.querySelectorAll('[data-prompt]').forEach((suggestion) => {
     resizeComposer();
     chatInput.focus();
   });
+});
+
+document.querySelector('[data-action="news-daily"]')?.addEventListener('click', () => {
+  if (!chatInput || isSubmitting) return;
+  chatInput.value = 'Resumo das notícias de hoje';
+  resizeComposer();
+  chatForm?.requestSubmit();
 });
 
 function showPoolError(message) {
@@ -841,7 +890,7 @@ chatForm?.addEventListener('submit', async (event) => {
   chatMessages.setAttribute('aria-busy', 'true');
   if (isFirstMessage) await revealFirstMessage(conversationId);
   else renderConversation();
-  const pending = createMessage('ai', 'Pensando…');
+  const pending = createMessage('ai', /\b(news|not[ií]cias?|manchetes)\b/i.test(text) ? 'Buscando notícias…' : 'Pensando…');
   pending.classList.add('message-pending');
   if (activeId === conversationId) {
     chatMessages.append(pending);
@@ -871,7 +920,7 @@ chatForm?.addEventListener('submit', async (event) => {
     if (!response.ok || typeof data.reply !== 'string') throw new Error(data.error || 'Não foi possível obter uma resposta. Tente novamente.');
     const target = conversations.find((item) => item.id === conversationId);
     if (!target) return;
-    target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation),
+    target.messages.push({ role: 'ai', text: data.reply, simulation: safeSimulation(data.simulation), news: safeNews(data.news),
       scenarioToken: typeof data.scenario_token === 'string' ? data.scenario_token.slice(0, 12000) : '',
       followUp: typeof data.follow_up === 'string' ? data.follow_up.slice(0, 280) : '' });
     target.updatedAt = Date.now();

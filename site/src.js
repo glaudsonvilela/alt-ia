@@ -1751,26 +1751,9 @@ document.querySelector('#lending-reset')?.addEventListener('click', () => {
   lendingDemoId.textContent = 'Sem carteira real';
 });
 document.querySelector('#lending-generate')?.addEventListener('click', () => {
-  if (!lendingMarketData) return;
-  const random = new Uint32Array(3);
-  crypto.getRandomValues(random);
-  const collateral = lendingMarketData.assets.filter((asset) => asset.can_supply && asset.can_collateral && Number(asset.ltv) > 0 && Number(asset.price) > 0);
-  const debt = lendingMarketData.assets.filter((asset) => asset.can_borrow && Number(asset.price) > 0);
-  if (!collateral.length || !debt.length) return lendingError('Este mercado não tem ativos suficientes para gerar uma posição de teste.');
-  const supplyAsset = collateral[random[0] % collateral.length];
-  const stableDebt = debt.filter((asset) => ['USDC', 'USDT', 'DAI', 'GHO', 'USDS'].includes(asset.symbol));
-  const debtCandidates = stableDebt.length ? stableDebt : debt;
-  const borrowAsset = debtCandidates[random[1] % debtCandidates.length];
-  const budget = 1000 + (random[0] % 9001);
-  const fraction = .25 + (random[1] % 36) / 100;
-  const amount = (value) => value.toFixed(10).replace(/0+$/, '').replace(/\.$/, '');
-  const supplyAmount = amount(budget / Number(supplyAsset.price));
-  const debtAmount = amount(budget * Number(supplyAsset.ltv) * fraction / Number(borrowAsset.price));
-  lendingSupplies.replaceChildren(); lendingBorrows.replaceChildren();
-  lendingRow('supplies', { asset: supplyAsset.address, amount: supplyAmount, collateral: true });
-  lendingRow('borrows', { asset: borrowAsset.address, amount: debtAmount });
-  updateShockAssets();
-  lendingDemoId.textContent = `Teste #${random[2].toString(16).padStart(8, '0').toUpperCase()} · sem chave real`;
+  const bytes = crypto.getRandomValues(new Uint8Array(20));
+  lendingDemoId.textContent = `Teste: 0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+  lendingDemoId.title = 'Endereço fictício de teste. Não tem chave privada nem saldo na rede.';
   lendingError('');
 });
 document.querySelector('#lending-wallet-load')?.addEventListener('click', async () => {

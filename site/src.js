@@ -108,6 +108,19 @@ function safeVideo(value) {
     url: playlist ? `https://www.youtube.com/playlist?list=${value.id}` : `https://www.youtube.com/watch?v=${value.id}` };
 }
 
+function agentConversationContext(conversation) {
+  const previous = conversation.messages.slice(0, -1);
+  const lastMediaMessage = [...previous].reverse().find((message) => message.role === 'ai' && safeVideo(message.video));
+  return {
+    history: previous.slice(-10).map((message) => ({
+      role: message.role === 'ai' ? 'assistant' : 'user',
+      content: message.text.slice(0, 450),
+      ...(message.role === 'ai' && safeVideo(message.video) ? { video: safeVideo(message.video) } : {})
+    })),
+    last_media: lastMediaMessage ? safeVideo(lastMediaMessage.video) : null
+  };
+}
+
 let youtubeApiPromise = null;
 const activeVideoPlayers = [];
 function ensureYouTubeApi() {
@@ -1073,7 +1086,7 @@ async function sendAgentDockTask(task) {
   let resultMedia = null;
   let replyText = '';
   try {
-    const data = await agentRequest('run', { task });
+    const data = await agentRequest('run', { task, context: agentConversationContext(conversation) });
     resultMedia = data.video;
     replyText = data.reply;
     conversation.messages.push({ role: 'ai', text: data.reply, speech: String(data.speech || '').slice(0, 220), mode: 'agent', video: safeVideo(data.video) });
@@ -2118,7 +2131,7 @@ chatForm?.addEventListener('submit', async (event) => {
     const response = await fetch(agentForRequest ? '/api/agent/run' : '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: agentForRequest ? JSON.stringify({ task: text }) : JSON.stringify({ messages: context, nerd_mode: conversation.nerdMode, nerd_topic: conversation.nerdTopic, chat_context: {
+      body: agentForRequest ? JSON.stringify({ task: text, context: agentConversationContext(conversation) }) : JSON.stringify({ messages: context, nerd_mode: conversation.nerdMode, nerd_topic: conversation.nerdTopic, chat_context: {
         mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.newsContext || previousAnswer?.news || [] : [],
         nerd_query: previousMode === 'nerd' ? previousAnswer?.nerdQuery || '' : '',
         pool_request: previousMode === 'pool' || previousMode === 'historical_pool' ? previousAnswer?.poolRequest || null : null,

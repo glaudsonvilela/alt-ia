@@ -241,7 +241,7 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        if length < 2 or length > 4000:
+        if length < 2 or length > 12000:
             raise ValueError("Entrada inválida.")
         payload = json.loads(self.rfile.read(length))
         if not isinstance(payload, dict):
@@ -295,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
                     agent_running.add(session_id)
             if path == "/api/agent/run":
                 try:
-                    return self.respond(200, run_browser_agent(payload.get("task"), session_id, API_KEY))
+                    return self.respond(200, run_browser_agent(payload.get("task"), session_id, API_KEY, payload.get("context")))
                 finally:
                     with agent_running_lock:
                         agent_running.discard(session_id)

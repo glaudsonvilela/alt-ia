@@ -150,6 +150,28 @@ class AgentBrowserTests(unittest.TestCase):
         self.assertEqual(result["video"]["kind"], "playlist")
         self.assertIn("Iniciou o player", result["steps"][-1])
 
+    def test_short_followup_uses_previous_media_and_plays_a_new_artist(self):
+        blank = {"url": "about:blank", "title": "", "text": "", "elements": []}
+        old_url = "https://www.youtube.com/playlist?list=PLSertanejo2026"
+        new_url = "https://www.youtube.com/playlist?list=PLSlipknot2026"
+        context = {"history": [
+            {"role": "user", "content": "abre pra mim músicas sertanejas"},
+            {"role": "assistant", "content": "Abrindo a playlist sertaneja.",
+             "video": {"kind": "playlist", "url": old_url, "title": "Sertanejo"}}],
+            "last_media": {"kind": "playlist", "url": old_url, "title": "Sertanejo"}}
+        sources = [{"title": "Slipknot Playlist", "url": new_url, "summary": "Músicas de Slipknot"}]
+        with patch.object(agent_browser, "worker_call", return_value=blank), \
+             patch.object(agent_browser, "search_web", return_value={"sources": sources}) as search, \
+             patch.object(agent_browser, "choose_action", side_effect=[
+                 {"action": "search", "query": "Slipknot playlist YouTube"},
+                 {"action": "play", "url": new_url, "kind": "playlist", "answer": "🎵 Tocando Slipknot!"}]) as planner:
+            result = agent_browser.run("agora do slipknot", "a" * 48, "nvapi-test", context)
+        self.assertEqual(result["video"]["url"], new_url)
+        self.assertNotEqual(result["video"]["url"], old_url)
+        self.assertEqual(result["reply"], "🎵 Tocando Slipknot!")
+        search.assert_called_once_with("Slipknot playlist YouTube", "research")
+        self.assertEqual(planner.call_args_list[0].kwargs["context"]["last_media"]["title"], "Sertanejo")
+
     def test_page_summary_reads_full_dom_and_ocr_before_answering(self):
         first = {"url": "https://example.org/article", "title": "Artigo", "text": "Início", "elements": []}
         full = {**first, "text": "Artigo completo", "ocr": "Texto de uma imagem", "full_read": True}

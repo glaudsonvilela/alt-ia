@@ -10,9 +10,9 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=57">
+  <link rel="stylesheet" href="/shell.css?v=58">
   <link rel="stylesheet" href="/agent.css?v=28">
-  <script defer src="/app.js?v=78"></script>
+  <script defer src="/app.js?v=79"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -171,14 +171,14 @@
     <div class="pool-dialog-card">
       <div class="pool-dialog-art" aria-hidden="true"><i class="pool-orbit pool-orbit-one"></i><i class="pool-orbit pool-orbit-two"></i><span class="pool-face eye-pod"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i></span><i class="pool-spark">✦</i></div>
       <button class="pool-dialog-close" id="lending-dialog-close" type="button" aria-label="Fechar simulação de lending">×</button>
-      <div class="pool-dialog-copy"><span class="pool-dialog-kicker">ALT-IA · LENDING</span><h2 id="lending-dialog-title">Monte sua posição</h2><p>Escolha o mercado, os ativos e o cenário. Você também pode carregar uma carteira para simular mudanças.</p></div>
+      <div class="pool-dialog-copy"><span class="pool-dialog-kicker">ALT-IA · LENDING</span><h2 id="lending-dialog-title">Monte sua posição</h2><p>Escolha os ativos ou gere uma carteira fictícia para testar.</p></div>
       <form id="lending-config-form">
-        <label for="lending-market-select">Mercado Aave</label><select id="lending-market-select" required><option value="">Carregando mercados…</option></select>
-        <div class="lending-wallet-import"><label for="lending-wallet-address">Carteira (opcional)</label><div><input id="lending-wallet-address" type="text" autocomplete="off" placeholder="0x…"><button type="button" id="lending-wallet-load">Carregar</button></div></div>
+        <div class="lending-market-field"><label for="lending-market-select">Mercado Aave</label><select id="lending-market-select" required><option value="">Carregando mercados…</option></select></div>
+        <div class="lending-demo"><button type="button" id="lending-generate">🎲 Gerar carteira fictícia</button><span id="lending-demo-id" aria-live="polite">Sem carteira real</span></div>
+        <details class="lending-fold"><summary>Importar uma carteira existente</summary><div class="lending-wallet-import"><label for="lending-wallet-address">Endereço EVM</label><div><input id="lending-wallet-address" type="text" autocomplete="off" placeholder="0x…"><button type="button" id="lending-wallet-load">Carregar</button></div></div></details>
         <div class="lending-section"><div class="lending-section-head"><h3>Ativos fornecidos</h3><button type="button" id="lending-add-supply">+ Adicionar</button></div><div class="lending-column-head"><span>Ativo</span><span>Quantidade</span><span>Preço (US$)</span><span>Garantia</span></div><div id="lending-supplies" class="lending-rows"></div></div>
         <div class="lending-section"><div class="lending-section-head"><h3>Ativos emprestados</h3><button type="button" id="lending-add-borrow">+ Adicionar</button></div><div class="lending-column-head lending-column-head-borrow"><span>Ativo</span><span>Quantidade</span><span>Preço (US$)</span></div><div id="lending-borrows" class="lending-rows"></div></div>
-        <div class="lending-scenario-grid"><div><label for="lending-shock-asset">Variar preço de</label><select id="lending-shock-asset"><option value="">Sem variação</option></select></div><div><label for="lending-shock-pct">Variação (%)</label><input id="lending-shock-pct" type="number" min="-95" max="500" step="1" value="-20"></div><div><label for="lending-days">Juros por quantos dias?</label><input id="lending-days" type="number" min="0" max="3650" step="1" value="30"></div></div>
-        <input id="lending-shock-slider" type="range" min="-95" max="100" step="1" value="-20" aria-label="Ajustar variação de preço">
+        <details class="lending-fold lending-scenario-fold"><summary>Cenário de preço e juros <span id="lending-scenario-summary">−20% · 30 dias</span></summary><div class="lending-scenario-grid"><div><label for="lending-shock-asset">Variar preço de</label><select id="lending-shock-asset"><option value="">Sem variação</option></select></div><div><label for="lending-shock-pct">Variação (%)</label><input id="lending-shock-pct" type="number" min="-95" max="500" step="1" value="-20"></div><div><label for="lending-days">Juros por quantos dias?</label><input id="lending-days" type="number" min="0" max="3650" step="1" value="30"></div></div><input id="lending-shock-slider" type="range" min="-95" max="100" step="1" value="-20" aria-label="Ajustar variação de preço"></details>
         <div class="lending-actions"><button type="button" id="lending-reset">Limpar posição</button><span>Simulação somente leitura</span></div>
         <p class="pool-form-error" id="lending-form-error" role="alert" hidden></p>
         <button class="pool-submit" type="submit"><span>Simular posição</span><span class="pool-submit-icon" aria-hidden="true">↗</span></button>

@@ -1632,8 +1632,16 @@ let lendingMarkets = [];
 let lendingMarketData = null;
 let lendingLoadSequence = 0;
 const lendingError = (message) => { lendingFormError.textContent = message; lendingFormError.hidden = !message; };
+const lendingDemoId = document.querySelector('#lending-demo-id');
+const lendingScenarioSummary = document.querySelector('#lending-scenario-summary');
 const lendingMarketKey = (item) => `${item.chain_id}:${item.address.toLowerCase()}`;
 const lendingAsset = (address) => lendingMarketData?.assets.find((asset) => asset.address.toLowerCase() === address.toLowerCase());
+function updateLendingScenarioSummary() {
+  const pct = Number(document.querySelector('#lending-shock-pct')?.value || 0);
+  const days = Number(document.querySelector('#lending-days')?.value || 0);
+  const symbol = lendingAsset(document.querySelector('#lending-shock-asset')?.value || '')?.symbol;
+  lendingScenarioSummary.textContent = `${symbol ? `${symbol} ` : ''}${pct >= 0 ? '+' : '−'}${Math.abs(pct)}% · ${days} dias`;
+}
 
 function lendingRow(side, preset = {}) {
   if (!lendingMarketData) return;
@@ -1682,6 +1690,7 @@ function updateShockAssets() {
     select.add(new Option(lendingAsset(address)?.symbol || 'Ativo', address));
   });
   select.value = used.has(previous) ? previous : (lendingSupplies.querySelector('select')?.value || '');
+  updateLendingScenarioSummary();
 }
 
 async function loadLendingMarket() {
@@ -1698,6 +1707,7 @@ async function loadLendingMarket() {
     lendingMarketData = data;
     lendingSupplies.replaceChildren(); lendingBorrows.replaceChildren();
     lendingRow('supplies'); lendingRow('borrows'); updateShockAssets();
+    lendingDemoId.textContent = 'Sem carteira real';
   } catch (error) { if (sequence === lendingLoadSequence) lendingError(error.message); }
 }
 
@@ -1722,6 +1732,7 @@ async function openLendingDialog(prefill = {}) {
     lendingSupplies.querySelector('input[aria-label="Quantidade"]').value = prefill.collateral_weth;
     lendingBorrows.querySelector('input[aria-label="Quantidade"]').value = prefill.borrow_usdc;
     document.querySelector('#lending-shock-pct').value = -(prefill.price_drop_pct || 20);
+    updateLendingScenarioSummary();
   }
 }
 
@@ -1729,12 +1740,38 @@ document.querySelector('[data-action="configure-lending"]')?.addEventListener('c
 document.querySelector('#lending-dialog-close')?.addEventListener('click', () => lendingDialog?.close());
 lendingDialog?.addEventListener('click', (event) => { if (event.target === lendingDialog) lendingDialog.close(); });
 lendingMarketSelect?.addEventListener('change', loadLendingMarket);
-document.querySelector('#lending-shock-slider')?.addEventListener('input', (event) => { document.querySelector('#lending-shock-pct').value = event.target.value; });
-document.querySelector('#lending-shock-pct')?.addEventListener('input', (event) => { const slider = document.querySelector('#lending-shock-slider'); slider.value = Math.max(-95, Math.min(100, Number(event.target.value) || 0)); });
+document.querySelector('#lending-shock-slider')?.addEventListener('input', (event) => { document.querySelector('#lending-shock-pct').value = event.target.value; updateLendingScenarioSummary(); });
+document.querySelector('#lending-shock-pct')?.addEventListener('input', (event) => { const slider = document.querySelector('#lending-shock-slider'); slider.value = Math.max(-95, Math.min(100, Number(event.target.value) || 0)); updateLendingScenarioSummary(); });
+document.querySelector('#lending-shock-asset')?.addEventListener('change', updateLendingScenarioSummary);
+document.querySelector('#lending-days')?.addEventListener('input', updateLendingScenarioSummary);
 document.querySelector('#lending-add-supply')?.addEventListener('click', () => { lendingRow('supplies'); updateShockAssets(); });
 document.querySelector('#lending-add-borrow')?.addEventListener('click', () => { lendingRow('borrows'); updateShockAssets(); });
 document.querySelector('#lending-reset')?.addEventListener('click', () => {
   lendingSupplies.replaceChildren(); lendingBorrows.replaceChildren(); lendingRow('supplies'); updateShockAssets(); lendingError('');
+  lendingDemoId.textContent = 'Sem carteira real';
+});
+document.querySelector('#lending-generate')?.addEventListener('click', () => {
+  if (!lendingMarketData) return;
+  const random = new Uint32Array(3);
+  crypto.getRandomValues(random);
+  const collateral = lendingMarketData.assets.filter((asset) => asset.can_supply && asset.can_collateral && Number(asset.ltv) > 0 && Number(asset.price) > 0);
+  const debt = lendingMarketData.assets.filter((asset) => asset.can_borrow && Number(asset.price) > 0);
+  if (!collateral.length || !debt.length) return lendingError('Este mercado não tem ativos suficientes para gerar uma posição de teste.');
+  const supplyAsset = collateral[random[0] % collateral.length];
+  const stableDebt = debt.filter((asset) => ['USDC', 'USDT', 'DAI', 'GHO', 'USDS'].includes(asset.symbol));
+  const debtCandidates = stableDebt.length ? stableDebt : debt;
+  const borrowAsset = debtCandidates[random[1] % debtCandidates.length];
+  const budget = 1000 + (random[0] % 9001);
+  const fraction = .25 + (random[1] % 36) / 100;
+  const amount = (value) => value.toFixed(10).replace(/0+$/, '').replace(/\.$/, '');
+  const supplyAmount = amount(budget / Number(supplyAsset.price));
+  const debtAmount = amount(budget * Number(supplyAsset.ltv) * fraction / Number(borrowAsset.price));
+  lendingSupplies.replaceChildren(); lendingBorrows.replaceChildren();
+  lendingRow('supplies', { asset: supplyAsset.address, amount: supplyAmount, collateral: true });
+  lendingRow('borrows', { asset: borrowAsset.address, amount: debtAmount });
+  updateShockAssets();
+  lendingDemoId.textContent = `Teste #${random[2].toString(16).padStart(8, '0').toUpperCase()} · sem chave real`;
+  lendingError('');
 });
 document.querySelector('#lending-wallet-load')?.addEventListener('click', async () => {
   if (!lendingMarketData) return;
@@ -1749,6 +1786,7 @@ document.querySelector('#lending-wallet-load')?.addEventListener('click', async 
     data.supplies.forEach((item) => lendingRow('supplies', item));
     data.borrows.forEach((item) => lendingRow('borrows', item));
     updateShockAssets();
+    lendingDemoId.textContent = 'Carteira pública carregada';
     lendingError(data.supplies.length || data.borrows.length ? '' : 'Esta carteira não tem posição neste mercado.');
   } catch (error) { lendingError(error.message); }
 });

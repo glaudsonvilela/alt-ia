@@ -47,6 +47,49 @@ const lendingSupplies = document.querySelector('#lending-supplies');
 const lendingBorrows = document.querySelector('#lending-borrows');
 const lendingFormError = document.querySelector('#lending-form-error');
 const poolDialogClose = document.querySelector('#pool-dialog-close');
+
+function burstShortcutDialog(rect) {
+  const burst = document.createElement('div');
+  burst.className = 'shortcut-dialog-burst';
+  burst.setAttribute('aria-hidden', 'true');
+  burst.style.left = `${rect.left + rect.width / 2}px`;
+  burst.style.top = `${rect.top + rect.height / 2}px`;
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (-90 + index * 45) * Math.PI / 180;
+    const distance = 54 + (index % 3) * 14;
+    const piece = document.createElement('i');
+    piece.className = `shortcut-dialog-piece shortcut-dialog-piece-${index % 4}`;
+    piece.style.setProperty('--dx', `${Math.round(Math.cos(angle) * distance)}px`);
+    piece.style.setProperty('--dy', `${Math.round(Math.sin(angle) * distance)}px`);
+    piece.style.setProperty('--spin', `${index % 2 ? -110 : 110}deg`);
+    burst.append(piece);
+  }
+  const star = document.createElement('span');
+  star.className = 'shortcut-dialog-star';
+  star.textContent = '✦';
+  burst.append(star);
+  document.body.append(burst);
+  window.setTimeout(() => burst.remove(), 460);
+}
+
+function closeShortcutDialog(dialog) {
+  if (!dialog?.open || dialog.classList.contains('is-closing')) return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    dialog.close();
+    return;
+  }
+  const rect = dialog.getBoundingClientRect();
+  dialog.classList.add('is-closing');
+  window.setTimeout(() => {
+    dialog.close();
+    dialog.classList.remove('is-closing');
+    burstShortcutDialog(rect);
+  }, 260);
+}
+
+for (const dialog of [poolDialog, lendingDialog, walletDialog]) {
+  dialog?.addEventListener('cancel', (event) => { event.preventDefault(); closeShortcutDialog(dialog); });
+}
 const poolForm = document.querySelector('#pool-config-form');
 const poolNetwork = document.querySelector('#pool-network');
 const poolSelect = document.querySelector('#pool-select');
@@ -1755,8 +1798,8 @@ async function openLendingDialog(prefill = {}) {
 }
 
 document.querySelector('[data-action="configure-lending"]')?.addEventListener('click', () => openLendingDialog());
-document.querySelector('#lending-dialog-close')?.addEventListener('click', () => lendingDialog?.close());
-lendingDialog?.addEventListener('click', (event) => { if (event.target === lendingDialog) lendingDialog.close(); });
+document.querySelector('#lending-dialog-close')?.addEventListener('click', () => closeShortcutDialog(lendingDialog));
+lendingDialog?.addEventListener('click', (event) => { if (event.target === lendingDialog) closeShortcutDialog(lendingDialog); });
 lendingMarketSelect?.addEventListener('change', loadLendingMarket);
 lendingProtocolButtons.forEach((button) => button.addEventListener('click', () => {
   if (button.getAttribute('aria-pressed') === 'true') return;
@@ -1795,8 +1838,8 @@ document.querySelector('[data-action="track-wallet"]')?.addEventListener('click'
   if (!walletDialog.open) walletDialog.showModal();
   walletAddress.focus();
 });
-document.querySelector('#wallet-dialog-close')?.addEventListener('click', () => walletDialog?.close());
-walletDialog?.addEventListener('click', (event) => { if (event.target === walletDialog) walletDialog.close(); });
+document.querySelector('#wallet-dialog-close')?.addEventListener('click', () => closeShortcutDialog(walletDialog));
+walletDialog?.addEventListener('click', (event) => { if (event.target === walletDialog) closeShortcutDialog(walletDialog); });
 walletForm?.addEventListener('submit', (event) => {
   event.preventDefault();
   if (isSubmitting) return;
@@ -1813,7 +1856,7 @@ walletForm?.addEventListener('submit', (event) => {
   pendingWalletRequest = { network, address };
   chatInput.value = `Rastreie a wallet ${address} na rede ${walletNetwork.selectedOptions[0].textContent}`;
   resizeComposer();
-  walletDialog.close();
+  closeShortcutDialog(walletDialog);
   chatForm.requestSubmit();
 });
 
@@ -1837,7 +1880,7 @@ lendingForm?.addEventListener('submit', (event) => {
   pendingSimulationRequest = request;
   chatInput.value = `Simule lending em ${lendingMarketData.name}: ${supplies.length} ativo(s) fornecido(s), ${borrows.length} empréstimo(s), ${days} dias`;
   resizeComposer();
-  lendingDialog.close();
+  closeShortcutDialog(lendingDialog);
   chatForm.requestSubmit();
 });
 
@@ -2131,8 +2174,8 @@ async function openPoolDialog(prefill = {}) {
 }
 
 document.querySelector('[data-action="configure-pool"]')?.addEventListener('click', () => openPoolDialog());
-poolDialogClose?.addEventListener('click', () => poolDialog?.close());
-poolDialog?.addEventListener('click', (event) => { if (event.target === poolDialog) poolDialog.close(); });
+poolDialogClose?.addEventListener('click', () => closeShortcutDialog(poolDialog));
+poolDialog?.addEventListener('click', (event) => { if (event.target === poolDialog) closeShortcutDialog(poolDialog); });
 poolDialog?.addEventListener('close', () => { chartRequestSeq++; marketRequestSeq++; marketDrag = null; });
 poolNetwork?.addEventListener('change', () => renderPoolChoices());
 poolMode?.addEventListener('change', updatePoolMode);
@@ -2220,7 +2263,7 @@ poolForm?.addEventListener('submit', (event) => {
     ? `Simule os últimos ${poolPeriod.value} dias da pool ${pool.pair} na ${pool.network} com ${capital} ${pool.quote_symbol} e faixa de ${ticks} ticks`
     : `Simule entrada de ${capital} ${pool.quote_symbol} na pool ${pool.pair} da ${pool.network} (${pool.protocol}), faixa de ${ticks} ticks e slippage de ${slippage.toLocaleString('pt-BR')}%`;
   resizeComposer();
-  poolDialog.close();
+  closeShortcutDialog(poolDialog);
   chatForm.requestSubmit();
 });
 

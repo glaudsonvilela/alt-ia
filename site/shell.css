@@ -163,6 +163,15 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 .pool-dialog::-webkit-scrollbar{display:none}
 .pool-dialog::backdrop{background:#09080dc7;backdrop-filter:blur(12px);animation:pool-backdrop-enter .3s ease-out both}
 .pool-dialog[open]{animation:pool-window-enter .61s cubic-bezier(.2,.8,.2,1) both}
+.pool-dialog[open].is-closing{pointer-events:none;animation:shortcut-dialog-pop .26s cubic-bezier(.32,0,.7,1) both}
+.pool-dialog.is-closing::backdrop{animation:shortcut-backdrop-exit .26s ease-in both}
+.shortcut-dialog-burst{position:fixed;width:0;height:0;overflow:visible;pointer-events:none;z-index:9999}
+.shortcut-dialog-piece{position:absolute;left:0;top:0;width:10px;height:10px;opacity:0;animation:shortcut-piece-fly .44s cubic-bezier(.15,.7,.2,1) both}
+.shortcut-dialog-piece-0{border-radius:50%;background:#647de9}
+.shortcut-dialog-piece-1{border-radius:3px;background:#ff861e}
+.shortcut-dialog-piece-2{background:#f49ab5;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)}
+.shortcut-dialog-piece-3{border-radius:50%;background:#c392ed}
+.shortcut-dialog-star{position:absolute;left:0;top:0;color:#ffdd3b;font-size:26px;line-height:1;animation:shortcut-star-pop .4s ease-out both}
 .pool-dialog-card{position:relative;min-height:100%;padding:24px 32px 27px;overflow:hidden;background:radial-gradient(circle at 82% 9%,#573c783b,transparent 38%),linear-gradient(160deg,#25212e,#1a1b24 62%)}
 .pool-dialog-art{position:relative;height:64px;pointer-events:none}
 .pool-orbit{position:absolute;display:block;width:43px;height:43px;opacity:.87;animation:pool-orbit-dance 5s ease-in-out infinite}
@@ -249,6 +258,10 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 .wallet-card-footer{display:flex;justify-content:space-between;gap:12px;margin-top:16px;color:#a7a1af;font-size:10px}
 .wallet-card-footer a{color:#a7d8bd;text-decoration:none}.wallet-card-footer a:hover{text-decoration:underline}
 @keyframes pool-window-enter{from{opacity:0;transform:translateY(42px) scale(.94);filter:blur(5px)}72%{opacity:1;transform:translateY(-4px) scale(1.015);filter:blur(0)}to{opacity:1;transform:translateY(0) scale(1);filter:blur(0)}}
+@keyframes shortcut-dialog-pop{0%{opacity:1;transform:scale(1)}42%{opacity:1;transform:scale(1.035)}100%{opacity:0;transform:scale(.12)}}
+@keyframes shortcut-backdrop-exit{from{opacity:1}to{opacity:0}}
+@keyframes shortcut-piece-fly{0%{opacity:0;transform:translate(-50%,-50%) scale(.6)}15%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) rotate(var(--spin)) scale(.15)}}
+@keyframes shortcut-star-pop{0%{opacity:0;transform:translate(-50%,-50%) scale(.2)}35%{opacity:1;transform:translate(-50%,-50%) scale(1.35)}100%{opacity:0;transform:translate(-50%,-50%) scale(.35)}}
 @keyframes wallet-chart-enter{from{opacity:0;transform:rotate(-125deg) scale(.86)}to{opacity:1;transform:rotate(-90deg) scale(1)}}
 @keyframes pool-backdrop-enter{from{opacity:0}to{opacity:1}}
 @keyframes pool-face-hop{0%,100%{transform:translateY(0) rotate(-7deg) scale(1)}40%{transform:translateY(-7px) rotate(4deg) scale(.96,1.04)}62%{transform:translateY(0) rotate(-4deg) scale(1.06,.94)}}

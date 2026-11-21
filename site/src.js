@@ -42,6 +42,7 @@ const walletAddress = document.querySelector('#wallet-address');
 const walletFormError = document.querySelector('#wallet-form-error');
 const lendingForm = document.querySelector('#lending-config-form');
 const lendingMarketSelect = document.querySelector('#lending-market-select');
+const lendingProtocolButtons = [...document.querySelectorAll('[data-lending-protocol]')];
 const lendingSupplies = document.querySelector('#lending-supplies');
 const lendingBorrows = document.querySelector('#lending-borrows');
 const lendingFormError = document.querySelector('#lending-form-error');
@@ -197,11 +198,13 @@ function safePoolRequest(value) {
 
 function safeLendingRequest(value) {
   if (value?.kind === 'lending' && value.version === 2) {
-    const validRow = (row, supply) => row && typeof row.asset === 'string' && /^0x[0-9a-fA-F]{40}$/.test(row.asset)
+    const validAssetAddress = (address) => typeof address === 'string' && (/^0x[0-9a-fA-F]{40}$/.test(address) || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address));
+    const validMarketAddress = (address) => validAssetAddress(address) || typeof address === 'string' && /^0x[0-9a-fA-F]{64}$/.test(address);
+    const validRow = (row, supply) => row && validAssetAddress(row.asset)
       && typeof row.amount === 'string' && /^\d+(?:\.\d{1,18})?$/.test(row.amount)
       && (!row.price || typeof row.price === 'string' && /^\d+(?:\.\d{1,18})?$/.test(row.price))
       && (!supply || typeof row.collateral === 'boolean');
-    if (!Number.isInteger(value.chain_id) || typeof value.market_address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value.market_address)
+    if (!Number.isInteger(value.chain_id) || !validMarketAddress(value.market_address)
         || !Array.isArray(value.supplies) || !value.supplies.length || value.supplies.length > 12
         || !Array.isArray(value.borrows) || value.borrows.length > 12
         || !value.supplies.every((row) => validRow(row, true)) || !value.borrows.every((row) => validRow(row, false))
@@ -1634,8 +1637,9 @@ let lendingLoadSequence = 0;
 const lendingError = (message) => { lendingFormError.textContent = message; lendingFormError.hidden = !message; };
 const lendingDemoId = document.querySelector('#lending-demo-id');
 const lendingScenarioSummary = document.querySelector('#lending-scenario-summary');
-const lendingMarketKey = (item) => `${item.chain_id}:${item.address.toLowerCase()}`;
-const lendingAsset = (address) => lendingMarketData?.assets.find((asset) => asset.address.toLowerCase() === address.toLowerCase());
+const lendingMarketKey = (item) => `${item.chain_id}:${item.address}`;
+const lendingSameAddress = (left, right) => lendingMarketData?.protocol === 'kamino' ? left === right : left.toLowerCase() === right.toLowerCase();
+const lendingAsset = (address) => lendingMarketData?.assets.find((asset) => lendingSameAddress(asset.address, address));
 function updateLendingScenarioSummary() {
   const pct = Number(document.querySelector('#lending-shock-pct')?.value || 0);
   const days = Number(document.querySelector('#lending-days')?.value || 0);
@@ -1653,8 +1657,9 @@ function lendingRow(side, preset = {}) {
   const select = document.createElement('select');
   select.setAttribute('aria-label', side === 'supplies' ? 'Ativo fornecido' : 'Ativo emprestado');
   eligible.forEach((asset) => { const option = document.createElement('option'); option.value = asset.address; option.textContent = asset.symbol; select.append(option); });
-  const preferred = eligible.find((asset) => asset.address.toLowerCase() === String(preset.asset || '').toLowerCase())
-    || eligible.find((asset) => asset.symbol === (side === 'supplies' ? 'WETH' : 'USDC')) || eligible[0];
+  const preferred = eligible.find((asset) => lendingSameAddress(asset.address, String(preset.asset || '')))
+    || eligible.find((asset) => asset.symbol === (side === 'supplies' ? 'WETH' : 'USDC'))
+    || (side === 'supplies' ? eligible.find((asset) => asset.can_collateral) : null) || eligible[0];
   select.value = preferred.address;
   const amount = document.createElement('input');
   amount.type = 'text'; amount.inputMode = 'decimal'; amount.placeholder = 'Quantidade'; amount.setAttribute('aria-label', 'Quantidade');
@@ -1697,6 +1702,7 @@ async function loadLendingMarket() {
   const selected = lendingMarkets.find((item) => lendingMarketKey(item) === lendingMarketSelect.value);
   if (!selected) return;
   const sequence = ++lendingLoadSequence;
+  lendingMarketData = null;
   lendingError('');
   try {
     const params = new URLSearchParams({ chain_id: selected.chain_id, address: selected.address });
@@ -1708,7 +1714,24 @@ async function loadLendingMarket() {
     lendingSupplies.replaceChildren(); lendingBorrows.replaceChildren();
     lendingRow('supplies'); lendingRow('borrows'); updateShockAssets();
     lendingDemoId.textContent = 'Sem carteira real';
+    lendingDemoId.removeAttribute('title');
+    const walletFold = document.querySelector('#lending-wallet-fold');
+    walletFold.hidden = data.protocol !== 'aave';
+    walletFold.open = false;
   } catch (error) { if (sequence === lendingLoadSequence) lendingError(error.message); }
+}
+
+function showLendingProtocol(protocol, preferredMarket) {
+  const available = lendingMarkets.filter((item) => item.protocol === protocol);
+  if (!available.length) return;
+  lendingProtocolButtons.forEach((button) => {
+    button.disabled = !lendingMarkets.some((item) => item.protocol === button.dataset.lendingProtocol);
+    button.setAttribute('aria-pressed', String(button.dataset.lendingProtocol === protocol));
+  });
+  lendingMarketSelect.replaceChildren(...available.map((item) =>
+    new Option(item.name.replace(/^(?:Aave V3|Fluid|Morpho|Kamino) · /, ''), lendingMarketKey(item))));
+  lendingMarketSelect.value = available.some((item) => lendingMarketKey(item) === preferredMarket)
+    ? preferredMarket : lendingMarketKey(available[0]);
 }
 
 async function openLendingDialog(prefill = {}) {
@@ -1721,10 +1744,8 @@ async function openLendingDialog(prefill = {}) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Mercados indisponíveis.');
       lendingMarkets = data.markets;
-      lendingMarketSelect.replaceChildren();
-      lendingMarkets.forEach((item) => lendingMarketSelect.add(new Option(item.name, lendingMarketKey(item))));
       const main = lendingMarkets.find((item) => item.name === 'Aave V3 · Ethereum') || lendingMarkets[0];
-      lendingMarketSelect.value = lendingMarketKey(main);
+      showLendingProtocol(main.protocol, lendingMarketKey(main));
     } catch (error) { lendingError(error.message); return; }
   }
   await loadLendingMarket();
@@ -1740,6 +1761,11 @@ document.querySelector('[data-action="configure-lending"]')?.addEventListener('c
 document.querySelector('#lending-dialog-close')?.addEventListener('click', () => lendingDialog?.close());
 lendingDialog?.addEventListener('click', (event) => { if (event.target === lendingDialog) lendingDialog.close(); });
 lendingMarketSelect?.addEventListener('change', loadLendingMarket);
+lendingProtocolButtons.forEach((button) => button.addEventListener('click', () => {
+  if (button.getAttribute('aria-pressed') === 'true') return;
+  showLendingProtocol(button.dataset.lendingProtocol);
+  loadLendingMarket();
+}));
 document.querySelector('#lending-shock-slider')?.addEventListener('input', (event) => { document.querySelector('#lending-shock-pct').value = event.target.value; updateLendingScenarioSummary(); });
 document.querySelector('#lending-shock-pct')?.addEventListener('input', (event) => { const slider = document.querySelector('#lending-shock-slider'); slider.value = Math.max(-95, Math.min(100, Number(event.target.value) || 0)); updateLendingScenarioSummary(); });
 document.querySelector('#lending-shock-asset')?.addEventListener('change', updateLendingScenarioSummary);
@@ -1749,10 +1775,20 @@ document.querySelector('#lending-add-borrow')?.addEventListener('click', () => {
 document.querySelector('#lending-reset')?.addEventListener('click', () => {
   lendingSupplies.replaceChildren(); lendingBorrows.replaceChildren(); lendingRow('supplies'); updateShockAssets(); lendingError('');
   lendingDemoId.textContent = 'Sem carteira real';
+  lendingDemoId.removeAttribute('title');
 });
 document.querySelector('#lending-generate')?.addEventListener('click', () => {
-  const bytes = crypto.getRandomValues(new Uint8Array(20));
-  lendingDemoId.textContent = `Teste: 0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+  const solana = lendingMarketData?.chain_id === 101;
+  const bytes = crypto.getRandomValues(new Uint8Array(solana ? 32 : 20));
+  let address;
+  if (solana) {
+    const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    let value = bytes.reduce((number, byte) => (number << 8n) + BigInt(byte), 0n);
+    address = '';
+    while (value > 0n) { address = alphabet[Number(value % 58n)] + address; value /= 58n; }
+    for (const byte of bytes) { if (byte !== 0) break; address = '1' + address; }
+  } else address = `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+  lendingDemoId.textContent = `Teste: ${address}`;
   lendingDemoId.title = 'Endereço fictício de teste. Não tem chave privada nem saldo na rede.';
   lendingError('');
 });
@@ -1770,6 +1806,7 @@ document.querySelector('#lending-wallet-load')?.addEventListener('click', async 
     data.borrows.forEach((item) => lendingRow('borrows', item));
     updateShockAssets();
     lendingDemoId.textContent = 'Carteira pública carregada';
+    lendingDemoId.removeAttribute('title');
     lendingError(data.supplies.length || data.borrows.length ? '' : 'Esta carteira não tem posição neste mercado.');
   } catch (error) { lendingError(error.message); }
 });

@@ -277,7 +277,16 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 .lending-dialog .pool-dialog-card{max-height:min(94dvh,800px);overflow:auto;scrollbar-width:none}
 .lending-dialog .pool-dialog-card::-webkit-scrollbar{display:none}
 .lending-dialog form{display:grid;gap:9px}
-.lending-market-field label{display:block}
+.lending-market-field label,.lending-field-label{display:block;color:#e8e5ee;font-size:12px;font-weight:650;margin-bottom:6px}
+.lending-protocols{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-bottom:10px}
+.lending-protocols button{display:flex;align-items:center;justify-content:center;gap:7px;min-width:0;height:36px;padding:0 6px;border:1px solid #ffffff24;border-radius:9px;background:#ffffff0c;color:#c9c2d2;font:650 11px Geist,Arial,sans-serif;cursor:pointer;transition:border-color .18s,background .18s,color .18s}
+.lending-protocols button::before{content:'';width:6px;height:6px;flex:none;border-radius:50%;background:#9d88ad}
+.lending-protocols button:hover:not(:disabled){border-color:#c18ee680;color:#f5f1fa}
+.lending-protocols button[aria-pressed=true]{border-color:#c18ee6;background:#b77be21e;color:#f5e4ff}
+.lending-protocols button[aria-pressed=true]::before{background:#d9a8f5;box-shadow:0 0 8px #c18ee680}
+.lending-protocols button:focus-visible{outline:2px solid #c18ee6;outline-offset:2px}
+.lending-protocols button:disabled{opacity:.42;cursor:not-allowed}
+@media(max-width:420px){.lending-protocols{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .lending-demo{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:7px 10px;padding:9px 11px;border:1px solid #c392ed40;border-radius:11px;background:#b77be211}
 .lending-demo button{padding:0;border:0;background:none;color:#dfbaf4;font:650 12px Geist,Arial,sans-serif;cursor:pointer;text-align:left}
 .lending-demo button:hover{color:#f5e4ff}

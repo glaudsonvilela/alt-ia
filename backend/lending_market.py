@@ -4,8 +4,11 @@ import json
 import re
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+
+import lending_providers
 
 
 API = "https://api.v3.aave.com/graphql"
@@ -62,18 +65,35 @@ def _cached(key, ttl, fetch):
     return value
 
 
-def markets():
+def _aave_markets():
     raw = _cached("markets", 600, lambda: _graphql(MARKETS_QUERY)["markets"])
     display = {"EthereumEtherFi": "Ethereum · EtherFi", "EthereumLido": "Ethereum · Lido",
                "EthereumHorizon": "Ethereum · Horizon", "BNB": "BNB Chain"}
     return [{"name": "Aave V3 · " + display.get(item["name"].removeprefix("AaveV3"), item["name"].removeprefix("AaveV3")), "address": item["address"],
-             "chain_id": item["chain"]["chainId"], "chain": item["chain"]["name"]} for item in raw]
+             "chain_id": item["chain"]["chainId"], "chain": item["chain"]["name"], "protocol": "aave"} for item in raw]
+
+
+def markets():
+    catalogs = []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(discover) for discover in (_aave_markets, lending_providers.fluid_markets,
+                                                            lending_providers.morpho_markets, lending_providers.kamino_markets)]
+        for future in futures:
+            try:
+                catalogs.extend(future.result())
+            except (LendingMarketError, lending_providers.ProviderError, KeyError, TypeError, ValueError):
+                continue
+    if not catalogs:
+        raise LendingMarketError("Nenhum mercado de lending está disponível agora.")
+    return catalogs
 
 
 def _selected_market(chain_id, address):
-    if type(chain_id) is not int or chain_id not in CHAIN_IDS or not isinstance(address, str) or not re.fullmatch(r"0x[0-9a-fA-F]{40}", address):
+    if type(chain_id) is not int or not isinstance(address, str) or len(address) > 66:
         raise LendingMarketError("Escolha um mercado válido.")
-    match = next((m for m in markets() if m["chain_id"] == chain_id and m["address"].lower() == address.lower()), None)
+    match = next((m for m in markets() if m["chain_id"] == chain_id
+                  and (m["address"] == address if chain_id == lending_providers.SOLANA_CHAIN_ID
+                       else m["address"].lower() == address.lower())), None)
     if not match:
         raise LendingMarketError("Mercado não disponível.")
     return match
@@ -81,6 +101,11 @@ def _selected_market(chain_id, address):
 
 def market(chain_id, address):
     selected = _selected_market(chain_id, address)
+    if selected["protocol"] != "aave":
+        try:
+            return lending_providers.market(selected)
+        except (lending_providers.ProviderError, KeyError, TypeError, ValueError, ZeroDivisionError) as error:
+            raise LendingMarketError("Este mercado está indisponível agora.") from error
     raw = _cached((chain_id, address.lower()), 60, lambda: _graphql(MARKET_QUERY, {"chainId": chain_id, "address": address})["market"])
     if not isinstance(raw, dict) or not isinstance(raw.get("reserves"), list):
         raise LendingMarketError("Este mercado está indisponível agora.")
@@ -97,11 +122,14 @@ def market(chain_id, address):
                        "can_borrow": bool(borrow and borrow["borrowingState"] == "ENABLED" and not reserve["isFrozen"]),
                        "can_collateral": bool(supply["canBeCollateral"] and not reserve["isFrozen"]),
                        "frozen": reserve["isFrozen"]})
-    return {**selected, "assets": assets, "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    return {**selected, "assets": assets, "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "rate_note": "APYs atuais da Aave V3.", "source_url": API}
 
 
 def wallet(chain_id, address, user):
-    _selected_market(chain_id, address)
+    selected = _selected_market(chain_id, address)
+    if selected["protocol"] != "aave":
+        raise LendingMarketError("Importação de posições disponível na Aave. Monte esta posição manualmente para simular.")
     if not isinstance(user, str) or not re.fullmatch(r"0x[0-9a-fA-F]{40}", user):
         raise LendingMarketError("Informe uma carteira EVM válida.")
     data = _graphql(WALLET_QUERY, {"markets": [{"address": address, "chainId": chain_id}], "user": user})
@@ -133,7 +161,8 @@ def simulate(request):
     if set(request) - {"kind", "version", "chain_id", "market_address", "supplies", "borrows", "shock", "days"}:
         raise LendingMarketError("Pedido de lending inválido.")
     data = market(request.get("chain_id"), request.get("market_address"))
-    assets = {a["address"].lower(): a for a in data["assets"]}
+    normalize = (lambda value: value) if data.get("protocol") == "kamino" else (lambda value: value.lower())
+    assets = {normalize(a["address"]): a for a in data["assets"]}
     supplies, borrows = request.get("supplies"), request.get("borrows")
     if not isinstance(supplies, list) or not isinstance(borrows, list) or len(supplies) > 12 or len(borrows) > 12 or not supplies:
         raise LendingMarketError("Adicione ao menos um ativo fornecido; limite de 12 por lado.")
@@ -142,7 +171,7 @@ def simulate(request):
     shock = request.get("shock") or {}
     if not isinstance(shock, dict) or set(shock) - {"asset", "pct"} or type(shock.get("pct", 0)) is not int or not -95 <= shock.get("pct", 0) <= 500:
         raise LendingMarketError("Variação de preço inválida.")
-    shock_key = str(shock.get("asset") or "").lower()
+    shock_key = normalize(str(shock.get("asset") or ""))
     if shock_key and shock_key not in assets:
         raise LendingMarketError("Ativo da variação inválido.")
     parsed = {"supplies": [], "borrows": []}
@@ -151,7 +180,7 @@ def simulate(request):
         for row in rows:
             if not isinstance(row, dict) or set(row) - ({"asset", "amount", "price", "collateral"} if side == "supplies" else {"asset", "amount", "price"}):
                 raise LendingMarketError("Ativo inválido.")
-            key = str(row.get("asset") or "").lower()
+            key = normalize(str(row.get("asset") or ""))
             if key not in assets or key in seen:
                 raise LendingMarketError("Ativo duplicado ou não disponível.")
             seen.add(key)
@@ -173,12 +202,12 @@ def simulate(request):
         raise LendingMarketError("Ative ao menos uma garantia para tomar empréstimo.")
 
     def totals(days=0, change=0):
-        supplied = borrowed = weighted_ltv = weighted_liquidation = Decimal(0)
+        supplied = borrowed = weighted_borrowed = weighted_ltv = weighted_liquidation = Decimal(0)
         income = cost = Decimal(0)
         for asset, amount, collateral in parsed["supplies"]:
             rate = Decimal(asset["supply_apy"])
             value = amount * Decimal(asset["price"]) * ((1 + rate) ** (Decimal(days) / 365))
-            if asset["address"].lower() == shock_key:
+            if normalize(asset["address"]) == shock_key:
                 value *= 1 + Decimal(change) / 100
             supplied += value
             income += amount * Decimal(asset["price"]) * (((1 + rate) ** (Decimal(days) / 365)) - 1)
@@ -188,13 +217,14 @@ def simulate(request):
         for asset, amount, _ in parsed["borrows"]:
             rate = Decimal(asset["borrow_apy"])
             value = amount * Decimal(asset["price"]) * ((1 + rate) ** (Decimal(days) / 365))
-            if asset["address"].lower() == shock_key:
+            if normalize(asset["address"]) == shock_key:
                 value *= 1 + Decimal(change) / 100
             borrowed += value
+            weighted_borrowed += value * Decimal(asset.get("borrow_factor", "1"))
             cost += amount * Decimal(asset["price"]) * (((1 + rate) ** (Decimal(days) / 365)) - 1)
-        return {"supplied": supplied, "borrowed": borrowed, "ltv": weighted_ltv,
+        return {"supplied": supplied, "borrowed": borrowed, "weighted_borrowed": weighted_borrowed, "ltv": weighted_ltv,
                 "liquidation": weighted_liquidation, "income": income, "cost": cost,
-                "health": weighted_liquidation / borrowed if borrowed else None}
+                "health": weighted_liquidation / weighted_borrowed if weighted_borrowed else None}
 
     now = totals()
     future = totals(request["days"], shock.get("pct", 0))
@@ -217,19 +247,20 @@ def simulate(request):
     for asset, _, collateral in parsed["supplies"]:
         if not collateral:
             continue
-        key = asset["address"].lower()
+        key = normalize(asset["address"])
         collateral_coefficient = sum(amount * Decimal(item["liquidation_threshold"])
-                                     for item, amount, enabled in parsed["supplies"] if enabled and item["address"].lower() == key)
-        debt_coefficient = sum(amount for item, amount, _ in parsed["borrows"] if item["address"].lower() == key)
+                                     for item, amount, enabled in parsed["supplies"] if enabled and normalize(item["address"]) == key)
+        debt_coefficient = sum(amount * Decimal(item.get("borrow_factor", "1")) for item, amount, _ in parsed["borrows"]
+                               if normalize(item["address"]) == key)
         coefficient = collateral_coefficient - debt_coefficient
         price = Decimal(asset["price"])
-        target = now["borrowed"] - now["liquidation"] + coefficient * price
+        target = now["weighted_borrowed"] - now["liquidation"] + coefficient * price
         liquidation_price = target / coefficient if coefficient > 0 and target > 0 else None
         liquidation_rows.append({"label": asset["symbol"], "price": f"US$ {_fmt(price)}",
                                  "value": f"US$ {_fmt(liquidation_price)}" if liquidation_price else "Sem limite isolado",
                                  "pnl": f"{_fmt((price - liquidation_price) / price * 100)}%" if liquidation_price else "—",
                                  "tone": "loss" if liquidation_price and liquidation_price >= price else "flat"})
-    credit = max(Decimal(0), now["ltv"] - now["borrowed"])
+    credit = max(Decimal(0), now["ltv"] - now["weighted_borrowed"])
     health_text = _fmt(now["health"]) if now["health"] is not None else "Sem dívida"
     metrics = [{"label": "Fornecido", "value": f"US$ {_fmt(now['supplied'])}"},
                {"label": "Emprestado", "value": f"US$ {_fmt(now['borrowed'])}"},
@@ -237,7 +268,7 @@ def simulate(request):
                {"label": "Crédito disponível", "value": f"US$ {_fmt(credit)}"},
                {"label": "Saúde", "value": health_text},
                {"label": f"Juros líquidos em {request['days']} dias", "value": f"US$ {_fmt(interest)}"}]
-    if now["borrowed"] > now["ltv"]:
+    if now["weighted_borrowed"] > now["ltv"]:
         metrics.append({"label": "Entrada", "value": "Acima do limite"})
     name = data["name"]
     reply = (f"🛟 Em {name}, você teria US$ {_fmt(now['supplied'])} fornecidos e US$ {_fmt(now['borrowed'])} de dívida. "
@@ -245,7 +276,7 @@ def simulate(request):
              f"Em {request['days']} dias, com as taxas atuais constantes, os juros líquidos seriam US$ {_fmt(interest)}.")
     if change and shock_key:
         reply += f" Com {assets[shock_key]['symbol']} a {change:+d}%, a saúde estimada seria {_fmt(future['health']) if future['health'] is not None else 'sem dívida'}."
-    if now["borrowed"] > now["ltv"]:
+    if now["weighted_borrowed"] > now["ltv"]:
         reply += " ⚠️ Esta dívida supera o limite de entrada do mercado; reduza o empréstimo ou aumente a garantia."
     simulation = {"kind": "lending", "title": name, "subtitle": f"{data['chain']} · posição simulada",
                   "metrics": metrics, "scenarios": {"caption": "📊 Patrimônio e saúde por cenário", "headers": ["Cenário", "Patrimônio", "Saúde", "Situação"],
@@ -259,10 +290,12 @@ def simulate(request):
                                               "tone": "gain" if totals(days)["income"] >= totals(days)["cost"] else "loss"}
                                              for days in sorted({7, 30, 90, request["days"]}) if days > 0],
                                     "note": "Projeção de juros futuros com as taxas atuais constantes."}],
-                  "source": {"engine": "Alt-IA · lending", "kind": "lending_live", "source_label": "Dados", "block_number": int(time.time()),
-                             "captured_at": data["updated_at"], "validity": "Parâmetros e APYs podem mudar; resultados são estimativas."},
+                  "source": {"engine": "Alt-IA · " + data.get("protocol", "aave").title(), "kind": "lending_live", "source_label": "Dados",
+                             "block_number": int(time.time()), "captured_at": data["updated_at"],
+                             "validity": "Parâmetros e APYs podem mudar; resultados são estimativas."},
                   "assumptions": [f"Juros ganhos: US$ {_fmt(future['income'])}; juros pagos: US$ {_fmt(future['cost'])}.",
-                                  "Limites especiais, eMode, caps, taxas de gás e bônus de liquidação não incluídos."],
-                  "url": "https://app.bigbanana.io/"}
+                                  data.get("rate_note", "APYs atuais do mercado."),
+                                  data.get("risk_note", "Limites especiais, eMode, caps, taxas de gás e bônus de liquidação não incluídos.")],
+                  "url": data.get("source_url", "https://app.bigbanana.io/")}
     return {"reply": reply, "simulation": simulation, "mode": "lending", "lending_request": request,
             "follow_up": "😊 Quer alterar o prazo, a garantia ou o preço de algum ativo?"}

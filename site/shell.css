@@ -299,12 +299,11 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 .lending-fold summary span{margin-left:auto;color:#cbaae1;font-size:10px;font-weight:500}
 .lending-fold[open]>div{margin:2px 0 11px}
 .lending-scenario-fold>input{margin-bottom:8px}
-.lending-dialog form>label,.lending-wallet-import>label,.lending-scenario-grid label{display:block;color:#e8e5ee;font-size:12px;font-weight:650;margin-bottom:6px}
+.lending-dialog form>label,.lending-scenario-grid label{display:block;color:#e8e5ee;font-size:12px;font-weight:650;margin-bottom:6px}
 .lending-dialog select,.lending-dialog input{min-width:0;width:100%;height:36px;padding:0 10px;border:1px solid #ffffff24;border-radius:9px;background:#ffffff0c;color:#f5f1fa;font:inherit}
 .lending-dialog select{background:#2c2935}
 .lending-dialog select:focus,.lending-dialog input:focus{outline:0;border-color:#c18ee6;box-shadow:0 0 0 3px #ad73d824}
-.lending-wallet-import>div{display:flex;gap:8px}
-.lending-wallet-import button,.lending-section-head button,.lending-actions button{border:1px solid #ffffff28;border-radius:10px;background:#ffffff0e;color:#f4ebff;padding:8px 12px;font:inherit;font-size:12px;cursor:pointer}
+.lending-section-head button,.lending-actions button{border:1px solid #ffffff28;border-radius:10px;background:#ffffff0e;color:#f4ebff;padding:8px 12px;font:inherit;font-size:12px;cursor:pointer}
 .lending-section{padding:10px 11px;border:1px solid #ffffff18;border-radius:12px;background:#ffffff08}
 .lending-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px}
 .lending-section-head h3{margin:0;color:#f1ecf7;font-size:13px}

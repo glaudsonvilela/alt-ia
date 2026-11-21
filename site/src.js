@@ -1715,9 +1715,6 @@ async function loadLendingMarket() {
     lendingRow('supplies'); lendingRow('borrows'); updateShockAssets();
     lendingDemoId.textContent = 'Sem carteira real';
     lendingDemoId.removeAttribute('title');
-    const walletFold = document.querySelector('#lending-wallet-fold');
-    walletFold.hidden = data.protocol !== 'aave';
-    walletFold.open = false;
   } catch (error) { if (sequence === lendingLoadSequence) lendingError(error.message); }
 }
 
@@ -1792,25 +1789,6 @@ document.querySelector('#lending-generate')?.addEventListener('click', () => {
   lendingDemoId.title = 'Endereço fictício de teste. Não tem chave privada nem saldo na rede.';
   lendingError('');
 });
-document.querySelector('#lending-wallet-load')?.addEventListener('click', async () => {
-  if (!lendingMarketData) return;
-  const user = document.querySelector('#lending-wallet-address').value.trim();
-  if (!/^0x[0-9a-fA-F]{40}$/.test(user)) return lendingError('Informe uma carteira EVM válida.');
-  try {
-    const params = new URLSearchParams({ chain_id: lendingMarketData.chain_id, address: lendingMarketData.address, wallet: user });
-    const response = await fetch(`/api/lending-wallet?${params}`, { cache: 'no-store' });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Não foi possível carregar a carteira.');
-    lendingSupplies.replaceChildren(); lendingBorrows.replaceChildren();
-    data.supplies.forEach((item) => lendingRow('supplies', item));
-    data.borrows.forEach((item) => lendingRow('borrows', item));
-    updateShockAssets();
-    lendingDemoId.textContent = 'Carteira pública carregada';
-    lendingDemoId.removeAttribute('title');
-    lendingError(data.supplies.length || data.borrows.length ? '' : 'Esta carteira não tem posição neste mercado.');
-  } catch (error) { lendingError(error.message); }
-});
-
 document.querySelector('[data-action="track-wallet"]')?.addEventListener('click', () => {
   walletFormError.hidden = true;
   walletFormError.textContent = '';

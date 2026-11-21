@@ -22,6 +22,7 @@ from wallet_lookup import WalletInputError, WalletUnavailable, parse_wallet_text
 from wallet_agent import analyze_wallet
 from research_agent import search_web
 from agent_browser import cookie_value, session_from_cookie, session_path, worker_call, run as run_browser_agent
+from lending_market import LendingMarketError, markets as lending_markets, market as lending_market, wallet as lending_wallet
 
 
 MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -141,7 +142,7 @@ def safe_chat_context(value):
     if request is not None and (not isinstance(request, dict) or len(json.dumps(request)) > 1200):
         raise ValueError("Pool inválida")
     lending_request = value.get("lending_request")
-    if lending_request is not None and (not isinstance(lending_request, dict) or len(json.dumps(lending_request)) > 600):
+    if lending_request is not None and (not isinstance(lending_request, dict) or len(json.dumps(lending_request)) > 3500):
         raise ValueError("Lending inválido")
     wallet_request = value.get("wallet_request")
     if wallet_request is not None:
@@ -318,6 +319,30 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self.respond(200, {"pools": pool_options()})
             except SimulationUnavailable as error:
+                self.respond(503, {"error": str(error)})
+        elif parsed.path == "/api/lending-markets":
+            try:
+                self.respond(200, {"markets": lending_markets()})
+            except LendingMarketError as error:
+                self.respond(503, {"error": str(error)})
+        elif parsed.path in ("/api/lending-market", "/api/lending-wallet"):
+            query = parse_qs(parsed.query)
+            try:
+                chain_id = int(query["chain_id"][0])
+                address = query["address"][0]
+                if len(query["chain_id"]) != 1 or len(query["address"]) != 1:
+                    raise ValueError
+                if parsed.path == "/api/lending-wallet":
+                    if set(query) != {"chain_id", "address", "wallet"} or len(query["wallet"]) != 1:
+                        raise ValueError
+                    self.respond(200, lending_wallet(chain_id, address, query["wallet"][0]))
+                else:
+                    if set(query) != {"chain_id", "address"}:
+                        raise ValueError
+                    self.respond(200, lending_market(chain_id, address))
+            except (ValueError, KeyError, IndexError):
+                self.respond(400, {"error": "Mercado ou carteira inválidos."})
+            except LendingMarketError as error:
                 self.respond(503, {"error": str(error)})
         elif parsed.path == "/api/pool-snapshot":
             query = parse_qs(parsed.query)

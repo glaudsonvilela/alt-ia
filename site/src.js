@@ -41,10 +41,9 @@ const walletNetwork = document.querySelector('#wallet-network');
 const walletAddress = document.querySelector('#wallet-address');
 const walletFormError = document.querySelector('#wallet-form-error');
 const lendingForm = document.querySelector('#lending-config-form');
-const lendingCollateral = document.querySelector('#lending-collateral');
-const lendingDebt = document.querySelector('#lending-debt');
-const lendingDrop = document.querySelector('#lending-drop');
-const lendingDropValue = document.querySelector('#lending-drop-value');
+const lendingMarketSelect = document.querySelector('#lending-market-select');
+const lendingSupplies = document.querySelector('#lending-supplies');
+const lendingBorrows = document.querySelector('#lending-borrows');
 const lendingFormError = document.querySelector('#lending-form-error');
 const poolDialogClose = document.querySelector('#pool-dialog-close');
 const poolForm = document.querySelector('#pool-config-form');
@@ -197,6 +196,21 @@ function safePoolRequest(value) {
 }
 
 function safeLendingRequest(value) {
+  if (value?.kind === 'lending' && value.version === 2) {
+    const validRow = (row, supply) => row && typeof row.asset === 'string' && /^0x[0-9a-fA-F]{40}$/.test(row.asset)
+      && typeof row.amount === 'string' && /^\d+(?:\.\d{1,18})?$/.test(row.amount)
+      && (!row.price || typeof row.price === 'string' && /^\d+(?:\.\d{1,18})?$/.test(row.price))
+      && (!supply || typeof row.collateral === 'boolean');
+    if (!Number.isInteger(value.chain_id) || typeof value.market_address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(value.market_address)
+        || !Array.isArray(value.supplies) || !value.supplies.length || value.supplies.length > 12
+        || !Array.isArray(value.borrows) || value.borrows.length > 12
+        || !value.supplies.every((row) => validRow(row, true)) || !value.borrows.every((row) => validRow(row, false))
+        || !Number.isInteger(value.days) || value.days < 0 || value.days > 3650
+        || !value.shock || !Number.isInteger(value.shock.pct) || value.shock.pct < -95 || value.shock.pct > 500
+        || typeof value.shock.asset !== 'string') return null;
+    return { kind: 'lending', version: 2, chain_id: value.chain_id, market_address: value.market_address,
+      supplies: value.supplies, borrows: value.borrows, shock: value.shock, days: value.days };
+  }
   if (!value || value.kind !== 'lending' || typeof value.collateral_weth !== 'string' || typeof value.borrow_usdc !== 'string'
       || !/^\d+(?:[.,]\d{1,8})?$/.test(value.collateral_weth) || !/^\d+(?:[.,]\d{1,6})?$/.test(value.borrow_usdc)
       || !Number.isSafeInteger(value.price_drop_pct) || value.price_drop_pct < 0 || value.price_drop_pct > 90) return null;
@@ -245,7 +259,7 @@ function safeSimulation(value) {
     ? value.source.kind !== 'historical_candles' || !Number.isSafeInteger(value.source.period_start) || !Number.isSafeInteger(value.source.period_end)
     : !Number.isSafeInteger(value.source.block_number) || value.source.block_number <= 0)) return null;
   const scenario = value.scenarios;
-  const scenarios = scenario && typeof scenario.unit === 'string' && typeof scenario.base_symbol === 'string' && Array.isArray(scenario.rows)
+  const scenarios = scenario && Array.isArray(scenario.rows)
     ? { unit: clean(scenario.unit, 12), base_symbol: clean(scenario.base_symbol, 12), caption: clean(scenario.caption, 120), note: clean(scenario.note, 280),
         headers: Array.isArray(scenario.headers) && scenario.headers.length === 4 && scenario.headers.every((item) => typeof item === 'string')
           ? scenario.headers.map((item) => clean(item, 40)) : null,
@@ -253,10 +267,16 @@ function safeSimulation(value) {
           && ['label', 'price', 'value', 'pnl'].every((key) => typeof row[key] === 'string'))
           .map((row) => ({ label: clean(row.label, 30), price: clean(row.price, 30), value: clean(row.value, 30), pnl: clean(row.pnl, 30), tone: row.tone })) }
     : null;
+  const extraTables = Array.isArray(value.extra_tables) ? value.extra_tables.slice(0, 3).filter((table) => table && Array.isArray(table.rows)
+    && Array.isArray(table.headers) && table.headers.length === 4 && table.headers.every((item) => typeof item === 'string'))
+    .map((table) => ({ caption: clean(table.caption, 120), note: clean(table.note, 280), headers: table.headers.map((item) => clean(item, 40)),
+      rows: table.rows.slice(0, 12).filter((row) => row && ['gain', 'loss', 'flat'].includes(row.tone)
+        && ['label', 'price', 'value', 'pnl'].every((key) => typeof row[key] === 'string'))
+        .map((row) => ({ label: clean(row.label, 30), price: clean(row.price, 30), value: clean(row.value, 30), pnl: clean(row.pnl, 30), tone: row.tone })) })) : [];
   return {
-    kind: value.kind, title: clean(value.title), subtitle: clean(value.subtitle), metrics, scenarios,
-    source: { engine: isHistorical ? 'Alt-IA · dados Altside' : clean(value.source.engine, 60), kind: isHistorical ? 'historical_candles' : 'live', block_number: isHistorical ? null : value.source.block_number,
-      source_label: value.source.source_label === 'Slot' ? 'Slot' : 'Bloco',
+    kind: value.kind, title: clean(value.title), subtitle: clean(value.subtitle), metrics, scenarios, extra_tables: extraTables,
+    source: { engine: isHistorical ? 'Alt-IA · dados Altside' : clean(value.source.engine, 60), kind: isHistorical ? 'historical_candles' : value.source.kind === 'lending_live' ? 'lending_live' : 'live', block_number: isHistorical ? null : value.source.block_number,
+      source_label: value.source.source_label === 'Slot' ? 'Slot' : value.source.source_label === 'Dados' ? 'Dados' : 'Bloco',
       period_start: isHistorical ? value.source.period_start : null, period_end: isHistorical ? value.source.period_end : null,
       block_timestamp: Number.isSafeInteger(value.source.block_timestamp) ? value.source.block_timestamp : null,
       captured_at: clean(value.source.captured_at, 40), validity: clean(value.source.validity, 180) },
@@ -537,7 +557,8 @@ function createSimulationCard(simulation) {
   const provenance = document.createElement('div');
   provenance.className = 'simulation-provenance';
   const block = document.createElement('span');
-  block.textContent = simulation.source.kind === 'historical_candles'
+  block.textContent = simulation.source.kind === 'lending_live' ? 'Mercado atualizado'
+    : simulation.source.kind === 'historical_candles'
     ? `Velas ${new Date(simulation.source.period_start * 1000).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}–${new Date(simulation.source.period_end * 1000).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}`
     : `${simulation.source.source_label} #${simulation.source.block_number.toLocaleString('pt-BR')}`;
   const captured = document.createElement('time');
@@ -555,6 +576,22 @@ function createSimulationCard(simulation) {
   link.textContent = 'Abrir simulador Altside ↗';
   card.append(eyebrow, title, subtitle, grid);
   if (scenarioBlock) card.append(scenarioBlock);
+  for (const extra of simulation.extra_tables || []) {
+    if (!extra.rows?.length) continue;
+    const section = document.createElement('div'); section.className = 'simulation-scenario-block';
+    const table = document.createElement('table'); table.className = 'simulation-scenarios';
+    const caption = document.createElement('caption'); caption.textContent = extra.caption; table.append(caption);
+    const head = document.createElement('thead'); const headerRow = document.createElement('tr');
+    extra.headers.forEach((label) => { const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; headerRow.append(th); });
+    head.append(headerRow); table.append(head);
+    const body = document.createElement('tbody');
+    extra.rows.forEach((row) => { const tr = document.createElement('tr'); tr.className = `scenario-${row.tone}`;
+      [row.label, row.price, row.value, row.pnl].forEach((value, index) => { const cell = document.createElement(index ? 'td' : 'th');
+        if (!index) cell.scope = 'row'; cell.textContent = value; tr.append(cell); }); body.append(tr); });
+    table.append(body); section.append(table);
+    if (extra.note) { const note = document.createElement('p'); note.className = 'simulation-scenario-note'; note.textContent = extra.note; section.append(note); }
+    card.append(section);
+  }
   card.append(provenance, notes, link);
   return card;
 }
@@ -1591,22 +1628,130 @@ document.querySelector('[data-action="news-daily"]')?.addEventListener('click', 
   chatForm?.requestSubmit();
 });
 
-function openLendingDialog(prefill = {}) {
+let lendingMarkets = [];
+let lendingMarketData = null;
+let lendingLoadSequence = 0;
+const lendingError = (message) => { lendingFormError.textContent = message; lendingFormError.hidden = !message; };
+const lendingMarketKey = (item) => `${item.chain_id}:${item.address.toLowerCase()}`;
+const lendingAsset = (address) => lendingMarketData?.assets.find((asset) => asset.address.toLowerCase() === address.toLowerCase());
+
+function lendingRow(side, preset = {}) {
+  if (!lendingMarketData) return;
+  const container = side === 'supplies' ? lendingSupplies : lendingBorrows;
+  const eligible = lendingMarketData.assets.filter((asset) => side === 'supplies' ? asset.can_supply : asset.can_borrow);
+  if (!eligible.length || container.children.length >= 12) return;
+  const row = document.createElement('div');
+  row.className = 'lending-asset-row';
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', side === 'supplies' ? 'Ativo fornecido' : 'Ativo emprestado');
+  eligible.forEach((asset) => { const option = document.createElement('option'); option.value = asset.address; option.textContent = asset.symbol; select.append(option); });
+  const preferred = eligible.find((asset) => asset.address.toLowerCase() === String(preset.asset || '').toLowerCase())
+    || eligible.find((asset) => asset.symbol === (side === 'supplies' ? 'WETH' : 'USDC')) || eligible[0];
+  select.value = preferred.address;
+  const amount = document.createElement('input');
+  amount.type = 'text'; amount.inputMode = 'decimal'; amount.placeholder = 'Quantidade'; amount.setAttribute('aria-label', 'Quantidade');
+  amount.value = preset.amount || '';
+  const price = document.createElement('input');
+  price.type = 'text'; price.inputMode = 'decimal'; price.setAttribute('aria-label', 'Preço em dólares');
+  const updatePrice = () => { price.value = preset.price || lendingAsset(select.value)?.price || ''; preset.price = ''; updateHint(); updateShockAssets(); };
+  const hint = document.createElement('small');
+  const updateHint = () => { const asset = lendingAsset(select.value); hint.textContent = asset
+    ? `US$ ${Number(price.value).toLocaleString('pt-BR', { maximumFractionDigits: 4 })} · APY ${((Number(side === 'supplies' ? asset.supply_apy : asset.borrow_apy) || 0) * 100).toFixed(2).replace('.', ',')}%`
+    : ''; collateral.disabled = !asset?.can_collateral; if (collateral.disabled) collateral.checked = false; };
+  const collateral = document.createElement('label');
+  collateral.className = 'lending-collateral';
+  const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = preset.collateral !== false;
+  collateral.append(checkbox, document.createTextNode(' Garantia'));
+  Object.defineProperty(collateral, 'checked', { get: () => checkbox.checked, set: (value) => { checkbox.checked = value; } });
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'lending-row-remove'; remove.textContent = '×'; remove.setAttribute('aria-label', 'Remover ativo');
+  remove.addEventListener('click', () => { row.remove(); updateShockAssets(); });
+  select.addEventListener('change', updatePrice); price.addEventListener('input', updateHint);
+  row.append(select, amount, price, ...(side === 'supplies' ? [collateral] : []), remove, hint);
+  container.append(row); updatePrice();
+}
+
+function updateShockAssets() {
+  const select = document.querySelector('#lending-shock-asset');
+  const previous = select.value;
+  select.replaceChildren(new Option('Sem variação', ''));
+  const used = new Set();
+  [...lendingSupplies.children, ...lendingBorrows.children].forEach((row) => {
+    const address = row.querySelector('select')?.value;
+    if (!address || used.has(address)) return;
+    used.add(address);
+    select.add(new Option(lendingAsset(address)?.symbol || 'Ativo', address));
+  });
+  select.value = used.has(previous) ? previous : (lendingSupplies.querySelector('select')?.value || '');
+}
+
+async function loadLendingMarket() {
+  const selected = lendingMarkets.find((item) => lendingMarketKey(item) === lendingMarketSelect.value);
+  if (!selected) return;
+  const sequence = ++lendingLoadSequence;
+  lendingError('');
+  try {
+    const params = new URLSearchParams({ chain_id: selected.chain_id, address: selected.address });
+    const response = await fetch(`/api/lending-market?${params}`, { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Mercado indisponível.');
+    if (sequence !== lendingLoadSequence) return;
+    lendingMarketData = data;
+    lendingSupplies.replaceChildren(); lendingBorrows.replaceChildren();
+    lendingRow('supplies'); lendingRow('borrows'); updateShockAssets();
+  } catch (error) { if (sequence === lendingLoadSequence) lendingError(error.message); }
+}
+
+async function openLendingDialog(prefill = {}) {
   if (!lendingDialog) return;
-  lendingFormError.hidden = true;
-  lendingFormError.textContent = '';
-  lendingCollateral.value = typeof prefill.collateral_weth === 'string' ? prefill.collateral_weth : '';
-  lendingDebt.value = typeof prefill.borrow_usdc === 'string' ? prefill.borrow_usdc : '';
-  lendingDrop.value = Number.isInteger(prefill.price_drop_pct) && prefill.price_drop_pct <= 80 ? String(prefill.price_drop_pct) : '20';
-  lendingDropValue.value = `${lendingDrop.value}%`;
+  lendingError('');
   if (!lendingDialog.open) lendingDialog.showModal();
-  (lendingCollateral.value ? lendingDebt : lendingCollateral).focus();
+  if (!lendingMarkets.length) {
+    try {
+      const response = await fetch('/api/lending-markets', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Mercados indisponíveis.');
+      lendingMarkets = data.markets;
+      lendingMarketSelect.replaceChildren();
+      lendingMarkets.forEach((item) => lendingMarketSelect.add(new Option(item.name, lendingMarketKey(item))));
+      const main = lendingMarkets.find((item) => item.name === 'Aave V3 · Ethereum') || lendingMarkets[0];
+      lendingMarketSelect.value = lendingMarketKey(main);
+    } catch (error) { lendingError(error.message); return; }
+  }
+  await loadLendingMarket();
+  if (prefill.collateral_weth && prefill.borrow_usdc && lendingMarketData) {
+    lendingSupplies.querySelector('input[aria-label="Quantidade"]').value = prefill.collateral_weth;
+    lendingBorrows.querySelector('input[aria-label="Quantidade"]').value = prefill.borrow_usdc;
+    document.querySelector('#lending-shock-pct').value = -(prefill.price_drop_pct || 20);
+  }
 }
 
 document.querySelector('[data-action="configure-lending"]')?.addEventListener('click', () => openLendingDialog());
 document.querySelector('#lending-dialog-close')?.addEventListener('click', () => lendingDialog?.close());
 lendingDialog?.addEventListener('click', (event) => { if (event.target === lendingDialog) lendingDialog.close(); });
-lendingDrop?.addEventListener('input', () => { lendingDropValue.value = `${lendingDrop.value}%`; });
+lendingMarketSelect?.addEventListener('change', loadLendingMarket);
+document.querySelector('#lending-shock-slider')?.addEventListener('input', (event) => { document.querySelector('#lending-shock-pct').value = event.target.value; });
+document.querySelector('#lending-shock-pct')?.addEventListener('input', (event) => { const slider = document.querySelector('#lending-shock-slider'); slider.value = Math.max(-95, Math.min(100, Number(event.target.value) || 0)); });
+document.querySelector('#lending-add-supply')?.addEventListener('click', () => { lendingRow('supplies'); updateShockAssets(); });
+document.querySelector('#lending-add-borrow')?.addEventListener('click', () => { lendingRow('borrows'); updateShockAssets(); });
+document.querySelector('#lending-reset')?.addEventListener('click', () => {
+  lendingSupplies.replaceChildren(); lendingBorrows.replaceChildren(); lendingRow('supplies'); updateShockAssets(); lendingError('');
+});
+document.querySelector('#lending-wallet-load')?.addEventListener('click', async () => {
+  if (!lendingMarketData) return;
+  const user = document.querySelector('#lending-wallet-address').value.trim();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(user)) return lendingError('Informe uma carteira EVM válida.');
+  try {
+    const params = new URLSearchParams({ chain_id: lendingMarketData.chain_id, address: lendingMarketData.address, wallet: user });
+    const response = await fetch(`/api/lending-wallet?${params}`, { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Não foi possível carregar a carteira.');
+    lendingSupplies.replaceChildren(); lendingBorrows.replaceChildren();
+    data.supplies.forEach((item) => lendingRow('supplies', item));
+    data.borrows.forEach((item) => lendingRow('borrows', item));
+    updateShockAssets();
+    lendingError(data.supplies.length || data.borrows.length ? '' : 'Esta carteira não tem posição neste mercado.');
+  } catch (error) { lendingError(error.message); }
+});
 
 document.querySelector('[data-action="track-wallet"]')?.addEventListener('click', () => {
   walletFormError.hidden = true;
@@ -1638,17 +1783,23 @@ walletForm?.addEventListener('submit', (event) => {
 
 lendingForm?.addEventListener('submit', (event) => {
   event.preventDefault();
-  if (isSubmitting) return;
-  const collateral = lendingCollateral.value.trim().replace(',', '.');
-  const debt = lendingDebt.value.trim().replace(',', '.');
-  if (!/^\d+(?:\.\d{1,8})?$/.test(collateral) || Number(collateral) <= 0 || Number(collateral) > 1_000_000
-      || !/^\d+(?:\.\d{1,6})?$/.test(debt) || Number(debt) <= 0 || Number(debt) > 10_000_000_000) {
-    lendingFormError.textContent = 'Informe valores positivos para WETH e USDC.';
-    lendingFormError.hidden = false;
-    return;
-  }
-  pendingSimulationRequest = { kind: 'lending', collateral_weth: collateral, borrow_usdc: debt, price_drop_pct: Number(lendingDrop.value) };
-  chatInput.value = `Simule lending: ${collateral} WETH de garantia, ${debt} USDC emprestados, queda de ${lendingDrop.value}% no WETH`;
+  if (isSubmitting || !lendingMarketData) return;
+  const rows = (container, supply) => [...container.children].map((row) => {
+    const inputs = row.querySelectorAll('input');
+    const result = { asset: row.querySelector('select').value, amount: inputs[0].value.trim().replace(',', '.'), price: inputs[1].value.trim().replace(',', '.') };
+    if (supply) result.collateral = inputs[2].checked;
+    return result;
+  });
+  const supplies = rows(lendingSupplies, true), borrows = rows(lendingBorrows, false);
+  const shock = { asset: document.querySelector('#lending-shock-asset').value, pct: Number(document.querySelector('#lending-shock-pct').value) };
+  const days = Number(document.querySelector('#lending-days').value);
+  const request = { kind: 'lending', version: 2, chain_id: lendingMarketData.chain_id, market_address: lendingMarketData.address,
+    supplies, borrows, shock, days };
+  if (!safeLendingRequest(request) || supplies.some((row) => Number(row.amount) <= 0 || Number(row.price) <= 0)
+      || borrows.some((row) => Number(row.amount) <= 0 || Number(row.price) <= 0)) return lendingError('Confira quantidades e preços dos ativos.');
+  lendingError('');
+  pendingSimulationRequest = request;
+  chatInput.value = `Simule lending em ${lendingMarketData.name}: ${supplies.length} ativo(s) fornecido(s), ${borrows.length} empréstimo(s), ${days} dias`;
   resizeComposer();
   lendingDialog.close();
   chatForm.requestSubmit();

@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation, ROUND_DOWN, localcontext
 from urllib.parse import quote
 from scenarios import _money, pool_price_scenarios
 from historical import PERIOD_INTERVAL, replay_pool_history
+from lending_market import LendingMarketError, simulate as simulate_multi_lending
 
 
 ALTSIDE_BASE = os.environ.get("ALTSIDE_API_BASE_URL", "https://app.bigbanana.io").rstrip("/")
@@ -89,6 +90,23 @@ def lending_followup_request(text, previous):
         return None
     if re.search(r"\b(?:not[ií]cias?|news|swap|pool|outra\s+rede)\b", text, re.I):
         return None
+    if previous.get("version") == 2:
+        updated = {**previous, "shock": dict(previous.get("shock") or {}),
+                   "supplies": [dict(item) for item in previous.get("supplies", [])],
+                   "borrows": [dict(item) for item in previous.get("borrows", [])]}
+        changed = False
+        move = re.search(r"\b(?:cair|cai|queda|descer|desce|subir|sobe|alta)\s+(?:de\s+)?(\d{1,3})\s*%", text, re.I)
+        if move:
+            direction = -1 if re.search(r"cair|cai|queda|descer|desce", move.group(0), re.I) else 1
+            updated["shock"]["pct"] = direction * int(move.group(1))
+            changed = True
+        days = re.search(r"\b(\d{1,4})\s*dias?\b", text, re.I)
+        if days:
+            updated["days"] = int(days.group(1))
+            changed = True
+        if changed:
+            return updated
+        return None
     updated = dict(previous)
     changed = False
     for key, symbol in (("collateral_weth", "(?:WETH|ETH)"), ("borrow_usdc", "USDC")):
@@ -117,6 +135,11 @@ def handle_lending_text(text):
 
 def simulate_lending_request(request):
     """Read a canonical Aave V3 position quote from Altside and stress its WETH price."""
+    if isinstance(request, dict) and request.get("version") == 2:
+        try:
+            return simulate_multi_lending(request)
+        except LendingMarketError as error:
+            raise SimulationInputError(str(error)) from error
     required = {"kind", "collateral_weth", "borrow_usdc", "price_drop_pct"}
     if not isinstance(request, dict) or set(request) != required or request.get("kind") != "lending":
         raise SimulationInputError("Parâmetros de lending inválidos.")

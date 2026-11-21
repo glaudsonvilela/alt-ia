@@ -144,6 +144,7 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 .mode-menu button:hover{transform:translateY(-2px);border-color:#a3c2f477;background:linear-gradient(125deg,#303448,#252732)}
 .mode-menu button:focus-visible{outline:2px solid #9ebdf3;outline-offset:3px}
 .mode-menu-face{display:grid;place-items:center;width:40px;height:40px;border-radius:13px;background:#89abef27}
+#nerd-toggle .mode-menu-face{border-radius:50%}
 .mode-menu-face svg{display:block;width:36px;height:36px;overflow:visible}
 .mode-menu-copy{display:grid;gap:3px;min-width:0}
 .mode-menu-copy strong{font-size:14px;font-weight:600;line-height:1.2}

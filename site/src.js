@@ -52,24 +52,26 @@ function burstShortcutDialog(rect) {
   const burst = document.createElement('div');
   burst.className = 'shortcut-dialog-burst';
   burst.setAttribute('aria-hidden', 'true');
-  burst.style.left = `${rect.left + rect.width / 2}px`;
-  burst.style.top = `${rect.top + rect.height / 2}px`;
+  burst.style.left = `${rect.left}px`;
+  burst.style.top = `${rect.top}px`;
+  burst.style.width = `${rect.width}px`;
+  burst.style.height = `${rect.height}px`;
+  const levels = [0.18, 0.39, 0.61, 0.82];
   for (let index = 0; index < 8; index += 1) {
-    const angle = (-90 + index * 45) * Math.PI / 180;
-    const distance = 54 + (index % 3) * 14;
+    const side = index < 4 ? -1 : 1;
+    const row = index % 4;
     const piece = document.createElement('i');
-    piece.className = `shortcut-dialog-piece shortcut-dialog-piece-${index % 4}`;
-    piece.style.setProperty('--dx', `${Math.round(Math.cos(angle) * distance)}px`);
-    piece.style.setProperty('--dy', `${Math.round(Math.sin(angle) * distance)}px`);
-    piece.style.setProperty('--spin', `${index % 2 ? -110 : 110}deg`);
+    piece.className = `shortcut-dialog-piece shortcut-dialog-piece-${index % 6}`;
+    piece.style.left = `${side < 0 ? 0 : rect.width}px`;
+    piece.style.top = `${Math.round(rect.height * levels[row])}px`;
+    piece.style.setProperty('--dx', `${side * (68 + (row % 2) * 24)}px`);
+    piece.style.setProperty('--dy', `${Math.round((row - 1.5) * 18)}px`);
+    piece.style.setProperty('--spin', `${side * (65 + row * 15)}deg`);
+    piece.style.animationDelay = `${row * 20}ms`;
     burst.append(piece);
   }
-  const star = document.createElement('span');
-  star.className = 'shortcut-dialog-star';
-  star.textContent = '✦';
-  burst.append(star);
   document.body.append(burst);
-  window.setTimeout(() => burst.remove(), 460);
+  window.setTimeout(() => burst.remove(), 650);
 }
 
 function closeShortcutDialog(dialog) {

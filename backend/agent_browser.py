@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from usage_meter import record as record_usage
 
 from research_agent import search_web
 
@@ -132,7 +133,9 @@ def generate_speech(task, video, sources, snapshot, api_key):
     try:
         request = urllib.request.Request(ENDPOINT, body, {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(request, timeout=18) as upstream:
-            answer = json.load(upstream)["choices"][0]["message"].get("content", "")
+            model_result = json.load(upstream)
+            record_usage(model_result)
+            answer = model_result["choices"][0]["message"].get("content", "")
         return answer.strip().strip('"“”')[:180] if isinstance(answer, str) else ""
     except (OSError, ValueError, KeyError, IndexError):
         return ""
@@ -232,7 +235,9 @@ def choose_action(task, snapshot, steps, api_key, search_results=None, context=N
             "max_tokens": 950, "temperature": 0.1, "reasoning_effort": "medium", "stream": False}).encode()
         request = urllib.request.Request(ENDPOINT, body, {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(request, timeout=65) as upstream:
-            content = json.load(upstream)["choices"][0]["message"].get("content")
+            model_result = json.load(upstream)
+            record_usage(model_result)
+            content = model_result["choices"][0]["message"].get("content")
         if not isinstance(content, str):
             continue
         decoder = json.JSONDecoder()

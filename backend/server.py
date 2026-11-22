@@ -25,6 +25,7 @@ from agent_browser import cookie_value, session_from_cookie, session_path, worke
 from lending_market import LendingMarketError, markets as lending_markets, market as lending_market, wallet as lending_wallet
 from access_auth import AuthError, AuthService, cookie_value as auth_cookie_value
 from history_store import HistoryStore
+from usage_meter import configure as configure_usage, for_account as usage_for_account, record as record_usage
 
 
 MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -44,6 +45,7 @@ AUTH = AuthService.from_environment()
 HISTORY = HistoryStore(os.environ["ALT_IA_SESSION_DB"], os.environ["ALT_IA_HISTORY_KEY_FILE"]) if (
     os.environ.get("ALT_IA_SESSION_DB") and os.environ.get("ALT_IA_HISTORY_KEY_FILE")
 ) else None
+configure_usage(HISTORY.add_usage if HISTORY else None)
 
 window = deque()
 window_lock = threading.Lock()
@@ -87,7 +89,9 @@ def summarize_news(result, user_request=None, conversation=None):
     }, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=25) as upstream:
-            answer = json.load(upstream)["choices"][0]["message"]["content"]
+            model_result = json.load(upstream)
+            record_usage(model_result)
+            answer = model_result["choices"][0]["message"]["content"]
         if isinstance(answer, str) and 15 <= len(answer.strip()) <= 1100:
             if followup:
                 result["reply"] = answer.strip()
@@ -124,7 +128,9 @@ def summarize_wallet(wallet):
     }, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=25) as upstream:
-            choice = json.load(upstream)["choices"][0]
+            model_result = json.load(upstream)
+            record_usage(model_result)
+            choice = model_result["choices"][0]
             answer = choice["message"]["content"]
         if choice.get("finish_reason") == "stop" and isinstance(answer, str) and 20 <= len(answer.strip()) <= 1100 \
                 and "**" not in answer:
@@ -208,7 +214,9 @@ def answer_nerd(messages, topic, previous_query):
         "Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json", "Accept": "application/json",
     }, method="POST")
     with urllib.request.urlopen(request, timeout=82) as upstream:
-        choice = json.load(upstream)["choices"][0]
+        model_result = json.load(upstream)
+        record_usage(model_result)
+        choice = model_result["choices"][0]
     answer = choice["message"]["content"]
     if not isinstance(answer, str) or not answer.strip() or choice.get("finish_reason") == "length":
         raise ValueError("Resposta incompleta")
@@ -240,11 +248,13 @@ class Handler(BaseHTTPRequestHandler):
         if AUTH is None:
             self.authenticated_email = "local@altside.com"
             self.authenticated_profile = {"email": self.authenticated_email, "name": "Alt-IA local", "picture": ""}
+            usage_for_account(self.authenticated_email)
             return True
         profile = AUTH.profile_for(auth_cookie_value(self.headers.get("Cookie"), "alt_ia_session"))
         if profile:
             self.authenticated_profile = profile
             self.authenticated_email = profile["email"]
+            usage_for_account(self.authenticated_email)
             return True
         self.respond(401, {"error": "Acesso restrito. Entre com seu e-mail corporativo."})
         return False
@@ -390,6 +400,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/me":
             return self.respond(200, self.authenticated_profile)
+        if parsed.path == "/api/account":
+            if HISTORY is None:
+                return self.respond(503, {"error": "Conta indisponível."})
+            return self.respond(200, {**self.authenticated_profile, **HISTORY.account_for(self.authenticated_email)})
         if parsed.path == "/api/history":
             if HISTORY is None:
                 return self.respond(503, {"error": "Histórico indisponível."})
@@ -472,6 +486,23 @@ class Handler(BaseHTTPRequestHandler):
             return self.auth_post(self.path)
         if not self.access_ok():
             return
+        if self.path == "/api/account/role":
+            if HISTORY is None:
+                return self.respond(503, {"error": "Conta indisponível."})
+            if self.headers.get("Origin") != "https://ai.bigbanana.io":
+                return self.respond(403, {"error": "Origem não permitida."})
+            if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
+                return self.respond(415, {"error": "Envie JSON."})
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 2 <= length <= 1024:
+                    raise ValueError
+                payload = json.loads(self.rfile.read(length))
+                if not isinstance(payload, dict):
+                    raise ValueError
+                return self.respond(200, HISTORY.set_role(self.authenticated_email, payload.get("role")))
+            except (ValueError, TypeError, UnicodeDecodeError):
+                return self.respond(400, {"error": "Função inválida."})
         if self.path in ("/api/history", "/api/history/delete"):
             if HISTORY is None:
                 return self.respond(503, {"error": "Histórico indisponível."})
@@ -640,6 +671,7 @@ class Handler(BaseHTTPRequestHandler):
             }, method="POST")
             with urllib.request.urlopen(request, timeout=90) as upstream:
                 result = json.load(upstream)
+            record_usage(result)
             answer = result["choices"][0]["message"]["content"]
             if not isinstance(answer, str) or not answer.strip():
                 raise ValueError("Resposta vazia")

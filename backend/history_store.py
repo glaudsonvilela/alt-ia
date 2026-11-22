@@ -25,6 +25,49 @@ class HistoryStore:
                 "email TEXT NOT NULL, id TEXT NOT NULL, updated_at INTEGER NOT NULL, "
                 "deleted INTEGER NOT NULL, payload BLOB, PRIMARY KEY(email, id))"
             )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS account_settings ("
+                "email TEXT PRIMARY KEY, role BLOB, prompt_tokens INTEGER NOT NULL DEFAULT 0, "
+                "completion_tokens INTEGER NOT NULL DEFAULT 0, requests INTEGER NOT NULL DEFAULT 0)"
+            )
+
+    def account_for(self, email):
+        with self.lock, sqlite3.connect(self.database_path, timeout=5) as database:
+            row = database.execute(
+                "SELECT role, prompt_tokens, completion_tokens, requests FROM account_settings WHERE email=?",
+                (email,),
+            ).fetchone()
+        if not row:
+            return {"role": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "requests": 0}}
+        role, prompt, completion, requests = row
+        return {"role": self.cipher.decrypt(role).decode("utf-8") if role else "",
+                "usage": {"prompt_tokens": prompt, "completion_tokens": completion,
+                          "total_tokens": prompt + completion, "requests": requests}}
+
+    def set_role(self, email, role):
+        if not isinstance(role, str):
+            raise ValueError("Função inválida.")
+        role = role.strip()
+        if len(role) > 80 or any(ord(char) < 32 for char in role):
+            raise ValueError("Função inválida.")
+        encrypted = self.cipher.encrypt(role.encode("utf-8")) if role else None
+        with self.lock, sqlite3.connect(self.database_path, timeout=5) as database:
+            database.execute(
+                "INSERT INTO account_settings(email, role) VALUES (?, ?) "
+                "ON CONFLICT(email) DO UPDATE SET role=excluded.role", (email, encrypted)
+            )
+        return self.account_for(email)
+
+    def add_usage(self, email, prompt, completion):
+        if type(prompt) is not int or type(completion) is not int or not 0 <= prompt <= 10_000_000 or not 0 <= completion <= 10_000_000:
+            return
+        with self.lock, sqlite3.connect(self.database_path, timeout=5) as database:
+            database.execute(
+                "INSERT INTO account_settings(email, prompt_tokens, completion_tokens, requests) VALUES (?, ?, ?, 1) "
+                "ON CONFLICT(email) DO UPDATE SET prompt_tokens=prompt_tokens+excluded.prompt_tokens, "
+                "completion_tokens=completion_tokens+excluded.completion_tokens, requests=requests+1",
+                (email, prompt, completion),
+            )
 
     def list_for(self, email):
         with self.lock, sqlite3.connect(self.database_path, timeout=5) as database:

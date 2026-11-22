@@ -10,9 +10,9 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=69">
+  <link rel="stylesheet" href="/shell.css?v=70">
   <link rel="stylesheet" href="/agent.css?v=28">
-  <script defer src="/auth-bootstrap.js?v=6"></script>
+  <script defer src="/auth-bootstrap.js?v=7"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -47,12 +47,17 @@
       <nav class="conversation-history" id="conversation-history" aria-label="Histórico de conversas"></nav>
       <div class="sidebar-spacer"></div>
       <div class="sidebar-bottom">
-        <div class="development-state" id="account-state" hidden>
+        <button class="development-state" id="account-state" type="button" aria-label="Abrir informações da conta" aria-controls="account-panel" aria-expanded="false" hidden>
           <span class="state-symbol" aria-hidden="true"><span id="account-initials">A</span><img id="account-picture" alt="" referrerpolicy="no-referrer" hidden></span>
           <div><strong id="account-name"></strong><span id="account-email"></span></div>
-        </div>
-        <a class="simulator-link" href="https://app.bigbanana.io/">Abrir simulador Altside <span aria-hidden="true">↗</span></a>
-        <a class="simulator-link" href="/login.html" id="logout-link" hidden>Sair da Alt-IA <span aria-hidden="true">↗</span></a>
+          <span class="account-chevron" aria-hidden="true">⌄</span>
+        </button>
+        <section class="account-panel" id="account-panel" role="dialog" aria-label="Informações da conta" hidden>
+          <div class="account-panel-head"><div><small>CONTA ALTSIDE</small><strong id="panel-name"></strong><span id="panel-email"></span></div><button id="account-panel-close" type="button" aria-label="Fechar informações da conta">×</button></div>
+          <form class="account-role-form" id="account-role-form"><label for="account-role">Função na empresa</label><div><input id="account-role" name="role" type="text" maxlength="80" placeholder="Ex.: Consultor de investimentos" autocomplete="organization-title"><button type="submit">Salvar</button></div><small id="account-role-status" aria-live="polite"></small></form>
+          <div class="account-usage"><span>Uso da Alt-IA</span><strong id="account-tokens">—</strong><small>tokens registrados</small><div><span>Entrada <b id="account-prompt-tokens">—</b></span><span>Saída <b id="account-completion-tokens">—</b></span></div><small id="account-usage-note">Contagem disponível a partir desta versão.</small></div>
+          <button class="account-logout" id="logout-link" type="button">Sair da conta</button>
+        </section>
         <small>Histórico salvo somente neste navegador.</small>
       </div>
     </aside>

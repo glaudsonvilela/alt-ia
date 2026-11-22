@@ -399,7 +399,10 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if parsed.path == "/api/me":
-            return self.respond(200, self.authenticated_profile)
+            session = auth_cookie_value(self.headers.get("Cookie"), "alt_ia_session") if AUTH else None
+            headers = ({"Set-Cookie": f"alt_ia_session={session}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=43200"}
+                       if session else None)
+            return self.respond(200, self.authenticated_profile, headers)
         if parsed.path == "/api/account":
             if HISTORY is None:
                 return self.respond(503, {"error": "Conta indisponível."})

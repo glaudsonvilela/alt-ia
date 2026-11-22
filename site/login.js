@@ -56,7 +56,7 @@ async function setup() {
   const button = document.querySelector('#google-button');
   button.textContent = '';
   google.accounts.id.renderButton(button, {
-    theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with', width: 300,
+    theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with', width: Math.floor(button.clientWidth),
   });
 }
 setup().catch((error) => showMessage(error.message));

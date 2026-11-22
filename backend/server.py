@@ -24,6 +24,7 @@ from research_agent import search_web
 from agent_browser import cookie_value, session_from_cookie, session_path, worker_call, run as run_browser_agent
 from lending_market import LendingMarketError, markets as lending_markets, market as lending_market, wallet as lending_wallet
 from access_auth import AuthError, AuthService, cookie_value as auth_cookie_value
+from history_store import HistoryStore
 
 
 MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -40,6 +41,9 @@ if not API_KEY.startswith("nvapi-"):
     raise RuntimeError("Chave NVIDIA ausente ou inválida")
 SCENARIO_SECRET = hashlib.sha256((API_KEY + ":alt-ia-scenario-v1").encode()).digest()
 AUTH = AuthService.from_environment()
+HISTORY = HistoryStore(os.environ["ALT_IA_SESSION_DB"], os.environ["ALT_IA_HISTORY_KEY_FILE"]) if (
+    os.environ.get("ALT_IA_SESSION_DB") and os.environ.get("ALT_IA_HISTORY_KEY_FILE")
+) else None
 
 window = deque()
 window_lock = threading.Lock()
@@ -386,6 +390,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/me":
             return self.respond(200, self.authenticated_profile)
+        if parsed.path == "/api/history":
+            if HISTORY is None:
+                return self.respond(503, {"error": "Histórico indisponível."})
+            return self.respond(200, HISTORY.list_for(self.authenticated_email))
         if parsed.path in ("/api/agent/state", "/api/agent/image"):
             return self.agent_get(parsed.path)
         if self.path == "/healthz":
@@ -464,6 +472,26 @@ class Handler(BaseHTTPRequestHandler):
             return self.auth_post(self.path)
         if not self.access_ok():
             return
+        if self.path in ("/api/history", "/api/history/delete"):
+            if HISTORY is None:
+                return self.respond(503, {"error": "Histórico indisponível."})
+            if self.headers.get("Origin") != "https://ai.bigbanana.io":
+                return self.respond(403, {"error": "Origem não permitida."})
+            if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
+                return self.respond(415, {"error": "Envie JSON."})
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length < 2 or length > 2_000_000:
+                    raise ValueError
+                payload = json.loads(self.rfile.read(length))
+                if not isinstance(payload, dict):
+                    raise ValueError
+                result = (HISTORY.save_for(self.authenticated_email, payload.get("conversations"))
+                          if self.path == "/api/history" else
+                          HISTORY.delete_for(self.authenticated_email, payload.get("id")))
+                return self.respond(200, result)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                return self.respond(400, {"error": "Histórico inválido."})
         if self.path.startswith("/api/agent/"):
             return self.agent_post(self.path)
         if self.path != "/api/chat":

@@ -118,6 +118,7 @@ const storageNamespace = window.altIaStorageNamespace;
 if (!storageNamespace) throw new Error('Identidade da sessão indisponível.');
 const storageKey = `alt-ia-conversations-v2:${storageNamespace}`;
 const activeKey = `alt-ia-active-v2:${storageNamespace}`;
+const deletedKey = `alt-ia-deleted-v2:${storageNamespace}`;
 let poolOptions = null;
 let pendingSimulationRequest = null;
 let pendingWalletRequest = null;
@@ -372,6 +373,11 @@ function readConversations() {
 }
 
 const conversations = readConversations();
+let deletedHistory = [];
+try {
+  const savedDeleted = JSON.parse(localStorage.getItem(deletedKey) || '[]');
+  if (Array.isArray(savedDeleted)) deletedHistory = savedDeleted.filter((item) => item && typeof item.id === 'string').slice(-250);
+} catch { /* The local cache remains usable. */ }
 let activeId = localStorage.getItem(activeKey);
 if (!conversations.some((item) => item.id === activeId)) {
   activeId = conversations.sort((a, b) => b.updatedAt - a.updatedAt)[0]?.id || null;
@@ -435,11 +441,75 @@ function closeModeMenu() {
   modePlus?.setAttribute('aria-expanded', 'false');
 }
 
+const historyPending = new Map();
+const historyFingerprints = new Map();
+const historyDeletePending = new Set(deletedHistory.map((item) => item.id));
+let historyTimer = null;
+let historyUploading = false;
+
+function scheduleHistoryUpload(delay = 800) {
+  if (!window.altIaAuthenticated || historyTimer) return;
+  historyTimer = setTimeout(() => { historyTimer = null; void flushHistory(); }, delay);
+}
+
+async function flushHistory() {
+  if (historyUploading || !window.altIaAuthenticated) return;
+  historyUploading = true;
+  try {
+    while (historyDeletePending.size || historyPending.size) {
+      if (historyDeletePending.size) {
+        const id = historyDeletePending.values().next().value;
+        const response = await fetch('/api/history/delete', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+        if (!response.ok) throw new Error('Não foi possível sincronizar uma exclusão.');
+        historyDeletePending.delete(id);
+        deletedHistory = deletedHistory.filter((item) => item.id !== id);
+        localStorage.setItem(deletedKey, JSON.stringify(deletedHistory));
+      } else {
+        const [id, conversation] = historyPending.entries().next().value;
+        historyPending.delete(id);
+        const response = await fetch('/api/history', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversations: [conversation] }) });
+        if (!response.ok) {
+          historyPending.set(id, conversation);
+          throw new Error('Não foi possível sincronizar uma conversa.');
+        }
+      }
+    }
+  } catch {
+    scheduleHistoryUpload(10000);
+  } finally { historyUploading = false; }
+}
+
+function queueHistoryChanges() {
+  if (!window.altIaAuthenticated) return;
+  for (const conversation of conversations) {
+    const fingerprint = JSON.stringify(conversation);
+    if (historyFingerprints.get(conversation.id) !== fingerprint) {
+      historyFingerprints.set(conversation.id, fingerprint);
+      historyPending.set(conversation.id, conversation);
+    }
+  }
+  scheduleHistoryUpload();
+}
+
+function queueHistoryDelete(id) {
+  if (!window.altIaAuthenticated) return;
+  historyPending.delete(id);
+  historyFingerprints.delete(id);
+  historyDeletePending.add(id);
+  deletedHistory.push({ id, updatedAt: Date.now() });
+  deletedHistory = deletedHistory.slice(-250);
+  try { localStorage.setItem(deletedKey, JSON.stringify(deletedHistory)); } catch { /* Retry in this tab. */ }
+  scheduleHistoryUpload();
+}
+
 function persist() {
   try {
     localStorage.setItem(storageKey, JSON.stringify(conversations));
     if (activeId) localStorage.setItem(activeKey, activeId);
     else localStorage.removeItem(activeKey);
+    queueHistoryChanges();
   } catch {
     const notice = document.querySelector('.sidebar-bottom small');
     if (notice) notice.textContent = 'O histórico não pôde ser salvo neste navegador.';
@@ -510,6 +580,7 @@ function renderHistory() {
     pin.addEventListener('click', () => {
       pendingDeleteId = null;
       conversation.pinned = !conversation.pinned;
+      conversation.updatedAt = Date.now();
       persist();
       renderHistory();
       [...historyNav.querySelectorAll('.history-action-pin')].find((item) => item.dataset.conversationId === conversation.id)?.focus();
@@ -531,6 +602,7 @@ function renderHistory() {
       }
       const index = conversations.findIndex((item) => item.id === conversation.id);
       if (index !== -1) conversations.splice(index, 1);
+      queueHistoryDelete(conversation.id);
       if (agentStarted && agentOwnerId === conversation.id) void stopAgentSession();
       if (activeId === conversation.id) activeId = null;
       pendingDeleteId = null;
@@ -2429,6 +2501,7 @@ chatForm?.addEventListener('submit', async (event) => {
 
 renderHistory();
 renderConversation();
+queueHistoryChanges();
 
 let introFinished = false;
 let introTimeline;

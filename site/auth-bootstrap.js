@@ -2,7 +2,7 @@ const pendingKey = 'alt-ia-pending-action';
 
 function loadChat() {
   const script = document.createElement('script');
-  script.src = '/app.js?v=87';
+  script.src = '/app.js?v=88';
   script.onload = () => {
     if (!window.altIaAuthenticated) return;
     let pending;
@@ -36,7 +36,7 @@ function openLogin(pending) {
   google.async = true;
   document.head.append(google);
   const login = document.createElement('script');
-  login.src = '/login.js?v=3';
+  login.src = '/login.js?v=4';
   document.head.append(login);
 }
 
@@ -60,6 +60,49 @@ function installGuestGate() {
   }, true);
 }
 
+async function loadAccountHistory(namespace) {
+  const storageKey = `alt-ia-conversations-v2:${namespace}`;
+  const deletedKey = `alt-ia-deleted-v2:${namespace}`;
+  let local = [];
+  try {
+    const stored = JSON.parse(localStorage.getItem(storageKey) || '[]');
+    if (Array.isArray(stored)) local = stored;
+  } catch { /* A damaged local cache must not block login. */ }
+  try {
+    const response = await fetch('/api/history', {
+      credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(4000),
+    });
+    if (!response.ok) return;
+    const remote = await response.json();
+    const byId = new Map();
+    for (const item of Array.isArray(remote.conversations) ? remote.conversations : []) {
+      if (item && typeof item.id === 'string') byId.set(item.id, item);
+    }
+    const deleted = new Map((Array.isArray(remote.deleted) ? remote.deleted : [])
+      .filter((item) => item && typeof item.id === 'string').map((item) => [item.id, Number(item.updatedAt) || 0]));
+    try {
+      const localDeleted = JSON.parse(localStorage.getItem(deletedKey) || '[]');
+      if (Array.isArray(localDeleted)) {
+        for (const item of localDeleted) {
+          if (item && typeof item.id === 'string') deleted.set(item.id, Math.max(deleted.get(item.id) || 0, Number(item.updatedAt) || 0));
+        }
+      }
+    } catch { /* Ignore damaged deletion markers. */ }
+    for (const item of local) {
+      if (!item || typeof item.id !== 'string') continue;
+      const timestamp = Number(item.updatedAt) || 0;
+      if (timestamp <= (deleted.get(item.id) || 0)) continue;
+      if (!byId.has(item.id) || timestamp > (Number(byId.get(item.id).updatedAt) || 0)) byId.set(item.id, item);
+    }
+    for (const [id, timestamp] of deleted) {
+      if ((Number(byId.get(id)?.updatedAt) || 0) <= timestamp) byId.delete(id);
+    }
+    localStorage.setItem(storageKey, JSON.stringify([...byId.values()]));
+    const note = document.querySelector('.sidebar-bottom small');
+    if (note) note.textContent = 'Histórico sincronizado com sua conta.';
+  } catch { /* Use the local cache while the server is unavailable. */ }
+}
+
 (async () => {
   let profile = null;
   try {
@@ -71,6 +114,7 @@ function installGuestGate() {
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email.toLowerCase()));
     window.altIaStorageNamespace = Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
     window.altIaAuthenticated = true;
+    await loadAccountHistory(window.altIaStorageNamespace);
     const name = typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : email.split('@')[0];
     document.querySelector('#account-name').textContent = name;
     document.querySelector('#account-email').textContent = email;

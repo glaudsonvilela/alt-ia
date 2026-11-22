@@ -22,8 +22,8 @@ button{cursor:pointer}
 .auth-dialog-kicker{color:#cda5eb;font-size:10px;font-weight:700;letter-spacing:.18em}
 .auth-dialog h2{margin:9px 0 7px;font-size:30px;font-weight:680;letter-spacing:-.05em;line-height:1.1}
 .auth-dialog-copy{margin:0 0 23px;color:#b5adbd;font-size:13px;line-height:1.55}
-.auth-dialog #google-button{min-height:42px;color:#aaa6b4;font-size:12px}
-.auth-dialog #google-button [role="button"]{display:flex!important;align-items:center!important;width:300px!important;min-width:0!important;max-width:100%!important;height:42px!important;padding:0 14px!important;border:1px solid #d7d7da!important;border-radius:999px!important;background:#fff!important;color:#292933!important;cursor:pointer}
+.auth-dialog #google-button{width:min(100%,320px);min-height:42px;margin-inline:auto;border-radius:999px;overflow:hidden;color:#aaa6b4;font-size:12px}
+.auth-dialog #google-button [role="button"]{display:flex!important;align-items:center!important;width:100%!important;min-width:0!important;max-width:100%!important;height:42px!important;padding:0 14px!important;border:1px solid #d7d7da!important;border-radius:999px!important;background:#fff!important;color:#292933!important;cursor:pointer}
 .auth-dialog #google-button [role="button"]>div:first-child{display:none}
 .auth-dialog #google-button [role="button"]>div:nth-child(2){display:flex;align-items:center;gap:11px;min-width:0}
 .auth-dialog #google-button [role="button"] svg{display:block;width:20px!important;height:20px!important;flex:none}
@@ -34,7 +34,7 @@ button{cursor:pointer}
 .auth-dialog #code-step label{color:#d4d0db;font-size:12px;line-height:1.5}
 .auth-dialog #code-step input{width:100%;height:48px;padding:0 16px;border:1px solid #ffffff31;border-radius:12px;outline:none;background:#2b2c36;color:#fff;font:600 20px Geist,Arial,sans-serif;letter-spacing:.25em}
 .auth-dialog #code-step input:focus{border-color:#b489db;box-shadow:0 0 0 3px #a573d32c}
-.auth-dialog #code-step button{display:flex;align-items:center;justify-content:space-between;width:100%;height:46px;padding:0 16px;border:0;border-radius:12px;background:#ff831f;color:#211922;font:650 13px Geist,Arial,sans-serif}
+.auth-dialog #code-step button{display:flex;align-items:center;justify-content:center;width:100%;height:46px;padding:0 16px;border:0;border-radius:12px;background:#ff831f;color:#211922;font:650 13px Geist,Arial,sans-serif}
 .auth-dialog #code-step button:disabled{opacity:.55;cursor:wait}
 .auth-dialog #code-step p{margin:0;color:#86838f;font-size:11px}
 .auth-dialog #login-message{min-height:18px;margin:15px 0 0;color:#f5a4aa;font-size:12px;line-height:1.5}

@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="dark">
   <title>Entrar · Alt-IA</title>
   <link rel="icon" href="/favicon.svg">
-  <link rel="stylesheet" href="/login.css?v=2">
+  <link rel="stylesheet" href="/login.css?v=3">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="/login.js" defer></script>
+  <script src="/login.js?v=4" defer></script>
 </head>
 <body>
   <main class="login-card">
@@ -22,7 +22,7 @@
     <form id="code-step" hidden>
       <label for="code">Código enviado para <strong id="email-label"></strong></label>
       <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required placeholder="000000">
-      <button type="submit">Confirmar e entrar <span aria-hidden="true">↗</span></button>
+      <button type="submit">Confirmar e entrar</button>
       <p>O código expira em 10 minutos.</p>
     </form>
     <p id="login-message" role="status" aria-live="polite"></p>

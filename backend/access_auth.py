@@ -8,11 +8,13 @@ import json
 import os
 import secrets
 import smtplib
+import sqlite3
 import ssl
 import threading
 import time
 from email.message import EmailMessage
 from http.cookies import SimpleCookie
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from google.auth.transport import requests as google_requests
@@ -35,7 +37,8 @@ class AuthService:
     def __init__(self, client_id, domain, smtp_host, smtp_port, smtp_from,
                  smtp_user="", smtp_password_file="", smtp_mode="starttls",
                  verifier=None, sender=None, now=None, mail_provider="smtp",
-                 gmail_client_secret_file="", gmail_refresh_token_file=""):
+                 gmail_client_secret_file="", gmail_refresh_token_file="",
+                 session_db_path=""):
         if not client_id or not smtp_from:
             raise ValueError("Configure Google Client ID e remetente antes de iniciar a Alt-IA.")
         if mail_provider not in ("smtp", "gmail_api"):
@@ -79,6 +82,7 @@ class AuthService:
         self.mail_provider = mail_provider
         self.gmail_client_secret_file = gmail_client_secret_file
         self.gmail_refresh_token_file = gmail_refresh_token_file
+        self.session_db_path = session_db_path
         self.verifier = verifier or self._verify_google
         self.sender = sender or self._send_email
         self.now = now or time.time
@@ -86,6 +90,19 @@ class AuthService:
         self.challenges = {}
         self.sessions = {}
         self.last_email = {}
+        if session_db_path:
+            try:
+                if not os.path.exists(session_db_path):
+                    descriptor = os.open(session_db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                    os.close(descriptor)
+                os.chmod(session_db_path, 0o600)
+                with sqlite3.connect(session_db_path, timeout=5) as database:
+                    database.execute(
+                        "CREATE TABLE IF NOT EXISTS auth_sessions ("
+                        "token_hash TEXT PRIMARY KEY, profile_json TEXT NOT NULL, expires_at REAL NOT NULL)"
+                    )
+            except (OSError, sqlite3.Error) as error:
+                raise ValueError("Arquivo privado de sessões indisponível.") from error
 
     @classmethod
     def from_environment(cls):
@@ -103,6 +120,7 @@ class AuthService:
             mail_provider=os.environ.get("ALT_IA_MAIL_PROVIDER", "gmail_api"),
             gmail_client_secret_file=os.environ.get("ALT_IA_GMAIL_CLIENT_SECRET_FILE", ""),
             gmail_refresh_token_file=os.environ.get("ALT_IA_GMAIL_REFRESH_TOKEN_FILE", ""),
+            session_db_path=os.environ.get("ALT_IA_SESSION_DB", ""),
         )
 
     def _verify_google(self, credential):
@@ -119,13 +137,14 @@ class AuthService:
             f"Seu código de acesso à Alt-IA é {code}.\n"
             "Ele expira em 10 minutos. Se você não pediu acesso, ignore esta mensagem.\n"
         )
+        tile_colors = ("#f8a7c5", "#b99af0", "#9bbcf5", "#93dfbd", "#ffc483", "#f6a6a3")
         digits = "".join(
             '<td style="width:16.66%;padding:0 2px;vertical-align:middle">'
             '<div style="height:54px;line-height:54px;text-align:center;'
-            'border:1px solid #625275;border-radius:11px;background:#2b2735;'
-            'color:#ffffff;font-family:Arial,Helvetica,sans-serif;'
+            f'border:1px solid {tile_colors[index]};border-radius:11px;background:{tile_colors[index]};'
+            'color:#25202d;font-family:Arial,Helvetica,sans-serif;'
             f'font-size:25px;font-weight:700">{escape(digit)}</div></td>'
-            for digit in code
+            for index, digit in enumerate(code)
         )
         message.add_alternative(f"""<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
@@ -135,17 +154,13 @@ class AuthService:
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:520px">
     <tr><td style="padding:0 2px 18px">
       <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-        <td style="width:34px;height:34px;text-align:center;border-radius:11px;background:#ad73d8;color:#17181e;font-size:20px;font-weight:700">✦</td>
+        <td style="width:38px;height:38px"><img src="cid:alt-ia-mascot-icon" width="38" height="38" alt="Mascote Alt-IA" style="display:block;width:38px;height:38px;border:0"></td>
         <td style="padding-left:11px;color:#f6f5f8;font-size:18px;font-weight:700;letter-spacing:-.04em">Alt-IA</td>
       </tr></table>
     </td></tr>
     <tr><td style="border:1px solid #5d4a6c;border-radius:20px;background:#22232b;padding:32px 30px 30px">
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-        <tr><td style="padding-bottom:22px">
-          <span style="display:inline-block;width:18px;height:18px;border-radius:6px;background:#ff831f;vertical-align:middle"></span>
-          <span style="display:inline-block;width:13px;height:13px;margin-left:8px;transform:rotate(45deg);background:#ad73d8;vertical-align:middle"></span>
-          <span style="display:inline-block;width:8px;height:8px;margin-left:9px;border-radius:50%;background:#f49ab5;vertical-align:middle"></span>
-        </td></tr>
+        <tr><td style="padding-bottom:23px"><img src="cid:alt-ia-mascots" width="440" height="135" alt="Mascotes coloridos da Alt-IA" style="display:block;width:100%;max-width:440px;height:auto;border:0;border-radius:14px"></td></tr>
         <tr><td style="color:#c9a4e4;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase">Acesso à Alt-IA</td></tr>
         <tr><td style="padding-top:8px;color:#f6f5f8;font-size:27px;line-height:1.2;font-weight:700;letter-spacing:-1px">Confirme seu e-mail</td></tr>
         <tr><td style="padding-top:12px;color:#b6b3c0;font-size:14px;line-height:1.6">Use este código para concluir sua entrada. Ele expira em 10 minutos.</td></tr>
@@ -159,6 +174,14 @@ class AuthService:
   </table>
 </td></tr></table>
 </body></html>""", subtype="html")
+        html_part = message.get_body(preferencelist=("html",))
+        for filename, content_id in (("email_mascot_icon.png", "alt-ia-mascot-icon"),
+                                     ("email_mascots.png", "alt-ia-mascots")):
+            html_part.add_related(
+                (Path(__file__).parent / filename).read_bytes(),
+                maintype="image", subtype="png", cid=f"<{content_id}>",
+                disposition="inline",
+            )
         if self.mail_provider == "gmail_api":
             with open(self.gmail_client_secret_file, encoding="utf-8") as file:
                 oauth = json.load(file)["web"]
@@ -200,7 +223,11 @@ class AuthService:
 
     def _prune(self, current):
         self.challenges = {k: v for k, v in self.challenges.items() if v[2] > current}
-        self.sessions = {k: v for k, v in self.sessions.items() if v[1] > current}
+        if self.session_db_path:
+            with sqlite3.connect(self.session_db_path, timeout=5) as database:
+                database.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (current,))
+        else:
+            self.sessions = {k: v for k, v in self.sessions.items() if v[1] > current}
         self.last_email = {k: v for k, v in self.last_email.items() if v > current - 60}
 
     def begin(self, credential):
@@ -270,16 +297,32 @@ class AuthService:
                 raise AuthError("Código inválido ou expirado.")
             self.challenges.pop(key, None)
             session = secrets.token_urlsafe(32)
-            self.sessions[self._digest(session)] = (record[4], current + 12 * 3600)
+            if self.session_db_path:
+                with sqlite3.connect(self.session_db_path, timeout=5) as database:
+                    database.execute(
+                        "INSERT INTO auth_sessions VALUES (?, ?, ?)",
+                        (self._digest(session), json.dumps(record[4]), current + 12 * 3600),
+                    )
+            else:
+                self.sessions[self._digest(session)] = (record[4], current + 12 * 3600)
         return session, record[0]
 
     def profile_for(self, session):
         if not isinstance(session, str):
             return None
         with self.lock:
-            record = self.sessions.get(self._digest(session))
-            if record and record[1] > self.now():
-                return dict(record[0])
+            if self.session_db_path:
+                with sqlite3.connect(self.session_db_path, timeout=5) as database:
+                    record = database.execute(
+                        "SELECT profile_json, expires_at FROM auth_sessions WHERE token_hash = ?",
+                        (self._digest(session),),
+                    ).fetchone()
+                if record and record[1] > self.now():
+                    return json.loads(record[0])
+            else:
+                record = self.sessions.get(self._digest(session))
+                if record and record[1] > self.now():
+                    return dict(record[0])
         return None
 
     def email_for(self, session):
@@ -289,7 +332,13 @@ class AuthService:
     def logout(self, session):
         if isinstance(session, str):
             with self.lock:
-                self.sessions.pop(self._digest(session), None)
+                if self.session_db_path:
+                    with sqlite3.connect(self.session_db_path, timeout=5) as database:
+                        database.execute(
+                            "DELETE FROM auth_sessions WHERE token_hash = ?", (self._digest(session),)
+                        )
+                else:
+                    self.sessions.pop(self._digest(session), None)
 
 
 def cookie_value(header, name):

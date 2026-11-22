@@ -51,6 +51,25 @@ class AuthServiceTests(unittest.TestCase):
             "email": "ana@altside.com", "name": "ana", "picture": "",
         })
 
+    def test_session_survives_server_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = os.path.join(directory, "sessions.sqlite3")
+            def make_service():
+                return AuthService(
+                    "test.apps.googleusercontent.com", "altside.com", "smtp.example.com",
+                    587, "noreply@altside.com", verifier=lambda _: self.claims,
+                    sender=lambda email, code: self.mail.append((email, code)),
+                    now=lambda: self.current, session_db_path=database_path,
+                )
+            first = make_service()
+            challenge, _ = first.begin("google-token")
+            session, _ = first.complete(challenge, self.mail[-1][1])
+            second = make_service()
+            self.assertEqual(second.profile_for(session)["name"], "Ana Silva")
+            self.assertEqual(os.stat(database_path).st_mode & 0o777, 0o600)
+            second.logout(session)
+            self.assertIsNone(first.profile_for(session))
+
     def test_rejects_non_workspace_and_unverified_accounts(self):
         for claims in (
             {"email": "ana@altside.com", "email_verified": True},
@@ -111,9 +130,12 @@ class AuthServiceTests(unittest.TestCase):
             html = message.get_body(preferencelist=("html",)).get_content()
             self.assertIn("Confirme seu e-mail", html)
             self.assertIn("expira em 10 minutos", html)
-            self.assertEqual(html.count('background:#2b2735'), 6)
+            self.assertEqual(html.count('color:#25202d'), 6)
             for digit in "123456":
                 self.assertIn(f">{digit}</div>", html)
+            self.assertIn("cid:alt-ia-mascots", html)
+            related = [part for part in message.walk() if part.get_content_type() == "image/png"]
+            self.assertEqual(len(related), 2)
 
 
 if __name__ == "__main__":

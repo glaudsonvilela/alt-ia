@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import base64
+from html import escape
 import json
 import os
 import secrets
@@ -12,6 +13,7 @@ import threading
 import time
 from email.message import EmailMessage
 from http.cookies import SimpleCookie
+from urllib.parse import urlsplit
 
 from google.auth.transport import requests as google_requests
 from google.auth.transport.requests import AuthorizedSession
@@ -117,6 +119,46 @@ class AuthService:
             f"Seu código de acesso à Alt-IA é {code}.\n"
             "Ele expira em 10 minutos. Se você não pediu acesso, ignore esta mensagem.\n"
         )
+        digits = "".join(
+            '<td style="width:16.66%;padding:0 2px;vertical-align:middle">'
+            '<div style="height:54px;line-height:54px;text-align:center;'
+            'border:1px solid #625275;border-radius:11px;background:#2b2735;'
+            'color:#ffffff;font-family:Arial,Helvetica,sans-serif;'
+            f'font-size:25px;font-weight:700">{escape(digit)}</div></td>'
+            for digit in code
+        )
+        message.add_alternative(f"""<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#17181e;color:#f6f5f8;font-family:Arial,Helvetica,sans-serif">
+<div style="display:none;font-size:1px;color:#17181e;max-height:0;overflow:hidden">Seu código de acesso à Alt-IA expira em 10 minutos.</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#17181e"><tr><td align="center" style="padding:36px 16px 48px">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:520px">
+    <tr><td style="padding:0 2px 18px">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+        <td style="width:34px;height:34px;text-align:center;border-radius:11px;background:#ad73d8;color:#17181e;font-size:20px;font-weight:700">✦</td>
+        <td style="padding-left:11px;color:#f6f5f8;font-size:18px;font-weight:700;letter-spacing:-.04em">Alt-IA</td>
+      </tr></table>
+    </td></tr>
+    <tr><td style="border:1px solid #5d4a6c;border-radius:20px;background:#22232b;padding:32px 30px 30px">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr><td style="padding-bottom:22px">
+          <span style="display:inline-block;width:18px;height:18px;border-radius:6px;background:#ff831f;vertical-align:middle"></span>
+          <span style="display:inline-block;width:13px;height:13px;margin-left:8px;transform:rotate(45deg);background:#ad73d8;vertical-align:middle"></span>
+          <span style="display:inline-block;width:8px;height:8px;margin-left:9px;border-radius:50%;background:#f49ab5;vertical-align:middle"></span>
+        </td></tr>
+        <tr><td style="color:#c9a4e4;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase">Acesso à Alt-IA</td></tr>
+        <tr><td style="padding-top:8px;color:#f6f5f8;font-size:27px;line-height:1.2;font-weight:700;letter-spacing:-1px">Confirme seu e-mail</td></tr>
+        <tr><td style="padding-top:12px;color:#b6b3c0;font-size:14px;line-height:1.6">Use este código para concluir sua entrada. Ele expira em 10 minutos.</td></tr>
+        <tr><td style="padding-top:26px;padding-bottom:23px">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" aria-label="Código de verificação"><tr>{digits}</tr></table>
+        </td></tr>
+        <tr><td style="padding-top:19px;border-top:1px solid #ffffff1a;color:#92909c;font-size:12px;line-height:1.6">Se você não pediu acesso, pode ignorar este e-mail. Não compartilhe o código com ninguém.</td></tr>
+      </table>
+    </td></tr>
+    <tr><td style="padding:18px 2px 0;color:#777680;font-size:11px;line-height:1.5">Alt-IA · Altside<br>Mensagem automática de verificação de acesso.</td></tr>
+  </table>
+</td></tr></table>
+</body></html>""", subtype="html")
         if self.mail_provider == "gmail_api":
             with open(self.gmail_client_secret_file, encoding="utf-8") as file:
                 oauth = json.load(file)["web"]
@@ -176,6 +218,22 @@ class AuthService:
                 len(email) > 254):
             raise AuthError("Use sua conta Google corporativa @" + self.domain + ".")
         email = email.lower()
+        name = claims.get("name")
+        if not isinstance(name, str) or not name.strip():
+            name = email.split("@", 1)[0]
+        name = name.strip()[:100]
+        picture = claims.get("picture")
+        if isinstance(picture, str) and len(picture) <= 1024:
+            try:
+                parsed = urlsplit(picture)
+                allowed_picture = parsed.scheme == "https" and parsed.hostname == "lh3.googleusercontent.com"
+            except ValueError:
+                allowed_picture = False
+            if not allowed_picture:
+                picture = ""
+        else:
+            picture = ""
+        profile = {"email": email, "name": name, "picture": picture}
         current = self.now()
         with self.lock:
             self._prune(current)
@@ -193,7 +251,7 @@ class AuthService:
             self.challenges = {
                 key: record for key, record in self.challenges.items() if record[0] != email
             }
-            self.challenges[self._digest(challenge)] = [email, code_hash, current + 600, 0]
+            self.challenges[self._digest(challenge)] = [email, code_hash, current + 600, 0, profile]
         return challenge, email
 
     def complete(self, challenge, code):
@@ -212,17 +270,21 @@ class AuthService:
                 raise AuthError("Código inválido ou expirado.")
             self.challenges.pop(key, None)
             session = secrets.token_urlsafe(32)
-            self.sessions[self._digest(session)] = (record[0], current + 12 * 3600)
+            self.sessions[self._digest(session)] = (record[4], current + 12 * 3600)
         return session, record[0]
 
-    def email_for(self, session):
+    def profile_for(self, session):
         if not isinstance(session, str):
             return None
         with self.lock:
             record = self.sessions.get(self._digest(session))
             if record and record[1] > self.now():
-                return record[0]
+                return dict(record[0])
         return None
+
+    def email_for(self, session):
+        profile = self.profile_for(session)
+        return profile["email"] if profile else None
 
     def logout(self, session):
         if isinstance(session, str):

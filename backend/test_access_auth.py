@@ -1,4 +1,6 @@
 import base64
+from email import policy
+from email.parser import BytesParser
 import json
 import os
 import tempfile
@@ -13,7 +15,8 @@ class AuthServiceTests(unittest.TestCase):
         self.current = 1000
         self.mail = []
         self.claims = {
-            "email": "Ana@altside.com", "email_verified": True, "hd": "altside.com"
+            "email": "Ana@altside.com", "email_verified": True, "hd": "altside.com",
+            "name": "Ana Silva", "picture": "https://lh3.googleusercontent.com/a/profile-picture"
         }
         self.auth = AuthService(
             "test.apps.googleusercontent.com", "altside.com", "smtp.example.com",
@@ -30,10 +33,23 @@ class AuthServiceTests(unittest.TestCase):
         session, signed_in = self.auth.complete(challenge, self.mail[0][1])
         self.assertEqual(signed_in, email)
         self.assertEqual(self.auth.email_for(session), email)
+        self.assertEqual(self.auth.profile_for(session), {
+            "email": email, "name": "Ana Silva",
+            "picture": "https://lh3.googleusercontent.com/a/profile-picture",
+        })
         with self.assertRaises(AuthError):
             self.auth.complete(challenge, self.mail[0][1])
         self.auth.logout(session)
         self.assertIsNone(self.auth.email_for(session))
+
+    def test_profile_falls_back_and_rejects_external_picture(self):
+        self.claims["name"] = " "
+        self.claims["picture"] = "https://example.com/avatar.png"
+        challenge, _ = self.auth.begin("google-token")
+        session, _ = self.auth.complete(challenge, self.mail[0][1])
+        self.assertEqual(self.auth.profile_for(session), {
+            "email": "ana@altside.com", "name": "ana", "picture": "",
+        })
 
     def test_rejects_non_workspace_and_unverified_accounts(self):
         for claims in (
@@ -87,10 +103,17 @@ class AuthServiceTests(unittest.TestCase):
                 auth._send_email("ana@altside.com", "123456")
             args, kwargs = mock_session.post.call_args
             self.assertEqual(args[0], "https://gmail.googleapis.com/gmail/v1/users/me/messages/send")
-            raw = base64.urlsafe_b64decode(kwargs["json"]["raw"]).decode("utf-8")
-            self.assertIn("glaudson@altside.com", raw)
-            self.assertIn("ana@altside.com", raw)
-            self.assertIn("123456", raw)
+            raw = base64.urlsafe_b64decode(kwargs["json"]["raw"])
+            message = BytesParser(policy=policy.default).parsebytes(raw)
+            self.assertIn("glaudson@altside.com", message["From"])
+            self.assertEqual(message["To"], "ana@altside.com")
+            self.assertIn("123456", message.get_body(preferencelist=("plain",)).get_content())
+            html = message.get_body(preferencelist=("html",)).get_content()
+            self.assertIn("Confirme seu e-mail", html)
+            self.assertIn("expira em 10 minutos", html)
+            self.assertEqual(html.count('background:#2b2735'), 6)
+            for digit in "123456":
+                self.assertIn(f">{digit}</div>", html)
 
 
 if __name__ == "__main__":

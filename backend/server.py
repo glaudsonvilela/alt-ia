@@ -235,10 +235,12 @@ class Handler(BaseHTTPRequestHandler):
     def access_ok(self):
         if AUTH is None:
             self.authenticated_email = "local@altside.com"
+            self.authenticated_profile = {"email": self.authenticated_email, "name": "Alt-IA local", "picture": ""}
             return True
-        email = AUTH.email_for(auth_cookie_value(self.headers.get("Cookie"), "alt_ia_session"))
-        if email:
-            self.authenticated_email = email
+        profile = AUTH.profile_for(auth_cookie_value(self.headers.get("Cookie"), "alt_ia_session"))
+        if profile:
+            self.authenticated_profile = profile
+            self.authenticated_email = profile["email"]
             return True
         self.respond(401, {"error": "Acesso restrito. Entre com seu e-mail corporativo."})
         return False
@@ -383,7 +385,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if parsed.path == "/api/me":
-            return self.respond(200, {"email": self.authenticated_email})
+            return self.respond(200, self.authenticated_profile)
         if parsed.path in ("/api/agent/state", "/api/agent/image"):
             return self.agent_get(parsed.path)
         if self.path == "/healthz":

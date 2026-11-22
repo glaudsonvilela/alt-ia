@@ -61,15 +61,29 @@ function installGuestGate() {
 }
 
 (async () => {
-  let email = '';
+  let profile = null;
   try {
     const response = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' });
-    if (response.ok) ({ email } = await response.json());
+    if (response.ok) profile = await response.json();
   } catch { /* The login dialog handles an unavailable server. */ }
+  const email = profile?.email;
   if (typeof email === 'string' && email.includes('@')) {
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email.toLowerCase()));
     window.altIaStorageNamespace = Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
     window.altIaAuthenticated = true;
+    const name = typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : email.split('@')[0];
+    document.querySelector('#account-name').textContent = name;
+    document.querySelector('#account-email').textContent = email;
+    document.querySelector('#account-initials').textContent = name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toLocaleUpperCase('pt-BR');
+    document.querySelector('#account-state').removeAttribute('hidden');
+    if (typeof profile.picture === 'string' && profile.picture.startsWith('https://lh3.googleusercontent.com/')) {
+      const image = document.querySelector('#account-picture');
+      image.onload = () => {
+        image.removeAttribute('hidden');
+        document.querySelector('#account-initials').hidden = true;
+      };
+      image.src = profile.picture;
+    }
     document.querySelector('#logout-link')?.removeAttribute('hidden');
     document.querySelector('#logout-link')?.addEventListener('click', async (event) => {
       event.preventDefault();

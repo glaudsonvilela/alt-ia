@@ -10,9 +10,9 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=70">
+  <link rel="stylesheet" href="/shell.css?v=71">
   <link rel="stylesheet" href="/agent.css?v=28">
-  <script defer src="/auth-bootstrap.js?v=9"></script>
+  <script defer src="/auth-bootstrap.js?v=10"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -53,9 +53,13 @@
           <span class="account-chevron" aria-hidden="true">⌄</span>
         </button>
         <section class="account-panel" id="account-panel" role="dialog" aria-label="Informações da conta" hidden>
-          <div class="account-panel-head"><div><small>CONTA ALTSIDE</small><strong id="panel-name"></strong><span id="panel-email"></span></div><button id="account-panel-close" type="button" aria-label="Fechar informações da conta">×</button></div>
+          <div class="account-panel-head">
+            <span class="account-panel-avatar state-symbol" aria-hidden="true"><span id="panel-initials">A</span><img id="panel-picture" alt="" referrerpolicy="no-referrer" hidden></span>
+            <div class="account-panel-identity"><small>CONTA ALTSIDE</small><strong id="panel-name"></strong><span id="panel-email"></span></div>
+            <button id="account-panel-close" type="button" aria-label="Fechar informações da conta">×</button>
+          </div>
           <form class="account-role-form" id="account-role-form"><label for="account-role">Função na empresa</label><div><input id="account-role" name="role" type="text" maxlength="80" placeholder="Ex.: Consultor de investimentos" autocomplete="organization-title"><button type="submit">Salvar</button></div><small id="account-role-status" aria-live="polite"></small></form>
-          <div class="account-usage"><span>Uso da Alt-IA</span><strong id="account-tokens">—</strong><small>tokens registrados</small><div><span>Entrada <b id="account-prompt-tokens">—</b></span><span>Saída <b id="account-completion-tokens">—</b></span></div><small id="account-usage-note">Contagem disponível a partir desta versão.</small></div>
+          <div class="account-usage"><span>Uso da Alt-IA</span><strong id="account-tokens">—</strong><small>tokens registrados</small><div class="account-usage-bar" aria-hidden="true"><span id="account-usage-prompt-bar"></span></div><div class="account-usage-split"><span>Entrada <b id="account-prompt-tokens">—</b></span><span>Saída <b id="account-completion-tokens">—</b></span></div><small id="account-usage-note">Contagem disponível a partir desta versão.</small></div>
           <button class="account-logout" id="logout-link" type="button">Sair da conta</button>
         </section>
         <small id="history-status" hidden></small>

@@ -21,12 +21,6 @@ button{cursor:pointer}
 .auth-dialog h2{margin:9px 0 7px;font-size:30px;font-weight:680;letter-spacing:-.05em;line-height:1.1}
 .auth-dialog-copy{margin:0 0 23px;color:#b5adbd;font-size:13px;line-height:1.55}
 .auth-dialog #google-button{width:min(100%,320px);min-height:42px;margin-inline:auto;border-radius:999px;overflow:hidden;color:#aaa6b4;font-size:12px}
-.auth-dialog #google-button [role="button"]{display:flex!important;align-items:center!important;width:100%!important;min-width:0!important;max-width:100%!important;height:42px!important;padding:0 14px!important;border:1px solid #d7d7da!important;border-radius:999px!important;background:#fff!important;color:#292933!important;cursor:pointer}
-.auth-dialog #google-button [role="button"]>div:first-child{display:none}
-.auth-dialog #google-button [role="button"]>div:nth-child(2){display:flex;align-items:center;gap:11px;min-width:0}
-.auth-dialog #google-button [role="button"] svg{display:block;width:20px!important;height:20px!important;flex:none}
-.auth-dialog #google-button [role="button"] span:not(#button-label){font:600 13px Geist,Arial,sans-serif;white-space:nowrap}
-.auth-dialog #google-button [role="button"] #button-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .auth-dialog #code-step{display:grid;gap:11px}
 .auth-dialog #google-step[hidden],.auth-dialog #code-step[hidden]{display:none}
 .auth-dialog #code-step label{color:#d4d0db;font-size:12px;line-height:1.5}
@@ -379,3 +373,36 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 .mode-mascot-burst i:nth-child(3n){width:5px;height:5px;border-radius:50%}
 .mode-mascot-burst i:nth-child(4n){width:6px;height:10px}
 @keyframes mode-mascot-piece{0%{opacity:1;transform:translate(0,0) rotate(0) scale(1)}100%{opacity:0;transform:translate(var(--dx),var(--dy)) rotate(var(--turn)) scale(.25)}}
+
+/* The account card uses the same surface, radii and exit geometry as the shortcut windows. */
+.account-panel{width:min(340px,calc(100vw - 310px));padding:20px;border-color:#c392ed52;border-radius:20px;background:radial-gradient(circle at 82% 0,#573c7838,transparent 43%),linear-gradient(160deg,#25212e,#1a1b24 68%);box-shadow:0 24px 72px #0009,0 0 48px #8650b31b;transform-origin:left bottom;animation:account-panel-open-v2 .42s cubic-bezier(.2,.8,.2,1) both}
+.account-panel::before{content:"";position:absolute;top:0;left:20px;width:56px;height:2px;border-radius:0 0 3px 3px;background:linear-gradient(90deg,#ef9bb7,#ba8ce5,#87aaf0)}
+.account-panel.is-closing{pointer-events:none;animation:shortcut-dialog-pop .26s cubic-bezier(.32,0,.7,1) both}
+.account-panel-head{display:grid;grid-template-columns:40px minmax(0,1fr) 30px;align-items:center;gap:11px;padding-bottom:18px}
+.account-panel .account-panel-avatar{width:40px;height:40px;border-color:#d1a6e887;font-size:13px;box-shadow:0 0 0 4px #b78be91a}
+.account-panel-head .account-panel-identity{display:grid;gap:2px;min-width:0}
+.account-panel-head small{font-size:9px;letter-spacing:.14em}
+.account-panel-head strong{margin-top:2px;font-size:15px;line-height:1.2}
+.account-panel-head .account-panel-identity>span{font-size:11px}
+.account-panel-head button{width:30px;height:30px;border-radius:10px;transition:background .18s,border-color .18s,transform .18s}
+.account-panel-head button:hover{transform:rotate(90deg);border-color:#c392ed66;background:#c392ed20}
+.account-role-form{gap:8px;margin-top:18px}
+.account-role-form label,.account-usage>span{font-size:11px;font-weight:650}
+.account-role-form>div{gap:8px}
+.account-role-form input{height:38px;border-radius:10px;background:#181920}
+.account-role-form button{min-width:58px;border-radius:10px;background:#b68bd9;transition:background .18s,transform .18s}
+.account-role-form button:hover:not(:disabled){transform:translateY(-1px);background:#c7a2e5}
+.account-role-form>small:empty{display:none}
+.account-role-form>small:not(:empty){min-height:0;margin-top:1px}
+.account-usage{gap:3px;margin-top:20px;padding:16px;border-color:#c392ed28;border-radius:14px;background:linear-gradient(145deg,#ffffff0b,#ffffff04)}
+.account-usage>strong{margin-top:4px;font-size:30px;line-height:1.06}
+.account-usage>small{font-size:10px}
+.account-usage .account-usage-bar{height:6px;margin-top:13px;padding:0;border:0;border-radius:10px;background:#eea1aa;overflow:hidden}
+.account-usage-bar span{display:block;height:100%;width:50%;border-radius:inherit;background:#b68bd9;transition:width .35s ease}
+.account-usage .account-usage-split{margin-top:11px;padding-top:11px}
+.account-usage #account-usage-note{margin-top:9px;padding-top:9px;border-top:1px solid #ffffff13;line-height:1.4}
+.account-logout{height:36px;margin-top:14px;padding:0;border-radius:10px;transition:background .18s,border-color .18s}
+.account-logout:hover{border-color:#c392ed55;background:#c392ed17}
+@keyframes account-panel-open-v2{from{opacity:0;transform:translate(-12px,12px) scale(.93);filter:blur(4px)}72%{opacity:1;transform:translate(2px,-2px) scale(1.012);filter:blur(0)}to{opacity:1;transform:translate(0,0) scale(1);filter:blur(0)}}
+@media(max-width:720px){.account-panel{width:100%;transform-origin:center bottom;animation:account-panel-open-v2 .42s cubic-bezier(.2,.8,.2,1) both}.account-panel.is-closing{animation:shortcut-dialog-pop .26s cubic-bezier(.32,0,.7,1) both}}
+@media(prefers-reduced-motion:reduce){.account-panel,.account-panel.is-closing{animation:none}.account-usage-bar span{transition:none}}

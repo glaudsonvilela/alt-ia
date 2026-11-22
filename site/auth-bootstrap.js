@@ -66,11 +66,46 @@ function installAccountPanel(name, email) {
   const roleInput = document.querySelector('#account-role');
   const roleStatus = document.querySelector('#account-role-status');
   const format = (value) => new Intl.NumberFormat('pt-BR').format(value);
+  let closeTimer;
   document.querySelector('#panel-name').textContent = name;
   document.querySelector('#panel-email').textContent = email;
+  document.querySelector('#panel-initials').textContent = document.querySelector('#account-initials').textContent;
+  const burst = (rect) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'shortcut-dialog-burst';
+    wrapper.setAttribute('aria-hidden', 'true');
+    Object.assign(wrapper.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+    for (let index = 0; index < 8; index += 1) {
+      const side = index < 4 ? -1 : 1;
+      const row = index % 4;
+      const piece = document.createElement('i');
+      piece.className = `shortcut-dialog-piece shortcut-dialog-piece-${index % 6}`;
+      piece.style.left = `${side < 0 ? 0 : rect.width}px`;
+      piece.style.top = `${Math.round(rect.height * [0.18, 0.39, 0.61, 0.82][row])}px`;
+      piece.style.setProperty('--dx', `${side * (48 + (row % 2) * 16)}px`);
+      piece.style.setProperty('--dy', `${Math.round((row - 1.5) * 12)}px`);
+      piece.style.setProperty('--spin', `${side * (65 + row * 15)}deg`);
+      piece.style.animationDelay = `${row * 20}ms`;
+      wrapper.append(piece);
+    }
+    document.body.append(wrapper);
+    window.setTimeout(() => wrapper.remove(), 650);
+  };
   const close = () => {
-    panel.hidden = true;
+    if (panel.hidden || panel.classList.contains('is-closing')) return;
     trigger.setAttribute('aria-expanded', 'false');
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      panel.hidden = true;
+      return;
+    }
+    const rect = panel.getBoundingClientRect();
+    panel.classList.add('is-closing');
+    closeTimer = window.setTimeout(() => {
+      panel.hidden = true;
+      panel.classList.remove('is-closing');
+      burst(rect);
+      closeTimer = undefined;
+    }, 260);
   };
   const refresh = async () => {
     try {
@@ -82,6 +117,7 @@ function installAccountPanel(name, email) {
         document.querySelector('#account-tokens').textContent = format(data.usage.total_tokens);
         document.querySelector('#account-prompt-tokens').textContent = format(data.usage.prompt_tokens);
         document.querySelector('#account-completion-tokens').textContent = format(data.usage.completion_tokens);
+        document.querySelector('#account-usage-prompt-bar').style.width = `${data.usage.total_tokens ? Math.max(0, Math.min(100, data.usage.prompt_tokens / data.usage.total_tokens * 100)) : 50}%`;
       }
       document.querySelector('#account-usage-note').textContent = 'Uso registrado nas respostas do modelo desde a ativação desta versão.';
     } catch {
@@ -89,12 +125,14 @@ function installAccountPanel(name, email) {
     }
   };
   trigger.addEventListener('click', () => {
-    if (!panel.hidden) return close();
+    if (!panel.hidden && !panel.classList.contains('is-closing')) return close();
+    window.clearTimeout(closeTimer);
+    panel.classList.remove('is-closing');
     panel.hidden = false;
     trigger.setAttribute('aria-expanded', 'true');
     refresh();
   });
-  document.querySelector('#account-panel-close').addEventListener('click', close);
+  document.querySelector('#account-panel-close').addEventListener('click', () => { close(); trigger.focus(); });
   document.addEventListener('click', (event) => {
     if (!panel.hidden && !panel.contains(event.target) && !trigger.contains(event.target)) close();
   });
@@ -195,9 +233,13 @@ async function loadAccountHistory(namespace) {
     installAccountPanel(name, email);
     if (typeof profile.picture === 'string' && profile.picture.startsWith('https://lh3.googleusercontent.com/')) {
       const image = document.querySelector('#account-picture');
+      const panelImage = document.querySelector('#panel-picture');
       image.onload = () => {
         image.removeAttribute('hidden');
+        panelImage.src = image.src;
+        panelImage.removeAttribute('hidden');
         document.querySelector('#account-initials').hidden = true;
+        document.querySelector('#panel-initials').hidden = true;
       };
       image.src = profile.picture;
     }

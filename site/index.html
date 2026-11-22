@@ -10,9 +10,9 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=71">
+  <link rel="stylesheet" href="/shell.css?v=72">
   <link rel="stylesheet" href="/agent.css?v=28">
-  <script defer src="/auth-bootstrap.js?v=10"></script>
+  <script defer src="/auth-bootstrap.js?v=11"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -128,7 +128,7 @@
       <span class="auth-dialog-kicker">ALT-IA · ACESSO PRIVADO</span>
       <h2 id="auth-dialog-title">Entre para continuar</h2>
       <p class="auth-dialog-copy">Use sua conta @altside.com. Enviaremos um código de seis dígitos ao seu e-mail.</p>
-      <div id="google-step"><div id="google-button" aria-label="Entrar com Google">Carregando login...</div></div>
+      <div id="google-step"><div id="google-button" aria-label="Entrar com Google" aria-busy="true"></div></div>
       <form id="code-step" hidden>
         <label for="code">Código enviado para <strong id="email-label"></strong></label>
         <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required placeholder="000000">

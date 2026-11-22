@@ -62,9 +62,25 @@ async function setup() {
   if (!window.google?.accounts?.id) throw new Error('Não foi possível carregar o login Google.');
   google.accounts.id.initialize({client_id: clientId, callback: onGoogle, hd: 'altside.com'});
   const button = document.querySelector('#google-button');
-  button.textContent = '';
+  const revealButton = () => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      button.classList.add('is-ready');
+      button.setAttribute('aria-busy', 'false');
+      showMessage('');
+    }));
+  };
+  const observer = new MutationObserver(() => {
+    const frame = button.querySelector('iframe');
+    if (!frame) return;
+    observer.disconnect();
+    frame.addEventListener('load', revealButton, { once: true });
+  });
+  observer.observe(button, { childList: true, subtree: true });
   google.accounts.id.renderButton(button, {
     theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with', width: Math.floor(button.clientWidth),
   });
+  window.setTimeout(() => {
+    if (!button.classList.contains('is-ready')) showMessage('O botão Google demorou para carregar. Verifique a conexão e tente atualizar a página.');
+  }, 10000);
 }
 setup().catch((error) => showMessage(error.message));

@@ -70,6 +70,7 @@ function installGuestGate() {
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email.toLowerCase()));
     window.altIaStorageNamespace = Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
     window.altIaAuthenticated = true;
+    document.querySelector('#logout-link')?.removeAttribute('hidden');
     document.querySelector('#logout-link')?.addEventListener('click', async (event) => {
       event.preventDefault();
       try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); }

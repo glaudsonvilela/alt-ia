@@ -2,7 +2,7 @@ const pendingKey = 'alt-ia-pending-action';
 
 function loadChat() {
   const script = document.createElement('script');
-  script.src = '/app.js?v=88';
+  script.src = '/app.js?v=89';
   script.onload = () => {
     if (!window.altIaAuthenticated) return;
     let pending;
@@ -36,7 +36,7 @@ function openLogin(pending) {
   google.async = true;
   document.head.append(google);
   const login = document.createElement('script');
-  login.src = '/login.js?v=4';
+  login.src = '/login.js?v=5';
   document.head.append(login);
 }
 
@@ -126,6 +126,7 @@ function installAccountPanel(name, email) {
 }
 
 async function loadAccountHistory(namespace) {
+  const note = document.querySelector('#history-status');
   const storageKey = `alt-ia-conversations-v2:${namespace}`;
   const deletedKey = `alt-ia-deleted-v2:${namespace}`;
   let local = [];
@@ -137,7 +138,7 @@ async function loadAccountHistory(namespace) {
     const response = await fetch('/api/history', {
       credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(4000),
     });
-    if (!response.ok) return;
+    if (!response.ok) throw new Error('Histórico indisponível');
     const remote = await response.json();
     const byId = new Map();
     for (const item of Array.isArray(remote.conversations) ? remote.conversations : []) {
@@ -163,22 +164,28 @@ async function loadAccountHistory(namespace) {
       if ((Number(byId.get(id)?.updatedAt) || 0) <= timestamp) byId.delete(id);
     }
     localStorage.setItem(storageKey, JSON.stringify([...byId.values()]));
-    const note = document.querySelector('.sidebar-bottom small');
-    if (note) note.textContent = 'Histórico sincronizado com sua conta.';
-  } catch { /* Use the local cache while the server is unavailable. */ }
+    if (note) { note.textContent = 'Histórico sincronizado com sua conta.'; note.hidden = false; }
+  } catch {
+    if (note) { note.textContent = 'Sincronização temporariamente indisponível.'; note.hidden = false; }
+  }
 }
 
 (async () => {
   let profile = null;
-  try {
-    const response = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' });
-    if (response.ok) profile = await response.json();
-  } catch { /* The login dialog handles an unavailable server. */ }
+  const justVerified = sessionStorage.getItem('alt-ia-auth-just-verified') === '1';
+  for (let attempt = 0; attempt < (justVerified ? 4 : 1); attempt += 1) {
+    try {
+      const response = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' });
+      if (response.ok) { profile = await response.json(); break; }
+    } catch { /* A short retry handles a connection interrupted during the login redirect. */ }
+    if (justVerified && attempt < 3) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
   const email = profile?.email;
   if (typeof email === 'string' && email.includes('@')) {
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email.toLowerCase()));
     window.altIaStorageNamespace = Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
     window.altIaAuthenticated = true;
+    sessionStorage.removeItem('alt-ia-auth-just-verified');
     await loadAccountHistory(window.altIaStorageNamespace);
     const name = typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : email.split('@')[0];
     document.querySelector('#account-name').textContent = name;

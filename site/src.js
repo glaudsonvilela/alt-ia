@@ -511,8 +511,8 @@ function persist() {
     else localStorage.removeItem(activeKey);
     queueHistoryChanges();
   } catch {
-    const notice = document.querySelector('.sidebar-bottom small');
-    if (notice) notice.textContent = 'O histórico não pôde ser salvo neste navegador.';
+    const notice = document.querySelector('#history-status');
+    if (notice) { notice.textContent = 'O histórico não pôde ser salvo neste navegador.'; notice.hidden = false; }
   }
 }
 

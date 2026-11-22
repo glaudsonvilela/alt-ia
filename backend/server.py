@@ -272,7 +272,7 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     pass
             return self.respond(200, {"ok": True}, {"Set-Cookie": [
-                "alt_ia_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0",
+                "alt_ia_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
                 "alt_ia_challenge=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0",
                 "alt_ia_agent=; HttpOnly; Secure; SameSite=Strict; Path=/api/agent; Max-Age=0",
             ]})
@@ -297,7 +297,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/auth/verify":
                 challenge = auth_cookie_value(self.headers.get("Cookie"), "alt_ia_challenge")
                 session, email = AUTH.complete(challenge, payload.get("code"))
-                session_cookie = f"alt_ia_session={session}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=43200"
+                session_cookie = f"alt_ia_session={session}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=43200"
                 challenge_cookie = "alt_ia_challenge=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0"
                 self.respond(200, {"email": email}, {"Set-Cookie": [session_cookie, challenge_cookie]})
                 return

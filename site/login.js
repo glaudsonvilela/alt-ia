@@ -34,6 +34,14 @@ codeStep.addEventListener('submit', async (event) => {
   showMessage('');
   try {
     await post('/api/auth/verify', { code: codeInput.value.trim() });
+    sessionStorage.setItem('alt-ia-auth-just-verified', '1');
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const session = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' });
+        if (session.ok) break;
+      } catch { /* Retry while the cookie becomes available. */ }
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
     window.location.replace('/');
   } catch (error) {
     showMessage(error.message);

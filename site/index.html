@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/style.css?v=4">
   <link rel="stylesheet" href="/shell.css?v=70">
   <link rel="stylesheet" href="/agent.css?v=28">
-  <script defer src="/auth-bootstrap.js?v=7"></script>
+  <script defer src="/auth-bootstrap.js?v=9"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -58,7 +58,7 @@
           <div class="account-usage"><span>Uso da Alt-IA</span><strong id="account-tokens">—</strong><small>tokens registrados</small><div><span>Entrada <b id="account-prompt-tokens">—</b></span><span>Saída <b id="account-completion-tokens">—</b></span></div><small id="account-usage-note">Contagem disponível a partir desta versão.</small></div>
           <button class="account-logout" id="logout-link" type="button">Sair da conta</button>
         </section>
-        <small>Histórico salvo somente neste navegador.</small>
+        <small id="history-status" hidden></small>
       </div>
     </aside>
 

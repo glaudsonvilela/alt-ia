@@ -1,0 +1,30 @@
+@font-face{font-family:Geist;src:url('/geist-variable.woff2') format('woff2');font-display:swap}
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{display:grid;place-items:center;min-height:100dvh;margin:0;padding:24px;background:radial-gradient(circle at 50% 10%,#302839 0,#202028 35%,#17181e 75%);color:#f6f5f8;font-family:Geist,Arial,sans-serif}
+.login-card{width:min(100%,420px);padding:32px;border:1px solid #ffffff21;border-radius:20px;background:#22232bdc;box-shadow:0 25px 80px #0005}
+.login-brand{display:flex;align-items:center;gap:11px;font-size:24px;font-weight:700;letter-spacing:-.055em}
+.login-face{display:flex;align-items:center;justify-content:center;gap:3px;width:38px;height:38px;border-radius:12px;background:#f4a0b2;transform:rotate(-4deg)}
+.login-face i{position:relative;width:11px;height:17px;border-radius:50%;background:#fff}
+.login-face i:after{position:absolute;top:6px;left:5px;width:5px;height:8px;border-radius:50%;background:#27202a;content:""}
+.login-eyebrow{margin:38px 0 9px;color:#c9a8e5;font-size:10px;font-weight:700;letter-spacing:.16em}
+h1{margin:0;font-size:28px;line-height:1.15;letter-spacing:-.045em}
+.login-copy{margin:13px 0 28px;color:#aca9b6;font-size:14px;line-height:1.55}
+#google-button{min-height:40px;color:#aaa6b4;font-size:12px}
+#google-button [role="button"]{display:flex!important;align-items:center!important;width:300px!important;min-width:0!important;max-width:100%!important;height:42px!important;padding:0 14px!important;border:1px solid #d7d7da!important;border-radius:999px!important;background:#fff!important;color:#292933!important;cursor:pointer}
+#google-button [role="button"]>div:first-child{display:none}
+#google-button [role="button"]>div:nth-child(2){display:flex;align-items:center;gap:11px;min-width:0}
+#google-button [role="button"] svg{display:block;width:20px!important;height:20px!important;flex:none}
+#google-button [role="button"] span:not(#button-label){font:600 13px Geist,Arial,sans-serif;white-space:nowrap}
+#google-button [role="button"] #button-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+#code-step{display:grid;gap:11px}
+#code-step[hidden]{display:none}
+label{color:#d4d0db;font-size:12px;line-height:1.5}
+label strong{color:#fff}
+input{width:100%;height:48px;padding:0 16px;border:1px solid #ffffff31;border-radius:12px;outline:none;background:#2b2c36;color:#fff;font:600 20px Geist,Arial,sans-serif;letter-spacing:.25em}
+input:focus{border-color:#b489db;box-shadow:0 0 0 3px #a573d32c}
+button{display:flex;align-items:center;justify-content:space-between;height:46px;padding:0 16px;border:0;border-radius:12px;background:#ff831f;color:#211922;font:650 13px Geist,Arial,sans-serif;cursor:pointer}
+button:disabled{opacity:.55;cursor:wait}
+#code-step p{margin:0;color:#86838f;font-size:11px}
+#login-message{min-height:18px;margin:18px 0 0;color:#f5a4aa;font-size:12px;line-height:1.5}
+@media(max-width:480px){.login-card{padding:26px}h1{font-size:25px}}

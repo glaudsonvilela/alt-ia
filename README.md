@@ -4,7 +4,7 @@
 
 <h1 align="center">Alt-IA</h1>
 
-<p align="center">Chat de IA para explorar cenários de blockchain e DeFi no simulador Altside.</p>
+<p align="center">Chat privado da Altside para explorar cenários de blockchain e DeFi.</p>
 
 <p align="center"><a href="https://ai.bigbanana.io/">Abrir a Alt-IA</a></p>
 
@@ -25,7 +25,41 @@ npm ci
 npm run build
 ```
 
-O site usa o `app.js` compilado. Para executar o backend, configure `ALT_IA_KEY_FILE` com o caminho de um arquivo local contendo a chave NVIDIA. A chave não deve entrar no repositório. O backend também aceita `ALT_IA_HOST`, `ALT_IA_PORT` e `ALTSIDE_API_BASE_URL` (padrão: `https://app.bigbanana.io`).
+O site usa o `app.js` compilado. Para executar o backend, instale `backend/requirements.txt` e configure `ALT_IA_KEY_FILE` com o caminho de um arquivo local contendo a chave NVIDIA. A chave não deve entrar no repositório. O backend também aceita `ALT_IA_HOST`, `ALT_IA_PORT` e `ALTSIDE_API_BASE_URL` (padrão: `https://app.bigbanana.io`).
+
+## Acesso privado
+
+A Alt-IA usa login Google corporativo seguido por um código enviado ao mesmo e-mail. O servidor confere o token Google, a declaração de domínio Google Workspace (`hd=altside.com`) e o e-mail verificado. O código tem seis dígitos, expira em dez minutos e aceita até cinco tentativas. A sessão dura 12 horas e pode ser encerrada pelo botão **Sair da Alt-IA**. A tela inicial e seus recursos visuais são públicos; o login aparece ao enviar uma mensagem ou clicar em um atalho. Todas as APIs de dados e ações continuam exigindo sessão no backend. A ação iniciada é retomada depois da entrada.
+
+Não é necessário cadastrar cartão no Cloudflare Zero Trust, e o servidor da Alt-IA pode continuar local. O cliente OAuth web já criado deve ter `https://ai.bigbanana.io` como **origem JavaScript autorizada**. Para enviar o código sem senha de aplicativo nem acesso ao administrador do Google Workspace, use a API do Gmail com a conta `glaudson@altside.com`. Essa autorização pede apenas `gmail.send` (envio; sem leitura da caixa).
+
+1. No [Google Cloud Console](https://console.cloud.google.com/apis/library/gmail.googleapis.com), selecione o projeto desse cliente OAuth e ative a **Gmail API**. No [Google Auth Platform](https://console.cloud.google.com/auth/scopes), adicione o escopo `https://www.googleapis.com/auth/gmail.send`. Mantenha o público **Interno**.
+2. No [cliente OAuth web](https://console.cloud.google.com/auth/clients), adicione `http://127.0.0.1:8765/callback` como **URI de redirecionamento autorizado**. Baixe o JSON do cliente e guarde-o fora do repositório, no computador onde vai executar o comando abaixo. O navegador que fizer a autorização deve estar nessa mesma máquina.
+3. Instale `backend/requirements.txt`. Execute a autorização uma vez, entre com `glaudson@altside.com` e aceite a permissão de **enviar e-mails**. Não cole o JSON nem o token no chat.
+
+Se o Google Workspace bloquear a autorização de `gmail.send` por política da empresa, essa permissão depende do administrador; a aplicação não tenta contornar esse bloqueio. Nesse caso, escolha um serviço de e-mail transacional autorizado para o domínio como alternativa ao Gmail.
+
+```bash
+python3 backend/authorize_gmail.py \
+  --client-secret /run/secrets/alt-ia-google-client.json \
+  --output /run/secrets/alt-ia-gmail-refresh-token
+```
+
+O comando imprime um link para abrir no navegador e salva o token renovável em arquivo local com permissão `0600`. Proteja também o JSON do cliente com `chmod 600`. O diretório `/run/secrets` é um exemplo: use um caminho persistente e privado acessível ao processo do backend, inclusive após reiniciar. Se a autorização for feita em outro computador, mova os dois arquivos para o servidor por um canal seguro.
+
+```text
+ALT_IA_AUTH_REQUIRED=1
+ALT_IA_GOOGLE_CLIENT_ID=802613256116-h6vv32v9egbdk29gqf558j03mqcmiup9.apps.googleusercontent.com
+ALT_IA_ALLOWED_EMAIL_DOMAIN=altside.com
+ALT_IA_MAIL_PROVIDER=gmail_api
+ALT_IA_GMAIL_CLIENT_SECRET_FILE=/run/secrets/alt-ia-google-client.json
+ALT_IA_GMAIL_REFRESH_TOKEN_FILE=/run/secrets/alt-ia-gmail-refresh-token
+ALT_IA_SMTP_FROM=Alt-IA <glaudson@altside.com>
+```
+
+SMTP permanece disponível como alternativa com `ALT_IA_MAIL_PROVIDER=smtp`, `ALT_IA_SMTP_HOST`, `ALT_IA_SMTP_PORT`, `ALT_IA_SMTP_MODE`, `ALT_IA_SMTP_USER` e `ALT_IA_SMTP_PASSWORD_FILE`. O backend falha ao iniciar se o remetente escolhido não estiver configurado; `ALT_IA_AUTH_REQUIRED=0` é exclusivo para desenvolvimento local. O endpoint `/healthz` permanece disponível localmente. Sessões e códigos ficam apenas na memória do processo: uma reinicialização exige novo login. O histórico de conversas permanece no navegador, separado por conta; dados antigos do armazenamento local não são importados.
+
+Implante backend e site juntos depois de configurar as variáveis e o remetente. Confira com uma conta corporativa real, uma conta de outro domínio, código incorreto/expirado, saída e API anônima. Não publique somente o frontend: o backend atualizado deve estar ativo para bloquear chamadas diretas à API.
 
 O simulador de lending oferece mercados Aave V3, vaults simples da Fluid, três mercados isolados Morpho Blue e pools Kamino Lend na Solana. As taxas, preços e parâmetros são consultados nas APIs públicas oficiais ao abrir o mercado e os resultados são calculados no servidor. Em todos os protocolos, a pessoa monta a posição manualmente e pode gerar um endereço fictício para a simulação. Grupos de elevação da Kamino, vaults inteligentes da Fluid, incentivos, limites de liquidez e custos de transação não entram no cálculo.
 

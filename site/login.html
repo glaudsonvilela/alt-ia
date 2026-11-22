@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Entrar · Alt-IA</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/login.css?v=2">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="/login.js" defer></script>
+</head>
+<body>
+  <main class="login-card">
+    <div class="login-brand"><span class="login-face" aria-hidden="true"><i></i><i></i></span><span>Alt-IA</span></div>
+    <p class="login-eyebrow">ACESSO PRIVADO · ALTSIDE</p>
+    <h1>Entre com sua conta da empresa</h1>
+    <p class="login-copy">Depois do Google, enviaremos um código de seis dígitos ao seu e-mail @altside.com.</p>
+    <div id="google-step">
+      <div id="google-button" aria-label="Entrar com Google">Carregando login...</div>
+    </div>
+    <form id="code-step" hidden>
+      <label for="code">Código enviado para <strong id="email-label"></strong></label>
+      <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required placeholder="000000">
+      <button type="submit">Confirmar e entrar <span aria-hidden="true">↗</span></button>
+      <p>O código expira em 10 minutos.</p>
+    </form>
+    <p id="login-message" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>

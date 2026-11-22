@@ -10,9 +10,9 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=65">
+  <link rel="stylesheet" href="/shell.css?v=66">
   <link rel="stylesheet" href="/agent.css?v=28">
-  <script defer src="/app.js?v=86"></script>
+  <script defer src="/auth-bootstrap.js?v=3"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -49,6 +49,7 @@
       <div class="sidebar-bottom">
         <div class="development-state"><span class="state-symbol" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="20" cy="20" r="15" fill="#83B5F1"/><circle cx="20" cy="20" r="14" stroke="#D1E7FF" stroke-width="1.4"/><path d="M6.5 20h27M20 5c-4.5 3.6-6.8 8.6-6.8 15S15.5 31.4 20 35M20 5c4.5 3.6 6.8 8.6 6.8 15S24.5 31.4 20 35M9.2 11.5c3.2 2 7 3 10.8 3s7.6-1 10.8-3M9.2 28.5c3.2-2 7-3 10.8-3s7.6 1 10.8 3" stroke="#3E70AF" stroke-width="1.25" stroke-linecap="round" opacity=".75"/><g class="icon-eyes"><ellipse cx="15.2" cy="18" rx="3.6" ry="4.5" fill="white"/><ellipse cx="24.8" cy="18" rx="3.6" ry="4.5" fill="white"/><ellipse cx="16.2" cy="18.6" rx="1.5" ry="2.2" fill="#1E3453"/><ellipse cx="25.8" cy="18.6" rx="1.5" ry="2.2" fill="#1E3453"/></g><path d="M17 26.3c1.9 1.5 4.1 1.5 6 0" stroke="#24476D" stroke-width="1.35" stroke-linecap="round"/></svg></span><div><strong>Alt-IA conectada</strong><a href="https://altside.com/">altside.com</a></div></div>
         <a class="simulator-link" href="https://app.bigbanana.io/">Abrir simulador Altside <span aria-hidden="true">↗</span></a>
+<a class="simulator-link" href="/login.html" id="logout-link">Sair da Alt-IA <span aria-hidden="true">↗</span></a>
         <small>Histórico salvo somente neste navegador.</small>
       </div>
     </aside>
@@ -107,6 +108,24 @@
       </aside>
     </div>
   </div>
+
+  <dialog class="auth-dialog" id="auth-dialog" aria-labelledby="auth-dialog-title">
+    <div class="auth-dialog-card">
+      <button class="auth-dialog-close" type="button" aria-label="Fechar login">×</button>
+      <div class="auth-dialog-art" aria-hidden="true"><i class="auth-orbit auth-orbit-orange"></i><span class="auth-dialog-face"><i></i><i></i></span><i class="auth-orbit auth-orbit-violet"></i></div>
+      <span class="auth-dialog-kicker">ALT-IA · ACESSO PRIVADO</span>
+      <h2 id="auth-dialog-title">Entre para continuar</h2>
+      <p class="auth-dialog-copy">Use sua conta @altside.com. Enviaremos um código de seis dígitos ao seu e-mail.</p>
+      <div id="google-step"><div id="google-button" aria-label="Entrar com Google">Carregando login...</div></div>
+      <form id="code-step" hidden>
+        <label for="code">Código enviado para <strong id="email-label"></strong></label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required placeholder="000000">
+        <button type="submit">Confirmar e entrar <span aria-hidden="true">↗</span></button>
+        <p>O código expira em 10 minutos.</p>
+      </form>
+      <p id="login-message" role="status" aria-live="polite"></p>
+    </div>
+  </dialog>
 
   <dialog class="pool-dialog" id="pool-dialog" aria-labelledby="pool-dialog-title">
     <div class="pool-dialog-card">

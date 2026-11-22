@@ -5,6 +5,8 @@ __pycache__/
 .env.*
 !.env.example
 *key*
+*client_secret*.json
+*gmail-refresh-token*
 *.pem
 *.p12
 *.pfx

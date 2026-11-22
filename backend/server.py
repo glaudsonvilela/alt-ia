@@ -1,4 +1,4 @@
-"""Small server-side proxy for the public Alt-IA chat."""
+"""Server-side proxy for the private Alt-IA chat."""
 
 import json
 import os
@@ -23,6 +23,7 @@ from wallet_agent import analyze_wallet
 from research_agent import search_web
 from agent_browser import cookie_value, session_from_cookie, session_path, worker_call, run as run_browser_agent
 from lending_market import LendingMarketError, markets as lending_markets, market as lending_market, wallet as lending_wallet
+from access_auth import AuthError, AuthService, cookie_value as auth_cookie_value
 
 
 MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
@@ -38,6 +39,7 @@ with open(KEY_FILE, encoding="utf-8") as secret_file:
 if not API_KEY.startswith("nvapi-"):
     raise RuntimeError("Chave NVIDIA ausente ou inválida")
 SCENARIO_SECRET = hashlib.sha256((API_KEY + ":alt-ia-scenario-v1").encode()).digest()
+AUTH = AuthService.from_environment()
 
 window = deque()
 window_lock = threading.Lock()
@@ -225,9 +227,67 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(body)))
         for name, value in (extra_headers or {}).items():
-            self.send_header(name, value)
+            for item in value if isinstance(value, (list, tuple)) else (value,):
+                self.send_header(name, item)
         self.end_headers()
         self.wfile.write(body)
+
+    def access_ok(self):
+        if AUTH is None:
+            self.authenticated_email = "local@altside.com"
+            return True
+        email = AUTH.email_for(auth_cookie_value(self.headers.get("Cookie"), "alt_ia_session"))
+        if email:
+            self.authenticated_email = email
+            return True
+        self.respond(401, {"error": "Acesso restrito. Entre com seu e-mail corporativo."})
+        return False
+
+    def auth_post(self, path):
+        if self.headers.get("Origin") != "https://ai.bigbanana.io":
+            return self.respond(403, {"error": "Origem não permitida."})
+        if path == "/api/auth/logout":
+            if AUTH:
+                AUTH.logout(auth_cookie_value(self.headers.get("Cookie"), "alt_ia_session"))
+            agent_id = self.agent_session()
+            if agent_id:
+                try:
+                    worker_call("DELETE", session_path(agent_id), API_KEY, timeout=3)
+                except ValueError:
+                    pass
+            return self.respond(200, {"ok": True}, {"Set-Cookie": [
+                "alt_ia_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0",
+                "alt_ia_challenge=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0",
+                "alt_ia_agent=; HttpOnly; Secure; SameSite=Strict; Path=/api/agent; Max-Age=0",
+            ]})
+        if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
+            return self.respond(415, {"error": "Envie JSON."})
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 2 or length > 9000:
+                raise ValueError
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict):
+                raise ValueError
+        except (ValueError, TypeError, UnicodeDecodeError):
+            return self.respond(400, {"error": "Entrada inválida."})
+        if AUTH is None:
+            return self.respond(503, {"error": "Login desativado no ambiente local."})
+        try:
+            if path == "/api/auth/google":
+                challenge, email = AUTH.begin(payload.get("credential"))
+                cookie = f"alt_ia_challenge={challenge}; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=600"
+                return self.respond(200, {"email": email}, {"Set-Cookie": cookie})
+            if path == "/api/auth/verify":
+                challenge = auth_cookie_value(self.headers.get("Cookie"), "alt_ia_challenge")
+                session, email = AUTH.complete(challenge, payload.get("code"))
+                session_cookie = f"alt_ia_session={session}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=43200"
+                challenge_cookie = "alt_ia_challenge=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0"
+                self.respond(200, {"email": email}, {"Set-Cookie": [session_cookie, challenge_cookie]})
+                return
+        except AuthError as error:
+            return self.respond(400, {"error": str(error)})
+        return self.respond(404, {"error": "Não encontrado."})
 
     def agent_session(self):
         return session_from_cookie(self.headers.get("Cookie"), API_KEY)
@@ -311,6 +371,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlsplit(self.path)
+        if parsed.path == "/api/auth/config":
+            if AUTH is None:
+                return self.respond(503, {"error": "Login não configurado."})
+            return self.respond(200, {"google_client_id": AUTH.client_id})
+        if parsed.path != "/healthz" and not self.access_ok():
+            return
+        if parsed.path == "/api/access-check":
+            self.send_response(204)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+        if parsed.path == "/api/me":
+            return self.respond(200, {"email": self.authenticated_email})
         if parsed.path in ("/api/agent/state", "/api/agent/image"):
             return self.agent_get(parsed.path)
         if self.path == "/healthz":
@@ -370,6 +443,8 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(404, {"error": "Não encontrado."})
 
     def do_DELETE(self):
+        if not self.access_ok():
+            return
         if self.path != "/api/agent/session":
             return self.respond(404, {"error": "Não encontrado."})
         if not self.agent_origin_ok():
@@ -383,6 +458,10 @@ class Handler(BaseHTTPRequestHandler):
         return self.respond(200, {"closed": True}, {"Set-Cookie": "alt_ia_agent=; HttpOnly; Secure; SameSite=Strict; Path=/api/agent; Max-Age=0"})
 
     def do_POST(self):
+        if self.path.startswith("/api/auth/"):
+            return self.auth_post(self.path)
+        if not self.access_ok():
+            return
         if self.path.startswith("/api/agent/"):
             return self.agent_post(self.path)
         if self.path != "/api/chat":

@@ -36,7 +36,7 @@ function openLogin(pending) {
   google.async = true;
   document.head.append(google);
   const login = document.createElement('script');
-  login.src = '/login.js?v=6';
+  login.src = '/login.js?v=7';
   document.head.append(login);
 }
 
@@ -210,13 +210,21 @@ async function loadAccountHistory(namespace) {
 
 (async () => {
   let profile = null;
-  const justVerified = sessionStorage.getItem('alt-ia-auth-just-verified') === '1';
-  for (let attempt = 0; attempt < (justVerified ? 4 : 1); attempt += 1) {
+  const verifiedAt = Number(sessionStorage.getItem('alt-ia-auth-just-verified'));
+  const justVerified = verifiedAt > 0 && Date.now() - verifiedAt < 30000;
+  const attempts = justVerified ? 10 : 3;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' });
-      if (response.ok) { profile = await response.json(); break; }
+      if (response.ok) {
+        const candidate = await response.json();
+        if (typeof candidate?.email === 'string' && candidate.email.includes('@')) {
+          profile = candidate;
+          break;
+        }
+      }
     } catch { /* A short retry handles a connection interrupted during the login redirect. */ }
-    if (justVerified && attempt < 3) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, Math.min(250 * (attempt + 1), 1000)));
   }
   const email = profile?.email;
   if (typeof email === 'string' && email.includes('@')) {

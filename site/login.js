@@ -27,26 +27,41 @@ async function onGoogle(result) {
   } catch (error) { showMessage(error.message); }
 }
 
+let verifiedEmail = null;
+
+async function confirmSession(email) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      const response = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' });
+      if (response.ok) {
+        const profile = await response.json();
+        if (profile.email?.toLowerCase() === email.toLowerCase()) return;
+      }
+    } catch { /* A conexão pode ser interrompida durante a criação da sessão. */ }
+    if (attempt < 7) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  throw new Error('O código foi aceito, mas a sessão ainda não foi confirmada. Tente continuar novamente.');
+}
+
 codeStep.addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = codeStep.querySelector('button');
   button.disabled = true;
   showMessage('');
   try {
-    await post('/api/auth/verify', { code: codeInput.value.trim() });
-    sessionStorage.setItem('alt-ia-auth-just-verified', '1');
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      try {
-        const session = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' });
-        if (session.ok) break;
-      } catch { /* Retry while the cookie becomes available. */ }
-      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    if (!verifiedEmail) {
+      const result = await post('/api/auth/verify', { code: codeInput.value.trim() });
+      verifiedEmail = result.email;
     }
+    showMessage('Confirmando sua sessão...');
+    await confirmSession(verifiedEmail);
+    sessionStorage.setItem('alt-ia-auth-just-verified', String(Date.now()));
     window.location.replace('/');
   } catch (error) {
     showMessage(error.message);
     button.disabled = false;
-    codeInput.select();
+    if (verifiedEmail) button.textContent = 'Tentar continuar';
+    else codeInput.select();
   }
 });
 

@@ -100,6 +100,9 @@ class AuthServiceTests(unittest.TestCase):
             self.auth.begin("google-token")
         self.assertEqual(cookie_value("alt_ia_session=abc; other=def", "alt_ia_session"), "abc")
         self.assertIsNone(cookie_value("", "alt_ia_session"))
+        self.assertEqual(cookie_value("broken={json}; alt_ia_session=abc; other=def", "alt_ia_session"), "abc")
+        self.assertEqual(cookie_value("other=" + "x" * 5000 + "; alt_ia_session=abc", "alt_ia_session"), "abc")
+        self.assertIsNone(cookie_value("alt_ia_session=bad value", "alt_ia_session"))
 
     def test_gmail_sender_uses_only_send_endpoint_and_private_files(self):
         with tempfile.TemporaryDirectory() as directory:

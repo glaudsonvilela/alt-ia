@@ -250,12 +250,19 @@ class Handler(BaseHTTPRequestHandler):
             self.authenticated_profile = {"email": self.authenticated_email, "name": "Alt-IA local", "picture": ""}
             usage_for_account(self.authenticated_email)
             return True
-        profile = AUTH.profile_for(auth_cookie_value(self.headers.get("Cookie"), "alt_ia_session"))
+        cookie_header = self.headers.get("Cookie")
+        session = auth_cookie_value(cookie_header, "alt_ia_session")
+        profile = AUTH.profile_for(session)
         if profile:
             self.authenticated_profile = profile
             self.authenticated_email = profile["email"]
             usage_for_account(self.authenticated_email)
             return True
+        if self.path.startswith("/api/me"):
+            reason = ("cookie ausente" if not cookie_header else
+                      "sessão ausente" if "alt_ia_session=" not in cookie_header else
+                      "cookie inválido" if not session else "sessão desconhecida")
+            print(f"Alt-IA /api/me: {reason}", flush=True)
         self.respond(401, {"error": "Acesso restrito. Entre com seu e-mail corporativo."})
         return False
 
@@ -298,8 +305,9 @@ class Handler(BaseHTTPRequestHandler):
                 challenge = auth_cookie_value(self.headers.get("Cookie"), "alt_ia_challenge")
                 session, email = AUTH.complete(challenge, payload.get("code"))
                 session_cookie = f"alt_ia_session={session}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=43200"
-                challenge_cookie = "alt_ia_challenge=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0"
-                self.respond(200, {"email": email}, {"Set-Cookie": [session_cookie, challenge_cookie]})
+                # The challenge is consumed server-side. Send the session alone so
+                # intermediaries cannot combine it with the challenge deletion.
+                self.respond(200, {"email": email}, {"Set-Cookie": session_cookie})
                 return
         except AuthError as error:
             return self.respond(400, {"error": str(error)})

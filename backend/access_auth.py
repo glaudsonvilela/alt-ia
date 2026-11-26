@@ -13,7 +13,6 @@ import ssl
 import threading
 import time
 from email.message import EmailMessage
-from http.cookies import SimpleCookie
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -342,11 +341,14 @@ class AuthService:
 
 
 def cookie_value(header, name):
-    if not header or len(header) > 4096:
+    if not isinstance(header, str) or len(header) > 16384:
         return None
-    try:
-        cookie = SimpleCookie()
-        cookie.load(header)
-        return cookie[name].value if name in cookie else None
-    except Exception:
-        return None
+    # Browsers can send unrelated cookies that SimpleCookie rejects as a whole.
+    # Parse only the named, URL-safe authentication token.
+    for item in header.split(";"):
+        key, separator, value = item.strip().partition("=")
+        if separator and key == name:
+            if 0 < len(value) <= 512 and all(character.isascii() and (character.isalnum() or character in "-_") for character in value):
+                return value
+            return None
+    return None

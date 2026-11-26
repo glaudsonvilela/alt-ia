@@ -27,6 +27,8 @@ npm run build
 
 O site usa o `app.js` compilado. Para executar o backend, instale `backend/requirements.txt` e configure `ALT_IA_KEY_FILE` com o caminho de um arquivo local contendo a chave NVIDIA. A chave não deve entrar no repositório. O backend também aceita `ALT_IA_HOST`, `ALT_IA_PORT` e `ALTSIDE_API_BASE_URL` (padrão: `https://app.bigbanana.io`).
 
+Em produção, o túnel Cloudflare encaminha `ai.bigbanana.io` para a página Nginx na porta local `8810`. Ao recriar o contêiner `alt-ia-page`, configure a política Docker `restart=unless-stopped`, assim como nos contêineres da API e do túnel. Sem essa política, a página permanece parada após um reinício do servidor e o domínio responde 502.
+
 ## Acesso privado
 
 A Alt-IA usa login Google corporativo seguido por um código enviado ao mesmo e-mail. O servidor confere o token Google, a declaração de domínio Google Workspace (`hd=altside.com`) e o e-mail verificado. O código tem seis dígitos, expira em dez minutos e aceita até cinco tentativas. A sessão dura 12 horas e pode ser encerrada pelo botão **Sair da Alt-IA**. A tela inicial e seus recursos visuais são públicos; o login aparece ao enviar uma mensagem ou clicar em um atalho. Todas as APIs de dados e ações continuam exigindo sessão no backend. A ação iniciada é retomada depois da entrada.

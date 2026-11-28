@@ -456,6 +456,40 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError, OSError) as error:
             return self.respond(400, {"error": str(error)[:180] or "Entrada inválida."})
 
+    def stream_knowledge_media(self, metadata):
+        try:
+            requested_range = range_header(self.headers.get("Range"))
+        except ValueError:
+            return self.respond(416, {"error": "Intervalo inválido."})
+        if not VIDEO_SLOTS.acquire(blocking=False):
+            return self.respond(503, {"error": "Player ocupado. Tente novamente em instantes."})
+        started = False
+        try:
+            with video_response(KNOWLEDGE, metadata, requested_range) as upstream:
+                self.send_response(upstream.status_code)
+                self.send_header("Content-Type", metadata["mime"])
+                self.send_header("Cache-Control", "private, no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Accept-Ranges", "bytes")
+                for name in ("Content-Length", "Content-Range"):
+                    if name in upstream.headers:
+                        self.send_header(name, upstream.headers[name])
+                self.end_headers()
+                started = True
+                if upstream.status_code != 416:
+                    for chunk in upstream.iter_raw(65536):
+                        self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception:
+            if not started:
+                self.respond(503, {"error": "Não foi possível abrir o arquivo no Basecamp agora."})
+            else:
+                self.close_connection = True
+        finally:
+            VIDEO_SLOTS.release()
+        return
+
     def do_GET(self):
         parsed = urlsplit(self.path)
         if parsed.path == "/api/auth/config":
@@ -470,43 +504,16 @@ class Handler(BaseHTTPRequestHandler):
             metadata = KNOWLEDGE.get_video(parsed.path.removeprefix("/api/knowledge/videos/"))
             if not metadata:
                 return self.respond(404, {"error": "Vídeo não encontrado."})
-            try:
-                requested_range = range_header(self.headers.get("Range"))
-            except ValueError:
-                return self.respond(416, {"error": "Intervalo inválido."})
-            if not VIDEO_SLOTS.acquire(blocking=False):
-                return self.respond(503, {"error": "Player ocupado. Tente novamente em instantes."})
-            started = False
-            try:
-                with video_response(KNOWLEDGE, metadata, requested_range) as upstream:
-                    self.send_response(upstream.status_code)
-                    self.send_header("Content-Type", metadata["mime"])
-                    self.send_header("Cache-Control", "private, no-store")
-                    self.send_header("X-Content-Type-Options", "nosniff")
-                    self.send_header("Accept-Ranges", "bytes")
-                    for name in ("Content-Length", "Content-Range"):
-                        if name in upstream.headers:
-                            self.send_header(name, upstream.headers[name])
-                    self.end_headers()
-                    started = True
-                    if upstream.status_code != 416:
-                        for chunk in upstream.iter_raw(65536):
-                            self.wfile.write(chunk)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            except Exception:
-                if not started:
-                    self.respond(503, {"error": "Não foi possível abrir o vídeo no Basecamp agora."})
-                else:
-                    self.close_connection = True
-            finally:
-                VIDEO_SLOTS.release()
-            return
+            return self.stream_knowledge_media(metadata)
         if parsed.path.startswith("/api/knowledge/documents/"):
             if not KNOWLEDGE or self.authenticated_email.rsplit("@", 1)[-1].lower() not in KNOWLEDGE_DOMAINS:
                 return self.respond(403, {"error": "Documento indisponível para esta conta."})
             try:
-                document = KNOWLEDGE.get_pdf(parsed.path.removeprefix("/api/knowledge/documents/"))
+                identifier = parsed.path.removeprefix("/api/knowledge/documents/")
+                remote = KNOWLEDGE.get_remote_pdf(identifier)
+                if remote:
+                    return self.stream_knowledge_media(remote)
+                document = KNOWLEDGE.get_pdf(identifier)
             except Exception:
                 return self.respond(503, {"error": "Não foi possível abrir o documento agora."})
             if not document:

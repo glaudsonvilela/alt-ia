@@ -88,6 +88,14 @@ def import_file(account, item, record, store, stats):
         return
     suffix = Path(filename).suffix.lower()
     queue_file(item, record, store, filename)
+    if suffix == '.pdf' and int(item.get('byte_size') or 0) > MAX_ATTACHMENT_BYTES and item.get('download_url'):
+        previous = store.db.execute('SELECT body FROM chunks WHERE source_key=? ORDER BY ordinal LIMIT 1',(record['key'],)).fetchone()
+        placeholder = previous and ('Arquivo ainda sem extração de conteúdo' in previous[0]
+                                    or previous[0].startswith('Arquivo excede o limite'))
+        if placeholder or not store.unchanged(record['key'], record['updated_at']):
+            store.upsert({**record,'body':'PDF disponível pela API; extração do documento grande em segundo plano.'})
+        store.put_remote_pdf(record['key'],filename,item['download_url'],item.get('byte_size',0))
+        return
     if store.unchanged(record["key"], record["updated_at"]) and (suffix != ".pdf" or store.has_pdf(record["key"])):
         return
     if suffix not in TEXT_SUFFIXES or int(item.get("byte_size") or 0) > MAX_ATTACHMENT_BYTES:
@@ -354,7 +362,7 @@ def main(argv=None):
                 totals[key_name] += stats[key_name]
             print(f"{projects[identifier]['name']}: {stats['examined']} itens, {stats['updated']} atualizados, {stats['skipped']} sem texto", flush=True)
         store.save()
-        print(f"Sincronização concluída: {store.count()} fontes; {totals['skipped']} arquivos sem texto pesquisável.")
+        print(f"Sincronização concluída: {store.count()} fontes; {totals['skipped']} arquivos ignorados nesta passagem; consulte status para extrações pendentes.")
         return 0
 
 

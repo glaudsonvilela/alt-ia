@@ -47,7 +47,7 @@ class Worker:
 
     def reset_interrupted(self):
         with self.transaction() as store, store.db:
-            store.db.execute("UPDATE content_jobs SET status='pending' WHERE status='processing'")
+            store.db.execute("UPDATE content_jobs SET status='pending',attempts=MAX(0,attempts-1) WHERE status='processing'")
 
     def claim(self, source=None):
         with self.transaction() as store, store.db:
@@ -109,13 +109,13 @@ class Worker:
             else:
                 from basecamp import Client
                 from knowledge_video import access_token
-                if payload['byte_size'] > 32 * 1024 * 1024:
-                    raise ValueError('Arquivo excede 32 MiB')
+                if payload['byte_size'] > 256 * 1024 * 1024:
+                    raise ValueError('Arquivo excede a memória de trabalho de 256 MiB')
                 with Client(access_token=access_token(store)) as client:
                     account = client.for_account(payload['record']['account_id'])
                     download = account.download_url(payload['download_url'])
-                    if len(download.body) > 32 * 1024 * 1024:
-                        raise ValueError('Arquivo excede 32 MiB')
+                    if len(download.body) > 256 * 1024 * 1024:
+                        raise ValueError('Arquivo excede a memória de trabalho de 256 MiB')
                     def document_checkpoint(done, total):
                         self.update(job, detail=f'Páginas/imagens: {done}/{total}', progress={
                             'pages':done,'total':total,'last_processed':time.time()})

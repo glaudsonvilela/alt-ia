@@ -64,6 +64,28 @@ class MemoryTest(unittest.TestCase):
         current = KnowledgeStore(self.root/'knowledge.enc',self.key)
         self.assertEqual(current.content_status(self.record['key'])['detail'],'saved directly')
 
+    def test_remote_pdf_is_searchable_and_removed_with_source(self):
+        from basecamp_import import import_file
+        record = {**self.record,'body':'Arquivo ainda sem extração de conteúdo: formato ou tamanho não suportado.'}
+        self.store.upsert(record)
+        item = {'filename':'large.pdf','content_type':'application/pdf','byte_size':100000000,
+                'download_url':self.payload['download_url']}
+        import_file(None,item,record,self.store,{'updated':0,'skipped':0})
+        self.store.save()
+        identifier = self.store.documents_for([self.record['parent_key']])[0]['id']
+        self.assertEqual(self.store.get_remote_pdf(identifier)['mime'],'application/pdf')
+        self.assertEqual(self.store.document_context(identifier)['source_id'],self.record['key'])
+        self.assertFalse((self.root/'documents').exists())
+        self.assertIn('em segundo plano',self.store.search('extração')[0]['excerpt'])
+        self.store.prune_project('7','3',set()); self.store.save()
+        self.assertIsNone(self.store.get_remote_pdf(identifier))
+
+    def test_interrupted_last_attempt_can_resume(self):
+        with self.worker.transaction() as current:
+            current.db.execute("UPDATE content_jobs SET status='processing',attempts=3")
+        self.worker.reset_interrupted()
+        self.assertIsNotNone(self.worker.claim())
+
     def test_question_and_answer_are_read_together(self):
         parent = {**self.record,'key':'7:message:1','kind':'message','title':'Pergunta sobre reserva',
                   'parent_key':'','body':'Quando devo recompor a reserva?'}

@@ -152,6 +152,10 @@ class KnowledgeStore:
                 id TEXT PRIMARY KEY, source_key TEXT NOT NULL UNIQUE, filename TEXT NOT NULL,
                 download_url TEXT NOT NULL, mime TEXT NOT NULL, byte_size INTEGER NOT NULL
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS remote_pdf_files (
+                id TEXT PRIMARY KEY, source_key TEXT NOT NULL UNIQUE, filename TEXT NOT NULL,
+                download_url TEXT NOT NULL, byte_size INTEGER NOT NULL
+            )""")
             db.execute("""CREATE TABLE IF NOT EXISTS content_jobs (
                 source_key TEXT PRIMARY KEY, revision TEXT NOT NULL, payload TEXT NOT NULL,
                 status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
@@ -187,6 +191,7 @@ class KnowledgeStore:
             return {row[0] for row in self.db.execute("SELECT project_id FROM selection WHERE account_id=?", (str(account_id),))}
 
     def _delete(self, key):
+        self.db.execute('DELETE FROM remote_pdf_files WHERE source_key=?', (key,))
         self.db.execute('DELETE FROM source_links WHERE child_key=?', (key,))
         self.db.execute("DELETE FROM content_jobs WHERE source_key=?", (key,))
         self.db.execute("DELETE FROM video_files WHERE source_key=?", (key,))
@@ -210,6 +215,7 @@ class KnowledgeStore:
                 return
             if not target.exists():
                 private_write(target, encrypt(self.key, body))
+            self.db.execute('DELETE FROM remote_pdf_files WHERE source_key=?', (key,))
             self.db.execute("INSERT OR REPLACE INTO document_files VALUES (?,?,?,?,?)",
                             (identifier, key, filename[:240], digest, "application/pdf"))
 
@@ -221,8 +227,11 @@ class KnowledgeStore:
                 prefix = key + ":attachment:"
                 rows = self.db.execute("""SELECT f.id,s.title,f.filename FROM document_files f
                     JOIN sources s ON s.source_key=f.source_key
-                    WHERE f.source_key=? OR substr(f.source_key,1,?)=? ORDER BY s.title""",
-                    (key, len(prefix), prefix)).fetchall()
+                    WHERE f.source_key=? OR substr(f.source_key,1,?)=?
+                    UNION SELECT f.id,s.title,f.filename FROM remote_pdf_files f
+                    JOIN sources s ON s.source_key=f.source_key
+                    WHERE f.source_key=? OR substr(f.source_key,1,?)=? ORDER BY title""",
+                    (key, len(prefix), prefix, key, len(prefix), prefix)).fetchall()
                 for identifier, title, filename in rows:
                     if identifier not in seen:
                         seen.add(identifier)
@@ -265,6 +274,24 @@ class KnowledgeStore:
                 self.db.execute("INSERT OR REPLACE INTO video_files VALUES (?,?,?,?,?,?)",
                     (identifier, key, filename[:240], download_url, mime, max(0, int(byte_size or 0))))
 
+    def put_remote_pdf(self, key, filename, download_url, byte_size):
+        from knowledge_video import api_download_url
+        api_download_url(download_url)
+        identifier = hashlib.sha256(key.encode()).hexdigest()
+        with self.lock, self.db:
+            if self.db.execute('SELECT 1 FROM sources WHERE source_key=?',(key,)).fetchone():
+                self.db.execute('DELETE FROM document_files WHERE source_key=?', (key,))
+                self.db.execute('INSERT OR REPLACE INTO remote_pdf_files VALUES (?,?,?,?,?)',
+                    (identifier,key,filename[:240],download_url,max(0,int(byte_size or 0))))
+
+    def get_remote_pdf(self, identifier):
+        if not isinstance(identifier,str) or not re.fullmatch(r'[a-f0-9]{64}',identifier):
+            return None
+        self._reload()
+        with self.lock:
+            row = self.db.execute('SELECT f.download_url,f.byte_size FROM remote_pdf_files f JOIN sources s ON s.source_key=f.source_key WHERE f.id=?',(identifier,)).fetchone()
+        return {'download_url':row[0],'byte_size':row[1],'mime':'application/pdf'} if row else None
+
     def get_video(self, identifier):
         if not isinstance(identifier, str) or not re.fullmatch(r"[a-f0-9]{64}", identifier):
             return None
@@ -280,7 +307,8 @@ class KnowledgeStore:
         self._reload()
         with self.lock:
             row = self.db.execute("""SELECT s.source_key,s.title FROM
-                (SELECT id,source_key FROM document_files UNION ALL SELECT id,source_key FROM video_files) f
+                (SELECT id,source_key FROM document_files UNION ALL SELECT id,source_key FROM video_files
+                 UNION ALL SELECT id,source_key FROM remote_pdf_files) f
                 JOIN sources s ON s.source_key=f.source_key WHERE f.id=?""", (identifier,)).fetchone()
         return {"source_id": row[0], "title": row[1]} if row else None
 

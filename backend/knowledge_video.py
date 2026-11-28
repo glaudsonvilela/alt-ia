@@ -85,7 +85,8 @@ def video_response(store, metadata, requested_range=None):
                 raise ValueError("Vídeo temporariamente indisponível no Basecamp")
             if response.status_code != 416:
                 mime = response.headers.get("content-type", "").split(";", 1)[0].lower()
-                if not (mime.startswith("video/") or mime in {"application/octet-stream", "binary/octet-stream"}):
+                if not (mime.startswith("video/") or mime == metadata.get('mime') == 'application/pdf'
+                        or mime in {"application/octet-stream", "binary/octet-stream"}):
                     raise ValueError("O Basecamp não retornou um vídeo")
             yield response
         finally:

@@ -423,14 +423,48 @@ class KnowledgeStore:
 
     def content_status(self, key):
         with self.lock:
-            row = self.db.execute("SELECT status,detail FROM content_jobs WHERE source_key=?", (key,)).fetchone()
-            return {"status": row[0], "detail": row[1]} if row else None
+            row = self.db.execute("SELECT status,detail,progress,payload FROM content_jobs WHERE source_key=?", (key,)).fetchone()
+            if not row:
+                return None
+            result = {"status": row[0], "detail": row[1]}
+            payload = json.loads(row[3])
+            if payload.get('mime', '').startswith('video/') or Path(payload.get('filename', '')).suffix.lower() in {'.mp4','.mov','.webm','.m4v'}:
+                state = json.loads(row[2])
+                markers = self.db.execute("SELECT MAX(instr(body,'[Transcrição automática')),MAX(instr(body,'[Quadro representativo')) FROM chunks WHERE source_key=?", (key,)).fetchone()
+                has_audio, has_visual = bool(markers[0]), bool(markers[1])
+                seconds = state.get('audio_seconds', state.get('seconds', 0))
+                pending = state.get('pending_interval') or {}
+                if '[Transcrição automática' in pending.get('text', ''):
+                    seconds = max(seconds, min(pending.get('offset', seconds) + 60, state.get('duration', seconds + 60)))
+                result.update(transcript_available=has_audio, visual_available=has_visual,
+                    transcript_status=('complete' if row[0] == 'complete' or state.get('audio_complete') else 'partial') if has_audio else 'not_indexed',
+                    audio_seconds=seconds, duration_seconds=state.get('duration'),
+                    video_complete=row[0] == 'complete')
+            return result
 
     def video_text_path(self, key):
         return self.path.parent / 'video-text' / (hashlib.sha256(key.encode()).hexdigest() + '.txt.enc')
 
     def write_video_text(self, key, title, body):
         private_write(self.video_text_path(key), encrypt(self.key, (title + '\n\n' + body).encode('utf-8')))
+
+    def reconcile_video_texts(self):
+        """Backfill exports for previously indexed videos, without exporting placeholders."""
+        self._reload()
+        written = 0
+        with self.lock:
+            rows = self.db.execute('SELECT f.source_key,s.title FROM video_files f JOIN sources s ON s.source_key=f.source_key').fetchall()
+            for key, title in rows:
+                body = '\n\n'.join(row[0] for row in self.db.execute('SELECT body FROM chunks WHERE source_key=? ORDER BY ordinal', (key,)))
+                if not any(marker in body for marker in ('[Transcrição automática', '[Quadro representativo')):
+                    continue
+                target = self.video_text_path(key)
+                # Existing worker exports preserve original paragraph boundaries.
+                # Only backfill missing files; do not overwrite a fresher export.
+                if not target.exists():
+                    self.write_video_text(key, title, body)
+                    written += 1
+        return written
 
     def prioritize_content(self, keys):
         """Queue requested sources and their attachments without running extraction in chat."""

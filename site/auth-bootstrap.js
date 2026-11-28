@@ -2,7 +2,7 @@ const pendingKey = 'alt-ia-pending-action';
 
 function loadChat() {
   const script = document.createElement('script');
-  script.src = '/app.js?v=101';
+  script.src = '/app.js?v=102';
   script.onload = () => {
     if (!window.altIaAuthenticated) return;
     let pending;

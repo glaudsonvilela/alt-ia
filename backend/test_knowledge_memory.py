@@ -47,6 +47,49 @@ class MemoryTest(unittest.TestCase):
         current.prune_project('7','3',set())
         self.assertFalse(artifact.exists())
 
+    def test_pending_video_exposes_partial_audio_instead_of_missing_transcript(self):
+        job=self.worker.claim()
+        text='[Vídeo 00:00:00–00:01:00]\n[Transcrição automática; pode conter erros] conteúdo falado'
+        self.worker.update(job,body=text,status='pending',progress={'seconds':0,'duration':120,
+            'pending_interval':{'offset':0,'text':text}})
+        # Fresh snapshots must see the publication, even while the queue is pending.
+        self.store._reload(force=True);status=self.store.content_status(self.record['key'])
+        self.assertTrue(status['transcript_available'])
+        self.assertEqual(status['transcript_status'],'partial')
+        self.assertEqual(status['audio_seconds'],60)
+        self.assertFalse(status['video_complete'])
+        self.worker.update(job,status='pending',progress={'seconds':0,'duration':120,'audio_seconds':120,'audio_complete':True})
+        self.store._reload(force=True)
+        self.assertEqual(self.store.content_status(self.record['key'])['transcript_status'],'complete')
+
+    def test_backfills_only_real_video_text_and_keeps_existing_exports(self):
+        from knowledge_store import decrypt
+        self.store.put_video(self.record['key'],'video.mp4',self.payload['download_url'],'video/mp4',123)
+        self.store.save()
+        self.assertEqual(self.store.reconcile_video_texts(),0)
+        job=self.worker.claim()
+        text='[Transcrição automática] conteúdo realmente ouvido'
+        self.worker.update(job,body=text,status='pending')
+        target=self.store.video_text_path(self.record['key']);target.unlink()
+        self.assertEqual(self.store.reconcile_video_texts(),1)
+        self.assertIn('conteúdo realmente ouvido',decrypt(self.store.key,target.read_bytes()).decode())
+        before=target.read_bytes();self.assertEqual(self.store.reconcile_video_texts(),0)
+        self.assertEqual(target.read_bytes(),before)
+
+    def test_audit_does_not_call_partial_audio_complete(self):
+        from knowledge_status import video_audit
+        self.store.put_video(self.record['key'],'video.mp4',self.payload['download_url'],'video/mp4',123)
+        self.store.save()
+        job=self.worker.claim()
+        self.worker.update(job,body='[Transcrição automática] primeiro trecho',status='pending',
+            progress={'audio_seconds':60,'duration':120})
+        result=video_audit(self.store)
+        self.assertEqual(result['audio'],{'partial':1})
+        self.assertFalse(result['all_audio_complete'])
+        self.assertEqual(result['encrypted_texts'],1)
+        self.worker.update(job,status='pending',progress={'audio_seconds':120,'duration':120,'audio_complete':True})
+        self.assertTrue(video_audit(self.store)['all_audio_complete'])
+
     def test_requested_content_gets_priority_without_losing_progress(self):
         second={**self.record,'key':'7:message:9:attachment:10','parent_key':'7:message:9','title':'AAA first alphabetically'}
         self.store.upsert(second)

@@ -4,7 +4,7 @@ import re
 import unicodedata
 
 
-def confirmed_web_task(token, email, secret, messages):
+def web_offer_decision(token, email, secret, messages):
     """Only an answer to a server-issued offer can authorize a main-chat handoff."""
     state = read_research_state(token, email, secret)
     if not state or not state.get('web_offer') or len(messages) < 2:
@@ -14,9 +14,16 @@ def confirmed_web_task(token, email, secret, messages):
         return None
     text = unicodedata.normalize('NFKD', messages[-1]['content'].lower())
     text = ''.join(c for c in text if not unicodedata.combining(c)).strip(' .!,?')
-    if not re.fullmatch(r'(?:sim(?:[, ]+(?:pode|por favor|quero))?|pode(?: sim| procurar| buscar| abrir| pesquisar)?|quero sim|ok|claro|prossiga|(?:abra|abre) o agente|(?:pode )?(?:procurar|pesquisar|buscar) na (?:web|internet))', text):
+    if re.fullmatch(r'(?:n|nao(?: agora| obrigado| obrigada)?|agora nao|deixa pra depois)', text):
+        return {'accepted': False, 'task': state['web_offer']['task']}
+    if not re.fullmatch(r'(?:s|sim(?:[, ]+(?:pode|por favor|quero|pesquisar))?|pode(?: sim| procurar| buscar| abrir| pesquisar)?|quero sim|ok|claro|prossiga|(?:abra|abre) o agente|(?:pode )?(?:procurar|pesquisar|buscar) na (?:web|internet))', text):
         return None
-    return state['web_offer']['task']
+    return {'accepted': True, 'task': state['web_offer']['task']}
+
+
+def confirmed_web_task(token, email, secret, messages):
+    decision = web_offer_decision(token, email, secret, messages)
+    return decision['task'] if decision and decision['accepted'] else None
 
 
 def validate_messages(raw):

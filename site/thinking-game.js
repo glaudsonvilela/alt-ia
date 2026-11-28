@@ -1,5 +1,5 @@
 // A tiny opt-in runner. One canvas, no assets/network and no idle animation.
-import { advanceBody, coinTouchesBody } from './runner-physics.js';
+import { advanceBody, coinTouchesBody, makeObstacle, makeCoinTrail, obstacleTouchesBody } from './runner-physics.js';
 export function createThinkingGame(signal) {
   const element = document.createElement('section');
   element.className = 'thinking-game';
@@ -19,8 +19,8 @@ export function createThinkingGame(signal) {
   canvas.width = width * ratio; canvas.height = height * ratio;
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   const body = {y: ground - size, velocity: 0, squash: 0, squashVelocity: 0};
-  let score = 0, collected = 0, distance = 0, coins = [], particles = [];
-  let obstacles = [], spawn = 0.85, running = false, dead = false;
+  let score = 0, collected = 0, distance = 0, coins = [], particles = [], effects = [];
+  let obstacles = [], spawn = 0.85, coinSpawn = 0.5, lastKind = "", shake = 0, running = false, dead = false;
   let visible = false, disposed = false, frame = 0, last = 0;
   let appearanceTime = 0, nextPaint = 0;
   const frameInterval = 1000 / 60;
@@ -64,12 +64,39 @@ export function createThinkingGame(signal) {
     // Small bounded particle pool, no blur filters or offscreen canvases.
     if (particles.length > 42) particles.splice(0, particles.length - 42);
   }
+  function effect(px, py, kind) {
+    effects.push({x:px,y:py,kind,age:0,life:kind === 'coin' ? 0.6 : 0.38});
+    if (effects.length > 18) effects.shift();
+  }
+  function drawObstacle(o) {
+    ctx.fillStyle=o.color; ctx.strokeStyle='#ffffff50'; ctx.lineWidth=1;
+    if (o.kind === 'block') {
+      rounded(o.x,ground-o.h,o.w,o.h,5,o.color);
+      rounded(o.x+4,ground-o.h+4,o.w-8,2,1,'#ffffff45');
+    } else if (o.kind === 'orb') {
+      ctx.beginPath();ctx.arc(o.x+o.w/2,ground-o.h/2,o.h/2,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(o.x+o.w/2,ground-o.h/2,o.h/2-4,Math.PI,Math.PI*1.65);ctx.stroke();
+    } else if (o.kind === 'steps') {
+      rounded(o.x,ground-o.h*.5,o.w,o.h*.5,3,o.color);
+      rounded(o.x+o.w*.45,ground-o.h,o.w*.55,o.h,3,o.color);
+      rounded(o.x+o.w*.45+3,ground-o.h+4,o.w*.55-6,1,1,'#ffffff50');
+    } else {
+      ctx.beginPath();ctx.moveTo(o.x+o.w/2,ground-o.h);
+      if(o.kind === 'crystal') {
+        ctx.lineTo(o.x+o.w,ground-o.h/2);ctx.lineTo(o.x+o.w/2,ground);ctx.lineTo(o.x,ground-o.h/2);
+      } else {ctx.lineTo(o.x+o.w,ground);ctx.lineTo(o.x,ground);}
+      ctx.closePath();ctx.fill();
+      ctx.beginPath();ctx.moveTo(o.x+o.w/2,ground-o.h+5);ctx.lineTo(o.x+o.w*.7,ground-o.h*.36);ctx.stroke();
+    }
+  }
   function landing() {
     emit(x + size / 2, ground - 2, true);
+    effect(x+size/2,ground+1,"landing");
     colorFrom = [...bodyColor]; colorIndex = (colorIndex + 1) % palette.length; colorTime = 0;
   }
   function draw() {
     ctx.clearRect(0, 0, width, height);
+    ctx.save();ctx.translate(Math.sin(appearanceTime*95)*shake*12,0);
     ctx.lineWidth = 1;
     ctx.strokeStyle = '#b586cf38';
     ctx.beginPath(); ctx.moveTo(16, ground + 1); ctx.lineTo(width - 16, ground + 1); ctx.stroke();
@@ -89,6 +116,19 @@ export function createThinkingGame(signal) {
         ctx.fillRect(-2, -2, 4, 4); ctx.restore();
       }
     }
+    for (const f of effects) {
+      const t=f.age/f.life;ctx.save();ctx.globalAlpha=1-t;
+      ctx.strokeStyle=f.kind === 'coin' ? '#efaa7d' : '#c3a5dd';ctx.lineWidth=1;
+      ctx.beginPath();ctx.ellipse(f.x,f.y,5+t*22,f.kind === 'landing' ? 2+t*3 : 5+t*22,0,0,Math.PI*2);ctx.stroke();
+      if(f.kind === 'coin') {ctx.fillStyle='#ffd2a1';ctx.font='bold 10px system-ui';ctx.textAlign='center';ctx.fillText('+1',f.x,f.y-12-t*17);}
+      ctx.restore();
+    }
+    if(running && body.y < ground-size-4) {
+      for(let i=1;i<=3;i++) {
+        ctx.fillStyle=`rgba(${bodyColor.map(Math.round).join(',')},${.12-i*.025})`;
+        ctx.beginPath();ctx.arc(x+size/2-i*12,body.y+size/2+i*2,7-i,0,Math.PI*2);ctx.fill();
+      }
+    }
     for (const coin of coins) {
       ctx.save(); ctx.translate(coin.x, coin.y);
       ctx.scale(0.8 + 0.2 * Math.cos(appearanceTime * 3 + coin.phase), 1);
@@ -97,6 +137,10 @@ export function createThinkingGame(signal) {
       ctx.strokeStyle = '#9f603e70'; ctx.beginPath(); ctx.arc(0, 0, 7.4, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = '#553445'; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center';
       ctx.fillText('₿', 0, 4.5); ctx.restore();
+      const sparkle=Math.max(0,Math.sin(appearanceTime*2.5+coin.phase));
+      if(sparkle>.75){ctx.strokeStyle=`rgba(255,224,186,${(sparkle-.75)*3})`;ctx.beginPath();
+        ctx.moveTo(coin.x+9,coin.y-14);ctx.lineTo(coin.x+9,coin.y-6);
+        ctx.moveTo(coin.x+5,coin.y-10);ctx.lineTo(coin.x+13,coin.y-10);ctx.stroke();}
     }
     // Anchor at the feet: squashing widens the body without sinking into the floor.
     const stretch = body.y < ground - size ? Math.min(Math.abs(body.velocity) / 3200, 0.12) : 0;
@@ -111,14 +155,12 @@ export function createThinkingGame(signal) {
     }
     ctx.strokeStyle = '#633749'; ctx.lineWidth = 1.4;
     ctx.beginPath(); ctx.arc(1, 7, 3, 0.1, Math.PI - 0.1); ctx.stroke(); ctx.restore();
-    for (const o of obstacles) {
-      rounded(o.x, ground - o.h, o.w, o.h, 5, o.color);
-      rounded(o.x + 4, ground - o.h + 4, o.w - 8, 2, 1, '#ffffff45');
-    }
+    for (const o of obstacles) drawObstacle(o);
     if (!running) {
       ctx.fillStyle = '#c0b3cd'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
       ctx.fillText(dead ? 'Mais uma tentativa?' : 'Vamos pular?', width / 2 + 24, 58);
     }
+    ctx.restore();
   }
   function tick(now) {
     frame = 0;
@@ -129,6 +171,9 @@ export function createThinkingGame(signal) {
     last = now;
     nextPaint = Math.max(nextPaint + frameInterval, now);
     appearanceTime += dt;
+    shake=Math.max(0,shake-dt);
+    for(const f of effects)f.age+=dt;
+    effects=effects.filter(f=>f.age<f.life);
     colorTime = Math.min(1, colorTime + dt / 0.24);
     const colorBlend = colorTime * colorTime * (3 - 2 * colorTime);
     bodyColor = colorFrom.map((v, i) => v + (palette[colorIndex][i] - v) * colorBlend);
@@ -144,17 +189,20 @@ export function createThinkingGame(signal) {
     distance += speed * dt;
     spawn -= dt;
     if (spawn <= 0) {
-      obstacles.push({x: width + 10, w: 18 + Math.random() * 7, h: 19 + Math.random() * 10,
-        color: score % 2 ? '#b586cf' : '#f49a76', counted: false});
-      [-36, 0, 36].forEach((offset, i) => coins.push({x: width + 20 + offset,
-        y: ground - (i === 1 ? 64 : 42), phase: i}));
-      spawn = 1.25 + Math.random() * 0.55;
+      const obstacle=makeObstacle(width+10,lastKind);lastKind=obstacle.kind;obstacles.push(obstacle);
+      spawn = 1.15 + Math.random() * 0.9;
+    }
+    coinSpawn -= dt;
+    if(coinSpawn <= 0) {
+      coins.push(...makeCoinTrail(width+12,ground));
+      coinSpawn=0.8+Math.random()*1.5;
     }
     for (const o of obstacles) {
       o.x -= speed * dt;
       // Inset hit boxes make the little rounded shapes forgiving on touch.
-      if (x + size - 5 > o.x + 3 && x + 5 < o.x + o.w - 3 && body.y + size - 4 > ground - o.h + 3) {
-        running = false; dead = true;
+      if (obstacleTouchesBody(o,body,x,size,ground)) {
+        running = false; dead = true;shake=.18;
+        emit(x+size/2,body.y+size/2,false);effect(x+size/2,body.y+size/2,"hit");
         hint.textContent = `${collected} moeda${collected === 1 ? "" : "s"} ₿ · espaço / ↑ para tentar de novo`;
         button.setAttribute('aria-label', 'Tentar novamente');
         break;
@@ -168,25 +216,25 @@ export function createThinkingGame(signal) {
       coin.x -= speed * dt;
       if (running && coinTouchesBody(coin, body, x, size)) {
         collected += 1; coinLabel.value = String(collected).padStart(2, '0');
-        emit(coin.x, coin.y, false); return false;
+        emit(coin.x, coin.y, false); effect(coin.x,coin.y,"coin"); return false;
       }
       return coin.x > -12;
     });
     draw(); schedule();
   }
   function schedule() {
-    const settling = particles.length || Math.abs(body.squash) > 0.001 || Math.abs(body.squashVelocity) > 0.01 || body.y < ground - size;
+    const settling = effects.length || shake || particles.length || Math.abs(body.squash) > 0.001 || Math.abs(body.squashVelocity) > 0.01 || body.y < ground - size;
     if (!frame && !disposed && (running || settling) && visible && !document.hidden) frame = requestAnimationFrame(tick);
   }
   function jump() {
     if (disposed) return;
     if (!running) {
-      obstacles = []; particles = []; collected = 0; coinLabel.value = '00';
-      coins = [{x:145, y:ground - 54, phase:0}];
+      obstacles = []; particles = []; effects = []; shake=0; lastKind=""; collected = 0; coinLabel.value = '00';
+      coins = makeCoinTrail(145,ground);coinSpawn=.7+Math.random();
       score = 0; distance = 0; spawn = 0.85;
       Object.assign(body, {y:ground - size, velocity:0, squash:0, squashVelocity:0});
       running = true; dead = false; last = 0; nextPaint = 0; scoreLabel.value = '00';
-      hint.textContent = 'Pule os blocos e colete ₿ · toque / espaço / ↑';
+      hint.textContent = 'Pule as formas e colete ₿ · toque / espaço / ↑';
       button.setAttribute('aria-label', 'Pular obstáculo');
     }
     if (body.y >= ground - size - 0.5) body.velocity = -390;

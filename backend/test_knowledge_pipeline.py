@@ -131,7 +131,13 @@ class PipelineTest(unittest.TestCase):
             'web_offer':{'question':question,'task':'vídeos de Kamino'}},email,secret)
         history=[{'role':'assistant','content':'Não encontrei.\n\n'+question+'\n[Arquivos mostrados nesta resposta: PDF]'},
                  {'role':'user','content':'sim'}]
-        self.assertEqual(confirmed_web_task(token,email,secret,history),'vídeos de Kamino')
+        for answer in ['sim', 's', 'Sim, pesquisar', 'pode sim']:
+            history[-1]['content']=answer
+            self.assertEqual(confirmed_web_task(token,email,secret,history),'vídeos de Kamino')
+        from chat_context import web_offer_decision
+        history[-1]['content']='Não agora'
+        self.assertFalse(web_offer_decision(token,email,secret,history)['accepted'])
+        history[-1]['content']='sim'
         self.assertIsNone(confirmed_web_task(token,'other@altside.com',secret,history))
         self.assertIsNone(confirmed_web_task(token+'x',email,secret,history))
         for text in ['não', 'sim, mas não abra', 'explique lending', 'o documento diz sim']:
@@ -181,6 +187,46 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(result.count('Primeiro slide'),1)
             self.assertEqual(result.count('Segundo slide'),1)
             self.assertEqual(states[-1][0]['seconds'],60)
+
+    def test_cloud_audio_and_local_fallback_keep_the_same_text_contract(self):
+        from knowledge_transcribe import transcribe_pcm
+        pcm=b'\xff\x01'*16000
+        with patch.dict(os.environ,{'ALT_IA_ASR_PROVIDER':'nvidia'}), \
+             patch('knowledge_transcribe._nvidia_retry_at',0), \
+             patch('knowledge_transcribe.transcribe_nvidia',return_value='Fala transcrita') as cloud, \
+             patch('knowledge_transcribe.transcribe_local',return_value='Fallback local') as local:
+            self.assertEqual(transcribe_pcm(pcm,'test-key'),'Fala transcrita')
+            local.assert_not_called()
+            cloud.side_effect=TimeoutError()
+            self.assertEqual(transcribe_pcm(pcm,'test-key'),'Fallback local')
+            self.assertEqual(transcribe_pcm(pcm,'test-key'),'Fallback local')
+            self.assertEqual(cloud.call_count,2)
+            self.assertEqual(transcribe_pcm(b'\0'*32000,'test-key'),'')
+
+    def test_full_audio_precedes_visual_and_fractional_end_is_not_repeated(self):
+        from contextlib import nullcontext
+        from knowledge_transcribe import read_video
+        import json
+        states=[]; order=[]
+        def checkpoint(state,body): states.append(json.loads(json.dumps(state)))
+        def process(args, **kwargs):
+            if args[0]=='ffprobe':
+                return SimpleNamespace(stdout=b'{"format":{"duration":120.5},"streams":[{"codec_type":"audio"},{"codec_type":"video"}]}')
+            return SimpleNamespace(stdout=b'fixture')
+        def speech(*_): order.append('audio'); return 'Fala da estratégia'
+        visual=Mock();visual.read.side_effect=lambda *_:order.append('visual') or 'Cena'
+        with patch('knowledge_transcribe.media_bridge',return_value=nullcontext('http://local')), \
+             patch('knowledge_transcribe.subprocess.run',side_effect=process), \
+             patch('knowledge_transcribe.scene_times',side_effect=lambda _,start,duration:[start+.1]), \
+             patch('knowledge_transcribe.transcribe_pcm',side_effect=speech) as transcribe:
+            result=read_video(None,{},visual,'',{},checkpoint)
+            self.assertEqual(order,['audio']*3+['visual']*3)
+            self.assertTrue(states[2]['audio_complete'])
+            self.assertEqual(states[2]['audio_seconds'],120.5)
+            read_video(None,{},visual,'',states[-1],checkpoint)
+            self.assertEqual(transcribe.call_count,3)
+            self.assertEqual(visual.read.call_count,3)
+            self.assertEqual(result.count('Fala da estratégia'),3)
 
     def test_long_pdf_passages_keep_page_provenance(self):
         from knowledge_store import chunk_text

@@ -9,6 +9,7 @@ import json
 import os
 import time
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
 
 from knowledge_store import KnowledgeStore
@@ -62,7 +63,8 @@ class Worker:
                 lane = 0 if value['mime'].startswith('image/') else 1 if value['mime'].startswith('video/') else 2
                 requested = store.db.execute('SELECT requested_at FROM content_priority WHERE source_key=?', (row[0],)).fetchone()
                 urgent = bool(requested and requested[0] > time.time()-21600 and self.turn % 4 != 3)
-                return (not urgent, 0 if urgent else (lane-self.lane)%3,
+                audio_priority = lane == 1 and not state.get('audio_complete') and self.turn % 4 != 3
+                return (not audio_priority, not urgent, 0 if urgent else (lane-self.lane)%3,
                         -requested[0] if urgent else 0,
                         state.get('last_processed',0), 0 if lane == 1 else 1)
             for key, revision, payload, progress, attempts in sorted(rows,key=rank):
@@ -105,13 +107,22 @@ class Worker:
         visual = VisualReader(self.api_key, cached, cache)
         try:
             suffix = Path(payload['filename']).suffix.lower()
+            final_progress = {}
             if payload['mime'].startswith('video/') or suffix in {'.mp4', '.mov', '.webm', '.m4v'}:
                 def checkpoint(state, body):
                     state['last_processed'] = time.time()
-                    self.update(job, body='[Transcrição em andamento; conteúdo parcial]\n' + body,
-                        detail=f"Áudio processado: {min(state['seconds'], state['duration']):.0f}/{state['duration']:.0f}s", progress=state)
+                    final_progress.update(seconds=min(state['seconds'],state['duration']), duration=state['duration'],
+                        audio_seconds=state.get('audio_seconds',state['seconds']), audio_complete=state.get('audio_complete',False))
+                    pending = state.get('pending_interval') or {}
+                    audio_end = state.get('audio_seconds', min(pending.get('offset',state['seconds'])+60,state['duration']) if '[Transcrição automática' in pending.get('text','') else min(state['seconds'],state['duration']))
+                    self.update(job, body=('[Áudio integral transcrito; leitura visual em andamento]\n' if state.get('audio_complete') else '[Transcrição em andamento; conteúdo parcial]\n') + body,
+                        detail=f"Áudio processado: {audio_end:.0f}/{state['duration']:.0f}s; leitura visual por amostragem", progress=state)
                     # One minute per turn prevents a long recording from
                     # blocking all other videos/documents in the queue.
+                    audio_advanced = state.get('audio_seconds',0) - progress.get('audio_seconds',progress.get('seconds',0))
+                    audio_finished = state.get('audio_complete') and not progress.get('audio_complete')
+                    if state.get('has_video') and (audio_advanced >= 60 or audio_finished):
+                        raise ContinueLater()
                     if state['seconds'] < state['duration'] and state['seconds'] - progress.get('seconds',0) >= 60:
                         raise ContinueLater()
                 body = read_video(store, payload, visual, self.api_key, progress, checkpoint)
@@ -138,7 +149,7 @@ class Worker:
                 detail = 'Texto e leitura visual extraídos; ambiguidades sinalizadas no conteúdo.'
             if not body.strip():
                 raise ValueError('Extração sem texto')
-            self.update(job, body=body, status='complete', detail=detail, progress={})
+            self.update(job, body=body, status='complete', detail=detail, progress=final_progress)
             print(json.dumps({'event': 'indexed', 'source': key, 'characters': len(body)}), flush=True)
         except ContinueLater:
             with self.transaction() as fresh, fresh.db:
@@ -175,14 +186,27 @@ def main():
     with (worker.directory / 'worker.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         worker.reset_interrupted()
-        while True:
+        with worker.transaction() as store:
+            exported = store.reconcile_video_texts()
+        print(json.dumps({'event':'video_text_reconciled','files':exported}),flush=True)
+        if args.once:
             job = worker.claim(args.source)
-            if job:
-                worker.run_job(job)
-            if args.once:
-                break
-            if not job:
-                time.sleep(30)
+            if job: worker.run_job(job)
+            return
+        concurrency = max(1, min(2, int(os.environ.get('ALT_IA_KNOWLEDGE_CONCURRENCY', '1'))))
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            running = set()
+            while True:
+                while len(running) < concurrency:
+                    job = worker.claim(args.source)
+                    if not job: break
+                    running.add(executor.submit(worker.run_job, job))
+                if not running:
+                    time.sleep(30)
+                    continue
+                done, running = wait(running, timeout=5, return_when=FIRST_COMPLETED)
+                for future in done:
+                    future.result()
 
 
 if __name__ == '__main__':

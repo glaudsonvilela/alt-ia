@@ -424,6 +424,7 @@ function readConversations() {
             research: message.role === 'ai' ? safeResearch(message.research) : [],
             documents: message.role === 'ai' ? safeDocuments(message.documents) : [],
             requestedDocuments: message.role === 'ai' && message.requestedDocuments === true,
+            webOffer: message.webOffer === true,
             knowledgeState: typeof message.knowledgeState === 'string' ? message.knowledgeState.slice(0, 12000) : '',
             video: message.role === 'ai' ? safeVideo(message.video) : null,
             nerdQuery: message.role === 'ai' && typeof message.nerdQuery === 'string' ? message.nerdQuery.slice(0, 650) : '',
@@ -1129,7 +1130,30 @@ function renderConversation() {
   } else {
     const fragment = document.createDocumentFragment();
     const seenDocuments = new Set();
-    conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode || (message.mode === 'agent' && agentStarted && agentOwnerId === conversation.id) ? null : message.video, unseenDocuments(message.documents, message.requestedDocuments ? new Set() : seenDocuments))));
+    conversation.messages.forEach((message, index) => {
+      const row = createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode || (message.mode === 'agent' && agentStarted && agentOwnerId === conversation.id) ? null : message.video, unseenDocuments(message.documents, message.requestedDocuments ? new Set() : seenDocuments));
+      if (index === conversation.messages.length - 1 && message.role === 'ai' && message.knowledgeState
+        && (message.webOffer || message.text.trim().endsWith('Quer que eu abra o agente para procurar na web?'))) {
+        const choice = document.createElement('section');
+        choice.className = 'agent-choice'; choice.setAttribute('aria-label', 'Pesquisar com o agente');
+        const mark = document.createElement('span'); mark.className = 'agent-choice-mark'; mark.setAttribute('aria-hidden', 'true');
+        mark.innerHTML = '<i></i><i></i>';
+        const copy = document.createElement('div');
+        const title = document.createElement('strong'); title.textContent = 'Vamos explorar?';
+        const hint = document.createElement('small'); hint.textContent = 'O agente pesquisa e traz o resultado para esta conversa.';
+        const actions = document.createElement('div'); actions.className = 'agent-choice-actions';
+        for (const [label, answer] of [['Sim, pesquisar', 'Sim, pesquisar'], ['Não agora', 'Não agora']]) {
+          const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+          button.addEventListener('click', () => {
+            if (activeId !== conversation.id || conversationWork.busy(conversation.id)) return;
+            chatInput.value = answer; chatForm.requestSubmit();
+          });
+          actions.append(button);
+        }
+        copy.append(title, hint, actions); choice.append(mark, copy); row.querySelector('.message-body').append(choice);
+      }
+      fragment.append(row);
+    });
     chatMessages.append(fragment);
   }
   const work = conversationWork.get(activeId);
@@ -2575,6 +2599,7 @@ chatForm?.addEventListener('submit', async (event) => {
     if (!target) return;
     target.messages.push({ role: 'ai', text: data.reply, speech: typeof data.speech === 'string' ? data.speech.slice(0, 220) : '',
       simulation: safeSimulation(data.simulation), news: safeNews(data.news), wallet: safeWallet(data.wallet),
+      webOffer: data.web_offer === true,
       knowledgeState: typeof data.knowledge_state === 'string' ? data.knowledge_state.slice(0, 12000) : '',
       research: safeResearch(data.research), documents: unseenDocuments(safeDocuments(data.documents), data.requested_documents ? new Set() : new Set(target.messages.flatMap(message => (message.documents || []).map(item => `${item.kind}:${item.id}`)))), requestedDocuments: data.requested_documents === true, video: safeVideo(data.video), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
       newsContext: safeNews(data.news_context || data.news),
@@ -2602,7 +2627,9 @@ chatForm?.addEventListener('submit', async (event) => {
     if (data.input_request?.kind === 'wallet') requestedConfig = data.input_request;
   } catch (error) {
     if (work.controller.signal.aborted || !conversations.some(item => item.id === conversationId)) return;
-    const message = error.message || 'Falha ao conectar. Tente novamente.';
+    const message = error instanceof TypeError && /fetch|network|load/i.test(error.message)
+      ? 'A conexão com a Alt-IA foi interrompida. Sua conversa foi preservada; tente enviar novamente.'
+      : error.message || 'Falha ao conectar. Tente novamente.';
     work.node = createMessage('ai', message);
     work.node.classList.add('message-error');
     conversationWork.finish(conversationId, work, message);

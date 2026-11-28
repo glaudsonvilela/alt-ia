@@ -31,7 +31,7 @@ from knowledge_research import research as research_knowledge, evidence_prompt, 
 from knowledge_delivery import delivery_prompt, delivery_format, deliver, requested_media, current_web_offer
 from knowledge_video import video_response, range_header, VIDEO_SLOTS
 from chat_stream import consume_stream
-from chat_context import validate_messages, research_state, read_research_state, confirmed_web_task
+from chat_context import validate_messages, research_state, read_research_state, web_offer_decision
 from usage_meter import configure as configure_usage, for_account as usage_for_account, record as record_usage
 
 
@@ -756,7 +756,10 @@ class Handler(BaseHTTPRequestHandler):
             self.timings = {}
             deadline = time.monotonic() + 88
             user_text = messages[-1]["content"]
-            confirmed_task = confirmed_web_task(knowledge_token, self.authenticated_email, SCENARIO_SECRET, messages)
+            decision = web_offer_decision(knowledge_token, self.authenticated_email, SCENARIO_SECRET, messages)
+            if decision and not decision['accepted']:
+                return self.respond(200, {'reply':'Tudo bem. Continuamos por aqui com o material da Altside.', 'mode':'general'})
+            confirmed_task = decision['task'] if decision else None
             if confirmed_task and browser_available and not nerd_mode and simulation_request is None and wallet_request is None:
                 return self.respond(200, {'agent_request': {'task': confirmed_task}, 'mode': 'agent'})
             research_started = time.monotonic()
@@ -790,7 +793,7 @@ class Handler(BaseHTTPRequestHandler):
             if planned_offer:
                 knowledge_result['web_offer'] = planned_offer
                 return self.respond(200, {'reply':'Para conferir informações atuais, posso pesquisar fontes públicas com o agente.\n\n' + planned_offer['question'],
-                    'mode':'general', 'documents':[], 'research':[],
+                    'mode':'general', 'documents':[], 'research':[], 'web_offer': True,
                     'knowledge_state':research_state(knowledge_result,self.authenticated_email,SCENARIO_SECRET),
                     'timings_ms': {k:round(v) for k,v in self.timings.items()}})
             previous_mode = chat_context.get("mode")
@@ -922,6 +925,7 @@ class Handler(BaseHTTPRequestHandler):
             presentation = deliver(answer, documents)
             if presentation.pop('needs_web', False) and not nerd_mode:
                 if browser_available:
+                    presentation['web_offer'] = True
                     offer_question = 'Quer que eu abra o agente para procurar na web?'
                     presentation['reply'] = presentation['reply'].rsplit('\n\n', 1)[0] + '\n\n' + offer_question
                     knowledge_result = knowledge_result or {'sources': [], 'question': user_text}

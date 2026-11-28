@@ -81,6 +81,31 @@ class AuthServiceTests(unittest.TestCase):
                 self.auth.begin("google-token")
         self.assertEqual(self.mail, [])
 
+    def test_additional_domain_requires_verified_email_and_code(self):
+        self.auth.additional_domains = frozenset({"criptomaniacos.io"})
+        self.claims = {
+            "email": "Guilherme@criptomaniacos.io", "email_verified": True,
+            "name": "Guilherme Assis",
+        }
+        challenge, email = self.auth.begin("google-token")
+        self.assertEqual(email, "guilherme@criptomaniacos.io")
+        self.assertEqual(self.mail[-1][0], email)
+        session, _ = self.auth.complete(challenge, self.mail[-1][1])
+        self.assertEqual(self.auth.profile_for(session)["email"], email)
+
+    def test_additional_domain_does_not_allow_other_addresses(self):
+        self.auth.additional_domains = frozenset({"criptomaniacos.io"})
+        for claims in (
+            {"email": "ana@criptomaniacos.io.evil", "email_verified": True},
+            {"email": "ana@outro.io", "email_verified": True},
+            {"email": "ana@criptomaniacos.io", "email_verified": False},
+            {"email": "ana@altside.com", "email_verified": True},
+        ):
+            self.claims = claims
+            with self.assertRaises(AuthError):
+                self.auth.begin("google-token")
+        self.assertEqual(self.mail, [])
+
     def test_code_expires_and_five_attempts_lock(self):
         challenge, _ = self.auth.begin("google-token")
         for _ in range(5):
@@ -139,6 +164,29 @@ class AuthServiceTests(unittest.TestCase):
             self.assertIn("cid:alt-ia-mascots", html)
             related = [part for part in message.walk() if part.get_content_type() == "image/png"]
             self.assertEqual(len(related), 2)
+
+    def test_login_client_can_differ_from_gmail_sender_client(self):
+        with tempfile.TemporaryDirectory() as directory:
+            oauth_path = os.path.join(directory, "oauth.json")
+            token_path = os.path.join(directory, "refresh-token")
+            with open(oauth_path, "w", encoding="utf-8") as file:
+                json.dump({"web": {"client_id": "sender.apps.googleusercontent.com",
+                                   "client_secret": "private-secret"}}, file)
+            with open(token_path, "w", encoding="utf-8") as file:
+                file.write("private-refresh-token\n")
+            auth = AuthService(
+                "login.apps.googleusercontent.com", "altside.com", "", 587,
+                "Alt-IA <glaudson@altside.com>", mail_provider="gmail_api",
+                gmail_client_secret_file=oauth_path,
+                gmail_refresh_token_file=token_path,
+                gmail_client_id="sender.apps.googleusercontent.com",
+            )
+            self.assertEqual(auth.client_id, "login.apps.googleusercontent.com")
+            self.assertEqual(auth.gmail_client_id, "sender.apps.googleusercontent.com")
+            with patch("access_auth.AuthorizedSession") as session_factory:
+                auth._send_email("ana@altside.com", "123456")
+            self.assertEqual(session_factory.call_args.args[0].client_id,
+                             "sender.apps.googleusercontent.com")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import base64
 from html import escape
 import json
 import os
+import re
 import secrets
 import smtplib
 import sqlite3
@@ -37,7 +38,7 @@ class AuthService:
                  smtp_user="", smtp_password_file="", smtp_mode="starttls",
                  verifier=None, sender=None, now=None, mail_provider="smtp",
                  gmail_client_secret_file="", gmail_refresh_token_file="",
-                 session_db_path=""):
+                 session_db_path="", additional_domains=(), gmail_client_id=""):
         if not client_id or not smtp_from:
             raise ValueError("Configure Google Client ID e remetente antes de iniciar a Alt-IA.")
         if mail_provider not in ("smtp", "gmail_api"):
@@ -46,6 +47,11 @@ class AuthService:
             raise ValueError("Modo SMTP inválido.")
         if not domain or "@" in domain or "." not in domain:
             raise ValueError("Domínio corporativo inválido.")
+        if isinstance(additional_domains, str):
+            additional_domains = additional_domains.split(",")
+        additional_domains = frozenset(item.strip().lower() for item in additional_domains if item.strip())
+        if any(not re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", item) for item in additional_domains):
+            raise ValueError("Domínio adicional inválido.")
         if mail_provider == "smtp" and not smtp_host:
             raise ValueError("Configure o host SMTP.")
         if mail_provider == "smtp" and smtp_user and not smtp_password_file:
@@ -63,7 +69,7 @@ class AuthService:
             try:
                 with open(gmail_client_secret_file, encoding="utf-8") as file:
                     oauth = json.load(file).get("web", {})
-                if oauth.get("client_id") != client_id or not oauth.get("client_secret"):
+                if oauth.get("client_id") != (gmail_client_id or client_id) or not oauth.get("client_secret"):
                     raise ValueError("O cliente OAuth do Gmail não corresponde ao login.")
                 with open(gmail_refresh_token_file, encoding="utf-8") as file:
                     if not file.read().strip():
@@ -71,7 +77,9 @@ class AuthService:
             except (OSError, json.JSONDecodeError):
                 raise ValueError("Arquivos OAuth do Gmail indisponíveis.") from None
         self.client_id = client_id
+        self.gmail_client_id = gmail_client_id or client_id
         self.domain = domain.lower()
+        self.additional_domains = additional_domains
         self.smtp_host = smtp_host
         self.smtp_port = int(smtp_port)
         self.smtp_from = smtp_from
@@ -120,6 +128,8 @@ class AuthService:
             gmail_client_secret_file=os.environ.get("ALT_IA_GMAIL_CLIENT_SECRET_FILE", ""),
             gmail_refresh_token_file=os.environ.get("ALT_IA_GMAIL_REFRESH_TOKEN_FILE", ""),
             session_db_path=os.environ.get("ALT_IA_SESSION_DB", ""),
+            additional_domains=os.environ.get("ALT_IA_ADDITIONAL_ALLOWED_EMAIL_DOMAINS", ""),
+            gmail_client_id=os.environ.get("ALT_IA_GMAIL_CLIENT_ID", ""),
         )
 
     def _verify_google(self, credential):
@@ -189,7 +199,7 @@ class AuthService:
             credentials = Credentials(
                 token=None, refresh_token=refresh_token,
                 token_uri="https://oauth2.googleapis.com/token",
-                client_id=self.client_id, client_secret=oauth["client_secret"],
+                client_id=self.gmail_client_id, client_secret=oauth["client_secret"],
                 scopes=[GMAIL_SEND_SCOPE],
             )
             try:
@@ -237,13 +247,15 @@ class AuthService:
         except (ValueError, TypeError, OSError, GoogleAuthError):
             raise AuthError("Não foi possível verificar a conta Google.") from None
         email = claims.get("email")
-        if (claims.get("email_verified") is not True or
-                claims.get("hd") != self.domain or
-                not isinstance(email, str) or
-                not email.lower().endswith("@" + self.domain) or
-                len(email) > 254):
-            raise AuthError("Use sua conta Google corporativa @" + self.domain + ".")
+        if not isinstance(email, str) or len(email) > 254 or email.count("@") != 1:
+            raise AuthError("Use uma conta Google autorizada.")
         email = email.lower()
+        local_part, email_domain = email.split("@", 1)
+        primary_account = email_domain == self.domain and claims.get("hd") == self.domain
+        additional_account = email_domain in self.additional_domains
+        if (claims.get("email_verified") is not True or not local_part or
+                not (primary_account or additional_account)):
+            raise AuthError("Use uma conta Google autorizada.")
         name = claims.get("name")
         if not isinstance(name, str) or not name.strip():
             name = email.split("@", 1)[0]

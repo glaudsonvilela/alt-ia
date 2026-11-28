@@ -31,11 +31,11 @@ Em produção, o túnel Cloudflare encaminha `ai.bigbanana.io` para a página Ng
 
 ## Acesso privado
 
-A Alt-IA usa login Google corporativo seguido por um código enviado ao mesmo e-mail. O servidor confere o token Google, a declaração de domínio Google Workspace (`hd=altside.com`) e o e-mail verificado. O código tem seis dígitos, expira em dez minutos e aceita até cinco tentativas. A sessão dura 12 horas e pode ser encerrada pelo botão **Sair da Alt-IA**. A tela inicial e seus recursos visuais são públicos; o login aparece ao enviar uma mensagem ou clicar em um atalho. Todas as APIs de dados e ações continuam exigindo sessão no backend. A ação iniciada é retomada depois da entrada.
+A Alt-IA usa login Google seguido por um código enviado ao mesmo e-mail. O servidor confere o token Google e o e-mail verificado. Contas `@altside.com` também exigem a declaração de domínio Google Workspace (`hd=altside.com`). Domínios adicionais podem ser liberados por `ALT_IA_ADDITIONAL_ALLOWED_EMAIL_DOMAINS`; o código enviado ao e-mail confirma o acesso atual à caixa. O código tem seis dígitos, expira em dez minutos e aceita até cinco tentativas. A sessão dura 12 horas e pode ser encerrada pelo botão **Sair da Alt-IA**. A tela inicial e seus recursos visuais são públicos; o login aparece ao enviar uma mensagem ou clicar em um atalho. Todas as APIs de dados e ações continuam exigindo sessão no backend. A ação iniciada é retomada depois da entrada.
 
 Não é necessário cadastrar cartão no Cloudflare Zero Trust, e o servidor da Alt-IA pode continuar local. O cliente OAuth web já criado deve ter `https://ai.bigbanana.io` como **origem JavaScript autorizada**. Para enviar o código sem senha de aplicativo nem acesso ao administrador do Google Workspace, use a API do Gmail com a conta `glaudson@altside.com`. Essa autorização pede apenas `gmail.send` (envio; sem leitura da caixa).
 
-1. No [Google Cloud Console](https://console.cloud.google.com/apis/library/gmail.googleapis.com), selecione o projeto desse cliente OAuth e ative a **Gmail API**. No [Google Auth Platform](https://console.cloud.google.com/auth/scopes), adicione o escopo `https://www.googleapis.com/auth/gmail.send`. Mantenha o público **Interno**.
+1. No [Google Cloud Console](https://console.cloud.google.com/apis/library/gmail.googleapis.com), selecione o projeto do cliente OAuth de envio e ative a **Gmail API**. No [Google Auth Platform](https://console.cloud.google.com/auth/scopes), adicione o escopo `https://www.googleapis.com/auth/gmail.send`. O cliente usado para login precisa aceitar contas **Externas** para que outro domínio consiga entrar. Se o projeto atual for **Interno**, crie um cliente web em um projeto **Externo** separado para o login; mantenha o cliente interno e seu token renovável para o envio. Use `ALT_IA_GOOGLE_CLIENT_ID` para o cliente de login e `ALT_IA_GMAIL_CLIENT_ID` para o cliente de envio. Não mude o projeto do remetente para Externo em modo de teste: o token renovável de `gmail.send` poderá expirar em sete dias.
 2. No [cliente OAuth web](https://console.cloud.google.com/auth/clients), adicione `http://127.0.0.1:8765/callback` como **URI de redirecionamento autorizado**. Baixe o JSON do cliente e guarde-o fora do repositório, no computador onde vai executar o comando abaixo. O navegador que fizer a autorização deve estar nessa mesma máquina.
 3. Instale `backend/requirements.txt`. Execute a autorização uma vez, entre com `glaudson@altside.com` e aceite a permissão de **enviar e-mails**. Não cole o JSON nem o token no chat.
 
@@ -52,7 +52,9 @@ O comando imprime um link para abrir no navegador e salva o token renovável em 
 ```text
 ALT_IA_AUTH_REQUIRED=1
 ALT_IA_GOOGLE_CLIENT_ID=802613256116-h6vv32v9egbdk29gqf558j03mqcmiup9.apps.googleusercontent.com
+# Configure ALT_IA_GMAIL_CLIENT_ID com o cliente atual se o login usar outro cliente.
 ALT_IA_ALLOWED_EMAIL_DOMAIN=altside.com
+ALT_IA_ADDITIONAL_ALLOWED_EMAIL_DOMAINS=criptomaniacos.io
 ALT_IA_MAIL_PROVIDER=gmail_api
 ALT_IA_GMAIL_CLIENT_SECRET_FILE=/run/secrets/alt-ia-google-client.json
 ALT_IA_GMAIL_REFRESH_TOKEN_FILE=/run/secrets/alt-ia-gmail-refresh-token

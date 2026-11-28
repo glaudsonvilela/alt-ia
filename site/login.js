@@ -75,7 +75,7 @@ async function setup() {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   if (!window.google?.accounts?.id) throw new Error('Não foi possível carregar o login Google.');
-  google.accounts.id.initialize({client_id: clientId, callback: onGoogle, hd: 'altside.com'});
+  google.accounts.id.initialize({client_id: clientId, callback: onGoogle});
   const button = document.querySelector('#google-button');
   const revealButton = () => {
     requestAnimationFrame(() => requestAnimationFrame(() => {

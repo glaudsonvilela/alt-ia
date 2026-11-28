@@ -36,7 +36,7 @@ function openLogin(pending) {
   google.async = true;
   document.head.append(google);
   const login = document.createElement('script');
-  login.src = '/login.js?v=7';
+  login.src = '/login.js?v=8';
   document.head.append(login);
 }
 

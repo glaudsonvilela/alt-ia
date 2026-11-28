@@ -63,6 +63,7 @@ class Worker:
                 requested = store.db.execute('SELECT requested_at FROM content_priority WHERE source_key=?', (row[0],)).fetchone()
                 urgent = bool(requested and requested[0] > time.time()-21600 and self.turn % 4 != 3)
                 return (not urgent, 0 if urgent else (lane-self.lane)%3,
+                        -requested[0] if urgent else 0,
                         state.get('last_processed',0), 0 if lane == 1 else 1)
             for key, revision, payload, progress, attempts in sorted(rows,key=rank):
                 if source and key != source:

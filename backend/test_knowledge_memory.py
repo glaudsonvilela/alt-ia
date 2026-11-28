@@ -55,6 +55,19 @@ class MemoryTest(unittest.TestCase):
         self.store.prioritize_content([self.record['parent_key']])
         self.assertEqual(self.worker.claim()[0],self.record['key'])
 
+    def test_latest_request_precedes_other_urgent_content(self):
+        from unittest.mock import patch
+        second={**self.record,'key':'7:message:9:attachment:10','parent_key':'7:message:9','title':'AAA earlier request'}
+        self.store.upsert(second)
+        self.store.enqueue_content(second['key'],'rev1',{**self.payload,'record':second})
+        self.store.save()
+        import time
+        now=time.time()
+        with patch('knowledge_store.time.time',return_value=now-100):
+            self.store.prioritize_content([second['key']])
+        self.store.prioritize_content([self.record['key']])
+        self.assertEqual(self.worker.claim()[0],self.record['key'])
+
     def test_revocation_cannot_be_undone_by_running_extraction(self):
         job = self.worker.claim()
         with self.worker.transaction() as current:

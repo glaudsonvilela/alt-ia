@@ -34,13 +34,13 @@ abrangente pede profundidade proporcional. Evite transformar toda resposta em um
 Entregue SOMENTE JSON com os campos:
 {"answer":"explicação completa em Markdown simples, sem links nem marcadores de citação",
  "follow_up":"uma pergunta breve e específica para continuar o assunto",
- "document_ids":["IDs exatos dos PDFs úteis para esta resposta"], "needs_web":false}.
+ "document_ids":["IDs exatos dos PDFs ou vídeos úteis para esta resposta"], "needs_web":false}.
 O repositório é SEMPRE a primeira opção. Use needs_web=true SOMENTE se as evidências internas
 não atenderem ao pedido e uma pesquisa externa puder ajudar. Não execute nem afirme ter executado
 buscas externas. O servidor perguntará se a pessoa quer abrir o agente antes de qualquer navegação.
 Se existe um vídeo interno adequado, entregue-o com needs_web=false, mesmo sem transcrição.
-Se o vídeo solicitado existe mas está com transcrição pendente, explique essa lacuna; não substitua
-o vídeo por um da web e não invente o resumo. Conversa casual e recusas não precisam da web.
+Se o pedido é resumir um vídeo com transcrição pendente, explique essa lacuna; não invente o resumo.
+Se o pedido é MOSTRAR ou ASSISTIR, selecione o vídeo em document_ids e apresente o player, sem negar essa capacidade. Conversa casual e recusas não precisam da web.
 Perguntas de continuação ficam somente em follow_up; não inclua outra pergunta em answer.
 Sempre encerre com uma pergunta pertinente em follow_up, sem repeti-la em answer. Em um panorama de
 estratégias, convide a escolher qual aprofundar. Em um aprofundamento, proponha o próximo passo relevante.
@@ -82,3 +82,32 @@ def deliver(content, documents):
     selected = {allowed[i]["id"]: allowed[i] for i in ids if isinstance(i, str) and i in allowed} if isinstance(ids, list) else {}
     return {"reply": answer + "\n\n" + question, "documents": list(selected.values())[:3], "research": [],
             "needs_web": value.get('needs_web') is True}
+
+
+def requested_media(result, store):
+    """Fulfill the planner's explicit file selection through the real library.
+
+    Playback availability is independent of transcription. Avoid a second model
+    generation that can deny a tool result or forget its document IDs.
+    """
+    kind = {'show_video':'video', 'show_pdf':'pdf'}.get((result or {}).get('media_request'))
+    keys = (result or {}).get('media_source_keys') or []
+    if not kind or not keys:
+        return None
+    documents = [item for item in store.documents_for(keys) if item['kind'] == kind][:3]
+    if not documents:
+        return None
+    titles = '\n'.join('- **' + item['title'] + '**' for item in documents)
+    label = 'vídeo' if kind == 'video' else 'PDF'
+    return {'reply': f"Aqui {'está o' if len(documents) == 1 else 'estão os'} {label}{'' if len(documents) == 1 else 's'} do repositório:\n\n" + titles +
+            ("\n\nVocê pode assistir pelo player aqui na Alt-IA." if kind == 'video' else "\n\nVocê pode ler aqui na Alt-IA.") +
+            ("\n\nQual deles você quer explorar primeiro?" if len(documents)>1 else "\n\nQual ponto desse material você gostaria de aprofundar?"),
+            'documents':documents, 'research':[], 'mode':'general', 'requested_documents':True}
+
+
+def current_web_offer(result):
+    """A current/public research plan must expose the available tool, not deny it."""
+    if not result or not result.get('web_query') or result.get('media_request') in {'show_video','show_pdf'}:
+        return None
+    question = 'Quer que eu abra o agente para procurar na web?'
+    return {'question':question, 'task':str(result.get('question') or result['web_query'])[:1500]}

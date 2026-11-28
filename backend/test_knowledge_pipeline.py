@@ -29,6 +29,100 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(result['question'],'Abra outro vídeo da banda indicada')
         self.assertNotEqual(research(self.store,messages,complete)['intent'],'browser')
 
+    @unittest.skipUnless(os.geteuid() == 0, 'Cross-UID regression requires container root')
+    def test_atomic_write_keeps_worker_ownership_and_private_modes(self):
+        from knowledge_store import private_write
+        root=Path(self.temp.name)/'shared';root.mkdir(mode=0o700);os.chown(root,1000,1000)
+        target=root/'knowledge.enc'
+        for value in [b'first',b'priority update']:
+            private_write(target,value)
+            self.assertEqual(target.read_bytes(),value)
+            self.assertEqual(target.stat().st_uid,1000)
+            self.assertEqual(target.stat().st_mode & 0o777,0o600)
+        nested=root/'video-text'/'memo.txt.enc';private_write(nested,b'encrypted')
+        self.assertEqual(nested.parent.stat().st_uid,1000)
+        self.assertEqual(nested.parent.stat().st_mode & 0o777,0o700)
+        self.assertEqual(nested.stat().st_uid,1000)
+
+    def test_internal_window_action_does_not_become_repository_explanation(self):
+        from knowledge_research import requested_app_action
+        messages=[{'role':'user','content':'Quero simular um empréstimo'},
+                  {'role':'assistant','content':'Podemos usar o simulador de lending.'},
+                  {'role':'user','content':'abre esse simulador'}]
+        plan={'intent':'explain','question':'Abra o simulador de lending',
+              'app_action':{'kind':'lending','request_quote':'abre esse simulador'},'source_ids':['S1']}
+        result=research(self.store,messages,lambda *_:plan)
+        self.assertEqual(result['app_action'],'lending')
+        self.assertEqual(result['sources'],[])
+        self.assertEqual(result['status'],'not_needed')
+        self.assertIsNone(result['agent_task'])
+        plan['app_action']['request_quote']='Podemos usar o simulador'
+        self.assertIsNone(requested_app_action(plan,messages))
+        plan['app_action']={'kind':'execute_code','request_quote':'abre esse simulador'}
+        self.assertIsNone(requested_app_action(plan,messages))
+
+    def test_contextual_site_handoff_preserves_resolved_task(self):
+        from knowledge_research import requested_site_task
+        messages=[{'role':'user','content':'Me explique a Meteora'},
+                  {'role':'assistant','content':'Meteora é o protocolo que acabamos de comparar.'},
+                  {'role':'user','content':'abre ela pra mim'}]
+        plan={'intent':'browser','question':'Abra o aplicativo da Meteora', 'source_ids':['S1'],
+              'browser_action':{'kind':'open_site','request_quote':'abre ela pra mim'}}
+        def complete(_, payload):
+            self.assertEqual(payload['conversation'],messages)
+            return plan
+        result=research(self.store,messages,complete,browser_available=True)
+        self.assertEqual(result['agent_task'],'Abra o aplicativo da Meteora')
+        self.assertTrue(result['sources'])
+        self.assertIsNone(requested_site_task(plan,messages,False))
+        plan['browser_action']['request_quote']='Me explique a Meteora'
+        self.assertIsNone(requested_site_task(plan,messages,True))
+        plan['browser_action']={'kind':'none','request_quote':'abre ela pra mim'}
+        self.assertIsNone(requested_site_task(plan,messages,True))
+
+    def test_empty_catalog_still_interprets_navigation_context(self):
+        store=Mock();store.catalog.return_value=[];store.search.return_value=[];store.read_sources.return_value=[];store.discussion_parents.return_value=[]
+        plan={'intent':'browser','needs_knowledge':False,'question':'Abra Meteora',
+              'browser_action':{'kind':'open_site','request_quote':'abra Meteora'}}
+        result=research(store,[{'role':'user','content':'abra Meteora'}],lambda *_:plan,browser_available=True)
+        self.assertEqual(result['agent_task'],'Abra Meteora')
+
+    def test_requested_video_is_delivered_without_a_transcript(self):
+        from knowledge_delivery import requested_media
+        self.store.put_video(self.key,'tutorial.mp4','https://3.basecampapi.com/7/download/1','video/mp4',100)
+        plan={'intent':'browser','question':'Mostre os vídeos internos',
+              'media_request':'show_video','media_source_ids':['S1','unknown'],'source_ids':['S1'],
+              'browser_action':{'kind':'open_site','request_quote':'mostre o vídeo'}}
+        result=research(self.store,[{'role':'user','content':'mostre o vídeo'}],lambda *_:plan,browser_available=True)
+        self.assertIsNone(result['agent_task'])
+        self.assertEqual(result['media_source_keys'],[self.key])
+        response=requested_media(result,self.store)
+        self.assertEqual(len(response['documents']),1)
+        self.assertEqual(response['documents'][0]['kind'],'video')
+        self.assertTrue(response['requested_documents'])
+        self.assertNotIn('transcrição',response['reply'])
+        self.assertIsNone(requested_media({**result,'media_request':'none'},self.store))
+        self.assertIsNone(requested_media({**result,'media_source_keys':['unknown']},self.store))
+
+    def test_display_shortcut_never_swallows_requested_summary(self):
+        plan={'intent':'explain','question':'Resuma o vídeo','media_request':'show_video',
+              'media_source_ids':['S1'],'source_ids':['S1']}
+        for text in ['resuma o vídeo', 'poderia resumir para mim?', 'me dê um resumo do vídeo', 'descreva o conteúdo']:
+            result=research(self.store,[{'role':'user','content':text}],lambda *_:plan)
+            self.assertEqual(result['media_request'],'none')
+            self.assertTrue(result['sources'])
+        result=research(self.store,[{'role':'user','content':'abra o vídeo Análise de funcionamento Orca'}],lambda *_:plan)
+        self.assertEqual(result['media_request'],'show_video')
+
+    def test_current_news_offers_agent_with_resolved_context(self):
+        from knowledge_delivery import current_web_offer
+        result={'question':'Pesquise notícias de hoje sobre a Orca na Solana','web_query':'Orca Solana notícias hoje'}
+        offer=current_web_offer(result)
+        self.assertEqual(offer['task'],result['question'])
+        self.assertIn('agente',offer['question'])
+        self.assertIsNone(current_web_offer({**result,'web_query':''}))
+        self.assertIsNone(current_web_offer({**result,'media_request':'show_video'}))
+
     def test_web_confirmation_requires_signed_offer_and_immediate_answer(self):
         from chat_context import confirmed_web_task, research_state
         secret=b'x'*32; email='test@altside.com'

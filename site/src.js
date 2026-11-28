@@ -423,6 +423,7 @@ function readConversations() {
             newsContext: message.role === 'ai' ? safeNews(message.newsContext || message.news) : [],
             research: message.role === 'ai' ? safeResearch(message.research) : [],
             documents: message.role === 'ai' ? safeDocuments(message.documents) : [],
+            requestedDocuments: message.role === 'ai' && message.requestedDocuments === true,
             knowledgeState: typeof message.knowledgeState === 'string' ? message.knowledgeState.slice(0, 12000) : '',
             video: message.role === 'ai' ? safeVideo(message.video) : null,
             nerdQuery: message.role === 'ai' && typeof message.nerdQuery === 'string' ? message.nerdQuery.slice(0, 650) : '',
@@ -1128,7 +1129,7 @@ function renderConversation() {
   } else {
     const fragment = document.createDocumentFragment();
     const seenDocuments = new Set();
-    conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode || (message.mode === 'agent' && agentStarted && agentOwnerId === conversation.id) ? null : message.video, unseenDocuments(message.documents, seenDocuments))));
+    conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode || (message.mode === 'agent' && agentStarted && agentOwnerId === conversation.id) ? null : message.video, unseenDocuments(message.documents, message.requestedDocuments ? new Set() : seenDocuments))));
     chatMessages.append(fragment);
   }
   const work = conversationWork.get(activeId);
@@ -1988,12 +1989,13 @@ document.querySelector('#lending-generate')?.addEventListener('click', () => {
   lendingDemoId.title = 'Endereço fictício de teste. Não tem chave privada nem saldo na rede.';
   lendingError('');
 });
-document.querySelector('[data-action="track-wallet"]')?.addEventListener('click', () => {
+function openWalletDialog() {
   walletFormError.hidden = true;
   walletFormError.textContent = '';
   if (!walletDialog.open) walletDialog.showModal();
   walletAddress.focus();
-});
+}
+document.querySelector('[data-action="track-wallet"]')?.addEventListener('click', openWalletDialog);
 document.querySelector('#wallet-dialog-close')?.addEventListener('click', () => closeShortcutDialog(walletDialog));
 walletDialog?.addEventListener('click', (event) => { if (event.target === walletDialog) closeShortcutDialog(walletDialog); });
 walletForm?.addEventListener('submit', (event) => {
@@ -2486,6 +2488,8 @@ chatForm?.addEventListener('submit', async (event) => {
   conversation.updatedAt = Date.now();
   conversation.messages = conversation.messages.slice(-100);
   chatInput.value = '';
+  // Release the empty composer after sending so the waiting game can receive keys.
+  if (chatForm.contains(document.activeElement)) document.activeElement.blur();
   resizeComposer();
   persist();
   renderHistory();
@@ -2572,7 +2576,7 @@ chatForm?.addEventListener('submit', async (event) => {
     target.messages.push({ role: 'ai', text: data.reply, speech: typeof data.speech === 'string' ? data.speech.slice(0, 220) : '',
       simulation: safeSimulation(data.simulation), news: safeNews(data.news), wallet: safeWallet(data.wallet),
       knowledgeState: typeof data.knowledge_state === 'string' ? data.knowledge_state.slice(0, 12000) : '',
-      research: safeResearch(data.research), documents: unseenDocuments(safeDocuments(data.documents), new Set(target.messages.flatMap(message => (message.documents || []).map(item => `${item.kind}:${item.id}`)))), video: safeVideo(data.video), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
+      research: safeResearch(data.research), documents: unseenDocuments(safeDocuments(data.documents), data.requested_documents ? new Set() : new Set(target.messages.flatMap(message => (message.documents || []).map(item => `${item.kind}:${item.id}`)))), requestedDocuments: data.requested_documents === true, video: safeVideo(data.video), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
       newsContext: safeNews(data.news_context || data.news),
       mode: ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd', 'agent'].includes(data.mode) ? data.mode : 'general',
       newsTopic: typeof data.news_topic === 'string' ? data.news_topic.slice(0, 30) : '',
@@ -2595,6 +2599,7 @@ chatForm?.addEventListener('submit', async (event) => {
     }
     if (data.input_request?.kind === 'pool') requestedConfig = data.input_request;
     if (data.input_request?.kind === 'lending') requestedConfig = data.input_request;
+    if (data.input_request?.kind === 'wallet') requestedConfig = data.input_request;
   } catch (error) {
     if (work.controller.signal.aborted || !conversations.some(item => item.id === conversationId)) return;
     const message = error.message || 'Falha ao conectar. Tente novamente.';
@@ -2610,6 +2615,7 @@ chatForm?.addEventListener('submit', async (event) => {
     pending.remove();
     if (requestedConfig && activeId === conversationId) {
       if (requestedConfig.kind === 'lending') openLendingDialog(requestedConfig);
+      else if (requestedConfig.kind === 'wallet') openWalletDialog();
       else openPoolDialog(requestedConfig);
     }
   }

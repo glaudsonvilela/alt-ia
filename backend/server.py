@@ -27,8 +27,8 @@ from lending_market import LendingMarketError, markets as lending_markets, marke
 from access_auth import AuthError, AuthService, cookie_value as auth_cookie_value
 from history_store import HistoryStore
 from knowledge_store import KnowledgeStore
-from knowledge_research import research as research_knowledge, evidence_prompt, render_citations
-from knowledge_delivery import delivery_prompt, delivery_format, deliver
+from knowledge_research import research as research_knowledge, evidence_prompt, render_citations, BROWSER_ROUTING, requested_site_task, requested_app_action
+from knowledge_delivery import delivery_prompt, delivery_format, deliver, requested_media, current_web_offer
 from knowledge_video import video_response, range_header, VIDEO_SLOTS
 from chat_stream import consume_stream
 from chat_context import validate_messages, research_state, read_research_state, confirmed_web_task
@@ -220,7 +220,8 @@ def knowledge_for(email, messages, context_token=None, reading_id=None, browser_
     previous = read_research_state(context_token, email, SCENARIO_SECRET)
     result = research_knowledge(KNOWLEDGE, messages, plan_knowledge, previous,
                               KNOWLEDGE.document_context(reading_id), browser_available)
-    KNOWLEDGE.prioritize_content([item['key'] for item in result['sources']])
+    if not result.get('web_query'):
+        KNOWLEDGE.prioritize_content(result.get('media_source_keys') or [item['key'] for item in result['sources']])
     return result
 
 
@@ -761,16 +762,37 @@ class Handler(BaseHTTPRequestHandler):
             research_started = time.monotonic()
             knowledge_result = knowledge_for(self.authenticated_email, messages, knowledge_token, reading_id, browser_available) if simulation_request is None and wallet_request is None else None
             if knowledge_result is None and simulation_request is None and wallet_request is None:
-                routing = plan_knowledge('Interprete a última mensagem usando a conversa. Retorne JSON com intent=browser apenas se browser_available=true e houver pedido de abrir, navegar ou interagir com site externo ou reproduzir vídeo/música externo. Explicações, comandos citados e pedidos negativos não autorizam navegação. Caso contrário intent=other. question é a tarefa autossuficiente, sem acrescentar ações. web_query é uma busca pública quando houver pedido de pesquisar na internet, informação atual ou confirmação externa; caso contrário vazio. Use termos públicos, sem dados pessoais ou privados. Pesquisa na web funciona mesmo com browser_available=false.', {'conversation': messages[-12:], 'browser_available':browser_available})
+                routing = plan_knowledge('Interprete a última mensagem usando a conversa. Retorne JSON com intent=explain|browser|other, question (pedido autossuficiente) e web_query (vazio quando desnecessária). ' + BROWSER_ROUTING, {'conversation': messages, 'browser_available':browser_available, 'current_request':user_text})
                 knowledge_result = {'intent':routing.get('intent','other'),'question':str(routing.get('question') or user_text)[:1500],
+                    'agent_task':requested_site_task(routing, messages, browser_available),
+                    'app_action':requested_app_action(routing, messages),
                     'web_query':str(routing.get('web_query') or '')[:350], 'sources':[], 'status':'not_needed','catalog_count':0,'depth':'focused'}
             self.timings["research"] = (time.monotonic() - research_started) * 1000
-            # Main chat never opens a browser or searches the public web without
-            # a reply to a signed offer. The planner cannot grant permission.
+            app_action = (knowledge_result or {}).get('app_action')
+            if app_action and not nerd_mode:
+                labels = {'lending':'simulador de lending','pool':'simulador de pool','wallet':'rastreador de wallet'}
+                return self.respond(200, {'reply':'Abrindo o ' + labels[app_action] + ' aqui na Alt-IA.',
+                    'input_request':{'kind':app_action}, 'mode':app_action,
+                    'timings_ms': {k:round(v) for k,v in self.timings.items()}})
+            # Direct navigation requests are already authorized by the user;
+            # searches for missing repository content still use the signed offer.
+            if knowledge_result and knowledge_result.get('agent_task') and browser_available and not nerd_mode:
+                return self.respond(200, {'agent_request': {'task': knowledge_result['agent_task']}, 'mode': 'agent'})
             if knowledge_result and knowledge_result.get('intent') == 'browser':
                 knowledge_result['intent'] = 'explain'
             internal_sources = knowledge_result["sources"] if knowledge_result else []
             knowledge_state = research_state(knowledge_result, self.authenticated_email, SCENARIO_SECRET)
+            media_presentation = requested_media(knowledge_result, KNOWLEDGE) if KNOWLEDGE and not nerd_mode else None
+            if media_presentation:
+                return self.respond(200, {**media_presentation, 'knowledge_state':knowledge_state,
+                    'timings_ms': {k:round(v) for k,v in self.timings.items()}})
+            planned_offer = current_web_offer(knowledge_result) if browser_available and not nerd_mode else None
+            if planned_offer:
+                knowledge_result['web_offer'] = planned_offer
+                return self.respond(200, {'reply':'Para conferir informações atuais, posso pesquisar fontes públicas com o agente.\n\n' + planned_offer['question'],
+                    'mode':'general', 'documents':[], 'research':[],
+                    'knowledge_state':research_state(knowledge_result,self.authenticated_email,SCENARIO_SECRET),
+                    'timings_ms': {k:round(v) for k,v in self.timings.items()}})
             previous_mode = chat_context.get("mode")
             previous_request = chat_context.get("pool_request")
             previous_lending = chat_context.get("lending_request")
@@ -858,6 +880,9 @@ class Handler(BaseHTTPRequestHandler):
                              *([{"role": "system", "content": knowledge_prompt}] if knowledge_prompt else []),
                              *([{'role':'system','content':web_prompt}] if web_prompt else []),
                              {"role": "system", "content": delivery_prompt(documents)},
+                             {"role": "system", "content": (
+                                 "O navegador agente está disponível neste chat. Você pode oferecer abri-lo para pesquisar na web quando a base não atender (needs_web=true). Não diga que não consegue abrir sites. Pedidos diretos são encaminhados pelo sistema. Use a conversa para esclarecer somente referências realmente ambíguas."
+                                 if browser_available else "O navegador agente não está disponível neste dispositivo. Não afirme que abriu sites.")},
                              *messages],
                 "response_format": delivery_format(documents),
                 "max_tokens": (4096 if focused else 8192) if internal_sources else 3072,

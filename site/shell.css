@@ -496,3 +496,9 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 .thinking-game-play canvas{display:block;width:100%;height:auto;aspect-ratio:420/132}
 .thinking-game-hint{min-height:16px;color:#9e94ab;font-size:10px;line-height:1.6;text-align:center}
 @media(max-width:540px){.thinking-game{padding:10px;border-radius:14px;margin-top:12px}.thinking-game-heading{font-size:10px}}
+
+/* Center the waiting activity in the answer column, including narrow screens. */
+.message-pending .message-body:has(.thinking-game){flex:1;min-width:0}
+.thinking-game{margin-left:auto;margin-right:auto}
+.thinking-game-scores{display:flex;align-items:center;gap:12px;white-space:nowrap;font-size:10px}
+.thinking-game-btc,.thinking-game-btc output{color:#efaa7d}

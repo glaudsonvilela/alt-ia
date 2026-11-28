@@ -45,10 +45,24 @@ def load_key(path):
 
 def private_write(path, data):
     target = Path(path)
-    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # API and worker may use different UIDs. Atomic replacement must retain
+    # the private directory's owner; otherwise a root API strands the worker.
+    missing = []
+    parent = target.parent
+    while not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    owner = parent.stat()
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700, exist_ok=True)
+        if os.geteuid() == 0:
+            os.chown(directory, owner.st_uid, owner.st_gid)
+    owner = target.parent.stat()
     fd, temporary = tempfile.mkstemp(prefix=".altia-", dir=target.parent)
     try:
         os.fchmod(fd, 0o600)
+        if os.geteuid() == 0:
+            os.fchown(fd, owner.st_uid, owner.st_gid)
         with os.fdopen(fd, "wb") as file:
             file.write(data)
             file.flush()

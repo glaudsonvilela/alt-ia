@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -51,6 +52,36 @@ class KnowledgeStoreTest(unittest.TestCase):
         wrong.write_bytes(os.urandom(32))
         with self.assertRaises(Exception):
             KnowledgeStore(self.path, wrong)
+
+    def test_snapshot_reload_across_request_threads(self):
+        self.store.select("7", {"42"})
+        self.store.upsert({"key": "7:document:1", "account_id": "7", "project_id": "42",
+            "project_name": "Empresa", "title": "Política", "url": "https://3.basecamp.com/doc/1",
+            "kind": "document", "updated_at": "2026-11-01", "body": "Alocação de Bitcoin."})
+        self.store.save()
+        reader = KnowledgeStore(self.path, self.key)
+        errors = []
+        results = []
+
+        def search():
+            try:
+                results.append(reader.search("Bitcoin"))
+            except Exception as error:
+                errors.append(error)
+
+        first = threading.Thread(target=search)
+        first.start()
+        first.join()
+        self.store.upsert({"key": "7:document:2", "account_id": "7", "project_id": "42",
+            "project_name": "Empresa", "title": "Pesquisa", "url": "https://3.basecamp.com/doc/2",
+            "kind": "document", "updated_at": "2026-11-02", "body": "Pesquisa sobre Ethereum."})
+        self.store.save()
+        second = threading.Thread(target=search)
+        second.start()
+        second.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(results[0][0]["title"], "Política")
+        self.assertEqual(reader.search("Ethereum")[0]["title"], "Pesquisa")
 
     def test_project_scan_is_scoped_and_prunes_old_items(self):
         item = {"id": 9, "title": "Estratégia", "app_url": "https://3.basecamp.com/doc/9",

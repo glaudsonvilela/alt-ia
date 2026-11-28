@@ -2451,7 +2451,12 @@ chatForm?.addEventListener('submit', async (event) => {
           metrics: previousPool.simulation.metrics, assumptions: previousPool.simulation.assumptions
         } } : {}) })
     });
-    const data = await response.json();
+    const data = await response.json().catch(() => null);
+    if (!data || typeof data !== 'object') {
+      throw new Error(response.status >= 500
+        ? 'A Alt-IA está temporariamente indisponível. Tente novamente em instantes.'
+        : 'A resposta da Alt-IA veio em formato inesperado. Tente novamente.');
+    }
     if (!response.ok || typeof data.reply !== 'string') throw new Error(data.error || 'Não foi possível obter uma resposta. Tente novamente.');
     const target = conversations.find((item) => item.id === conversationId);
     if (!target) return;

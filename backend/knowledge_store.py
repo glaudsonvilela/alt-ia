@@ -100,7 +100,9 @@ class KnowledgeStore:
                 signature = None
             if not force and signature == self.signature:
                 return
-            db = sqlite3.connect(":memory:")
+            # ThreadingHTTPServer handles each request in a different thread.
+            # The lock below serializes access to this shared connection.
+            db = sqlite3.connect(":memory:", check_same_thread=False)
             if signature is not None:
                 db.deserialize(decrypt(self.key, self.path.read_bytes()))
             else:

@@ -1,0 +1,10 @@
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt 'Pillow>=11,<13' \
+    && rm /tmp/requirements.txt
+RUN pip install --no-cache-dir 'faster-whisper>=1.2,<2' 'scenedetect>=0.6.7,<0.7' 'opencv-python-headless>=4.10,<5'
+ENV PYTHONUNBUFFERED=1
+ENV HF_HOME=/var/cache/alt-ia-models/huggingface XDG_CACHE_HOME=/var/cache/alt-ia-models/cache HF_HUB_DISABLE_XET=1
+CMD ["python", "/app/knowledge_worker.py"]

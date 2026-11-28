@@ -16,37 +16,44 @@ async function loadPdf(id, signal) {
   return task.promise;
 }
 
-// Only one visible cover is decoded at a time. No PDF or cover is persisted in browser storage.
+// Share one decode per document, and paint cached covers synchronously when
+// the chat is rebuilt. The cache is memory-only and bounded to 24 covers.
 let coverQueue = Promise.resolve();
 const covers = new Map();
+const pendingCovers = new Map();
+export function paintCachedCover(canvas, label, id) {
+  const image = covers.get(id);
+  if (!image) return false;
+  canvas.width = image.width; canvas.height = image.height;
+  canvas.getContext('2d').putImageData(image, 0, 0);
+  canvas.hidden = false; label.hidden = true;
+  return true;
+}
 export function renderCover(card, canvas, label, id) {
-  coverQueue = coverQueue.catch(() => {}).then(async () => {
-    if (!card.isConnected) return;
-    const cached = covers.get(id);
-    if (cached && Date.now() - cached.time < 300000) {
-      canvas.width = cached.image.width; canvas.height = cached.image.height;
-      canvas.getContext('2d').putImageData(cached.image, 0, 0);
-      canvas.hidden = false; label.hidden = true;
-      return;
-    }
-    const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), 25000);
-    let pdf;
-    try {
-      pdf = await loadPdf(id, abort.signal);
-      if (!card.isConnected) return;
-      const page = await pdf.getPage(1);
-      const base = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale: Math.min(360 / base.width, 440 / base.height) });
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-      covers.set(id, { time: Date.now(), image: canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height) });
-      if (covers.size > 12) covers.delete(covers.keys().next().value);
-      if (card.isConnected) { canvas.hidden = false; label.hidden = true; }
-    } catch { label.textContent = 'PDF · Clique para ler'; }
-    finally { clearTimeout(timer); abort.abort(); }
-  });
+  if (paintCachedCover(canvas, label, id)) return Promise.resolve();
+  if (!pendingCovers.has(id)) {
+    const work = coverQueue.catch(() => {}).then(async () => {
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), 25000);
+      try {
+        const pdf = await loadPdf(id, abort.signal);
+        const page = await pdf.getPage(1);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: Math.min(360 / base.width, 440 / base.height) });
+        const buffer = document.createElement('canvas');
+        buffer.width = Math.ceil(viewport.width); buffer.height = Math.ceil(viewport.height);
+        await page.render({ canvasContext: buffer.getContext('2d'), viewport }).promise;
+        covers.set(id, buffer.getContext('2d').getImageData(0, 0, buffer.width, buffer.height));
+        if (covers.size > 24) covers.delete(covers.keys().next().value);
+      } finally { clearTimeout(timer); abort.abort(); }
+    });
+    pendingCovers.set(id, work);
+    coverQueue = work;
+    work.finally(() => pendingCovers.delete(id)).catch(() => {});
+  }
+  return pendingCovers.get(id).then(() => {
+    if (card.isConnected) paintCachedCover(canvas, label, id);
+  }).catch(() => { if (card.isConnected) label.textContent = 'PDF · Clique para ler'; });
 }
 
 export function openReader(dialog, document, close) {
@@ -74,9 +81,8 @@ export function openReader(dialog, document, close) {
     renderTask?.cancel();
     rendering = rendering.catch(() => {}).then(async () => {
       if (!pdf || abort.signal.aborted || ticket !== revision) return;
-      canvas.hidden = true;
       status.textContent = 'Preparando página…';
-      status.hidden = false;
+      status.hidden = !canvas.hidden;
       previous.disabled = pageNumber <= 1;
       next.disabled = pageNumber >= pdf.numPages;
       zoomOut.disabled = zoom <= 0.75;
@@ -88,14 +94,16 @@ export function openReader(dialog, document, close) {
       const width = Math.max(200, stage.clientWidth - 32) * zoom;
       const viewport = page.getViewport({ scale: width / base.width });
       const ratio = Math.min(devicePixelRatio || 1, 1.5, 2400 / viewport.height);
-      canvas.width = Math.ceil(viewport.width * ratio);
-      canvas.height = Math.ceil(viewport.height * ratio);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      renderTask = page.render({ canvasContext: canvas.getContext('2d'), viewport,
+      const buffer = window.document.createElement('canvas');
+      buffer.width = Math.ceil(viewport.width * ratio);
+      buffer.height = Math.ceil(viewport.height * ratio);
+      renderTask = page.render({ canvasContext: buffer.getContext('2d'), viewport,
         transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0] });
       await renderTask.promise;
       if (ticket !== revision || abort.signal.aborted) return;
+      canvas.width = buffer.width; canvas.height = buffer.height;
+      canvas.style.width = `${viewport.width}px`; canvas.style.height = `${viewport.height}px`;
+      canvas.getContext('2d').drawImage(buffer, 0, 0);
       canvas.hidden = false;
       status.hidden = true;
       stage.scrollTop = 0;
@@ -117,7 +125,12 @@ export function openReader(dialog, document, close) {
   on(dialog, 'cancel', event => { event.preventDefault(); close(dialog); });
   on(dialog, 'click', event => { if (event.target === dialog) close(dialog); });
   let resizeTimer;
-  const observer = new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(update, 150); });
+  let observedWidth = stage.clientWidth;
+  const observer = new ResizeObserver(() => {
+    const width = stage.clientWidth;
+    if (Math.abs(width - observedWidth) < 2) return;
+    observedWidth = width; clearTimeout(resizeTimer); resizeTimer = setTimeout(update, 150);
+  });
   observer.observe(stage);
   dialog.addEventListener('close', () => {
     abort.abort(); observer.disconnect(); clearTimeout(resizeTimer); renderTask?.cancel();

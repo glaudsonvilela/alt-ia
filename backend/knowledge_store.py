@@ -148,6 +148,19 @@ class KnowledgeStore:
                 id TEXT PRIMARY KEY, source_key TEXT NOT NULL UNIQUE, filename TEXT NOT NULL,
                 digest TEXT NOT NULL, mime TEXT NOT NULL
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS video_files (
+                id TEXT PRIMARY KEY, source_key TEXT NOT NULL UNIQUE, filename TEXT NOT NULL,
+                download_url TEXT NOT NULL, mime TEXT NOT NULL, byte_size INTEGER NOT NULL
+            )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS content_jobs (
+                source_key TEXT PRIMARY KEY, revision TEXT NOT NULL, payload TEXT NOT NULL,
+                status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                detail TEXT NOT NULL DEFAULT '', progress TEXT NOT NULL DEFAULT '{}'
+            )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS extraction_cache (
+                digest TEXT PRIMARY KEY, body TEXT NOT NULL
+            )""")
+            db.execute('CREATE TABLE IF NOT EXISTS source_links (child_key TEXT PRIMARY KEY, parent_key TEXT NOT NULL)')
             self.db = db
             self.signature = signature
             if old is not None:
@@ -174,6 +187,9 @@ class KnowledgeStore:
             return {row[0] for row in self.db.execute("SELECT project_id FROM selection WHERE account_id=?", (str(account_id),))}
 
     def _delete(self, key):
+        self.db.execute('DELETE FROM source_links WHERE child_key=?', (key,))
+        self.db.execute("DELETE FROM content_jobs WHERE source_key=?", (key,))
+        self.db.execute("DELETE FROM video_files WHERE source_key=?", (key,))
         self.db.execute("DELETE FROM document_files WHERE source_key=?", (key,))
         self.db.execute("DELETE FROM chunks WHERE source_key=?", (key,))
         self.db.execute("DELETE FROM sources WHERE source_key=?", (key,))
@@ -211,6 +227,16 @@ class KnowledgeStore:
                     if identifier not in seen:
                         seen.add(identifier)
                         output.append({"id": identifier, "title": title, "filename": filename, "kind": "pdf"})
+            for key in keys:
+                prefix = key + ":attachment:"
+                rows = self.db.execute("""SELECT f.id,s.title,f.filename FROM video_files f
+                    JOIN sources s ON s.source_key=f.source_key
+                    WHERE f.source_key=? OR substr(f.source_key,1,?)=? ORDER BY s.title""",
+                    (key, len(prefix), prefix)).fetchall()
+                for identifier, title, filename in rows:
+                    if identifier not in seen:
+                        seen.add(identifier)
+                        output.append({"id": identifier, "title": title, "filename": filename, "kind": "video"})
         return output
 
     def get_pdf(self, identifier):
@@ -230,6 +256,34 @@ class KnowledgeStore:
             raise ValueError("PDF inconsistente")
         return row[0], body
 
+    def put_video(self, key, filename, download_url, mime, byte_size):
+        from knowledge_video import api_download_url
+        api_download_url(download_url)  # Reject non-Basecamp destinations before persistence.
+        identifier = hashlib.sha256(("video:" + key).encode()).hexdigest()
+        with self.lock, self.db:
+            if self.db.execute("SELECT 1 FROM sources WHERE source_key=?", (key,)).fetchone():
+                self.db.execute("INSERT OR REPLACE INTO video_files VALUES (?,?,?,?,?,?)",
+                    (identifier, key, filename[:240], download_url, mime, max(0, int(byte_size or 0))))
+
+    def get_video(self, identifier):
+        if not isinstance(identifier, str) or not re.fullmatch(r"[a-f0-9]{64}", identifier):
+            return None
+        self._reload()
+        with self.lock:
+            row = self.db.execute("""SELECT f.download_url,f.mime,f.byte_size FROM video_files f
+                JOIN sources s ON s.source_key=f.source_key WHERE f.id=?""", (identifier,)).fetchone()
+        return dict(zip(("download_url", "mime", "byte_size"), row)) if row else None
+
+    def document_context(self, identifier):
+        if not isinstance(identifier, str) or not re.fullmatch(r"[a-f0-9]{64}", identifier):
+            return None
+        self._reload()
+        with self.lock:
+            row = self.db.execute("""SELECT s.source_key,s.title FROM
+                (SELECT id,source_key FROM document_files UNION ALL SELECT id,source_key FROM video_files) f
+                JOIN sources s ON s.source_key=f.source_key WHERE f.id=?""", (identifier,)).fetchone()
+        return {"source_id": row[0], "title": row[1]} if row else None
+
     def unchanged(self, key, updated_at):
         if not updated_at:
             return False
@@ -242,13 +296,19 @@ class KnowledgeStore:
         body = source["body"].strip()
         digest = hashlib.sha256((source["title"] + "\0" + body).encode()).hexdigest()
         with self.lock, self.db:
+            if source.get('parent_key'):
+                self.db.execute('INSERT OR REPLACE INTO source_links VALUES (?,?)', (key, source['parent_key']))
             prior = self.db.execute("SELECT digest FROM sources WHERE source_key=?", (key,)).fetchone()
             if prior and prior[0] == digest:
                 self.db.execute("UPDATE sources SET updated_at=?,url=?,project_name=?,kind=? WHERE source_key=?",
                                 (source["updated_at"], source["url"], source["project_name"], source["kind"], key))
                 return False
-            self._delete(key)
+            # Updating extracted text must preserve its PDF/player identity and
+            # pending extraction job. Actual removal/revocation uses _delete.
+            self.db.execute("DELETE FROM chunks WHERE source_key=?", (key,))
+            self.db.execute("DELETE FROM sources WHERE source_key=?", (key,))
             if not body:
+                self._delete(key)
                 return False
             self.db.execute("INSERT INTO sources VALUES (?,?,?,?,?,?,?,?,?)", (
                 key, str(source["account_id"]), str(source["project_id"]), source["project_name"],
@@ -258,6 +318,34 @@ class KnowledgeStore:
                 (key, number, source["title"], chunk) for number, chunk in enumerate(chunk_text(body))
             ])
             return True
+
+    def enqueue_content(self, key, revision, payload):
+        with self.lock, self.db:
+            prior = self.db.execute("SELECT revision FROM content_jobs WHERE source_key=?", (key,)).fetchone()
+            if prior and prior[0] == revision:
+                return
+            self.db.execute("""INSERT OR REPLACE INTO content_jobs
+                (source_key,revision,payload,status) VALUES (?,?,?,'pending')""",
+                (key, revision, json.dumps(payload, ensure_ascii=False)))
+
+    def content_status(self, key):
+        with self.lock:
+            row = self.db.execute("SELECT status,detail FROM content_jobs WHERE source_key=?", (key,)).fetchone()
+            return {"status": row[0], "detail": row[1]} if row else None
+
+    def discussion_parents(self, keys):
+        with self.lock:
+            return list(dict.fromkeys(row[0] for key in keys for row in self.db.execute(
+                'SELECT l.parent_key FROM source_links l JOIN sources s ON s.source_key=l.parent_key WHERE l.child_key=?', (key,))))
+
+    def extraction_cached(self, digest):
+        with self.lock:
+            row = self.db.execute("SELECT body FROM extraction_cache WHERE digest=?", (digest,)).fetchone()
+            return row[0] if row else None
+
+    def cache_extraction(self, digest, body):
+        with self.lock, self.db:
+            self.db.execute("INSERT OR REPLACE INTO extraction_cache VALUES (?,?)", (digest, body))
 
     def prune_project(self, account_id, project_id, seen):
         with self.lock, self.db:
@@ -326,9 +414,11 @@ class KnowledgeStore:
                 if not source:
                     continue
                 prefix = key + ":attachment:"
-                children = self.db.execute(
-                    "SELECT source_key,title FROM sources WHERE kind='attachment' AND substr(source_key,1,?)=? ORDER BY title",
-                    (len(prefix), prefix)).fetchall()
+                children = self.db.execute("""SELECT source_key,title FROM sources
+                    WHERE (kind='attachment' AND substr(source_key,1,?)=?)
+                    OR source_key IN (SELECT child_key FROM source_links WHERE parent_key=?)
+                    ORDER BY CASE WHEN kind='attachment' THEN 0 ELSE 1 END,updated_at,title""",
+                    (len(prefix), prefix, key)).fetchall()
                 rows, priority, ranked, locations, totals = [], [], [], {}, {}
                 for doc_key, title in [(key, source[0]), *children]:
                     chunks = self.db.execute("SELECT ordinal,body FROM chunks WHERE source_key=? ORDER BY ordinal", (doc_key,)).fetchall()
@@ -366,7 +456,8 @@ class KnowledgeStore:
                                "updated_at": source[3], "kind": source[4], "excerpt": excerpt,
                                "coverage": "complete" if len(chosen) == len(rows) else "partial",
                                "files": [{"title": title, "passages_read": sum(row[0] == doc_key for row in chosen),
-                                          "total_passages": count} for doc_key, (title, count) in totals.items()]})
+                                          "total_passages": count, "extraction": self.content_status(doc_key)}
+                                         for doc_key, (title, count) in totals.items()]})
                 if budget < 1400:
                     break
         return output

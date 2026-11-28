@@ -130,11 +130,11 @@ class KnowledgeStoreTest(unittest.TestCase):
             self.assertEqual(data["conversation"], messages)
             self.assertEqual(len(data["catalog"]), 5)
             if len(calls) == 1:
-                return {"intent": "explain", "source_ids": ["7:document:4", "injected-source"],
+                return {"intent": "explain", "source_ids": ["7:document:4", "7:document:2", "injected-source"],
                         "queries": ["compras"], "question": "Relação entre entrada gradual e filosofia"}
             return {"source_ids": ["7:document:2"], "queries": [], "gaps": []}
         result = research(self.store, messages, complete)
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
         self.assertEqual(result["intent"], "explain")
         keys = {item["key"] for item in result["sources"]}
         self.assertEqual(keys, {"7:document:4", "7:document:2"})
@@ -151,14 +151,13 @@ class KnowledgeStoreTest(unittest.TestCase):
         self.assertTrue(result["sources"])
         self.assertTrue(result["gaps"])
 
-    def test_review_discards_irrelevant_sources_and_preserves_citation_mapping(self):
+    def test_plan_validates_source_aliases_and_preserves_citation_mapping(self):
         self.seed_research()
         calls = []
-        def complete(*args):
-            calls.append(args)
-            if len(calls) == 1:
-                return {"intent": "explain", "source_ids": ["7:document:1", "7:document:4"], "queries": ["compras"]}
-            return {"keep_source_ids": ["7:document:4", "invented"], "source_ids": [], "queries": []}
+        def complete(system, data):
+            calls.append(data)
+            alias = next(item["id"] for item in data["catalog"] if item["title"] == "MÉTODO DE ENTRADA DCA")
+            return {"intent": "explain", "source_ids": [alias, "invented"], "queries": ["compras"]}
         result = research(self.store, [{"role": "user", "content": "Como distribuir as entradas?"}], complete)
         self.assertEqual([item["key"] for item in result["sources"]], ["7:document:4"])
         self.assertEqual(render_citations("Entrada gradual [F1], inválido [F999]", result["sources"]),
@@ -240,7 +239,7 @@ class KnowledgeStoreTest(unittest.TestCase):
                 "updated_at": "2026-11-28", "content": "<p>Leia o anexo.</p>",
                 "content_attachments": [
                     {"id": 10, "filename": "Manual.txt", "download_url": "https://storage.app.basecamp.com/file", "byte_size": 100},
-                    {"id": 11, "filename": "Tutorial.mp4", "download_url": "https://storage.app.basecamp.com/video", "byte_size": 90000}]}
+                    {"id": 11, "filename": "Tutorial.mp4", "download_url": "https://storage.3.basecamp.com/7/video", "byte_size": 90000}]}
         calls = []
         class Account:
             projects = FakeService(detail={"dock": [{"id": 3, "name": "vault", "enabled": True}]})
@@ -264,10 +263,10 @@ class KnowledgeStoreTest(unittest.TestCase):
         scan_project(account, "7", {"id": 42, "name": "Empresa"}, self.store)
         self.assertEqual(len(calls), 2)  # Metadata-only changes don't redownload forever.
         parent = self.store.read_sources(["7:document:9"], [])[0]
-        self.assertIn("sem conteúdo textual importado", parent["excerpt"])
+        self.assertIn("sem transcrição", parent["excerpt"])
         self.assertIn("revisar documentos antes de assinar", parent["excerpt"])
         self.assertIn("Manual.txt", parent["excerpt"])
-        self.assertEqual(len(parent["files"]), 2)
+        self.assertEqual(len(parent["files"]), 3)
         Account.documents = FakeService()
         scan_project(account, "7", {"id": 42, "name": "Empresa"}, self.store)
         self.assertEqual(self.store.search("contratacao"), [])

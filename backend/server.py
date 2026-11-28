@@ -28,6 +28,9 @@ from history_store import HistoryStore
 from knowledge_store import KnowledgeStore
 from knowledge_research import research as research_knowledge, evidence_prompt, render_citations
 from knowledge_delivery import delivery_prompt, delivery_format, deliver
+from knowledge_video import video_response, range_header, VIDEO_SLOTS
+from chat_stream import consume_stream
+from chat_context import validate_messages, research_state, read_research_state
 from usage_meter import configure as configure_usage, for_account as usage_for_account, record as record_usage
 
 
@@ -210,10 +213,12 @@ def plan_knowledge(system, payload):
     return json.loads(choice["message"]["content"])
 
 
-def knowledge_for(email, messages):
+def knowledge_for(email, messages, context_token=None, reading_id=None):
     if not KNOWLEDGE or email.rsplit("@", 1)[-1].lower() not in KNOWLEDGE_DOMAINS:
         return None
-    return research_knowledge(KNOWLEDGE, messages, plan_knowledge)
+    previous = read_research_state(context_token, email, SCENARIO_SECRET)
+    return research_knowledge(KNOWLEDGE, messages, plan_knowledge, previous,
+                              KNOWLEDGE.document_context(reading_id))
 
 
 def answer_nerd(messages, topic, previous_query, internal_sources=None, knowledge_result=None, deadline=None):
@@ -247,7 +252,7 @@ def answer_nerd(messages, topic, previous_query, internal_sources=None, knowledg
     request_body = json.dumps({"model": MODEL,
         "messages": [{"role": "system", "content": instructions},
                      *([{"role": "system", "content": delivery_prompt(documents)}] if internal_sources else []),
-                     *messages[-8:-1],
+                     *messages[-40:-1],
                      {"role": "user", "content": json.dumps({"pedido": user_text, "modo": topic,
                                                            "fontes_publicas": evidence,
                                                            "fontes_internas": internal_evidence,
@@ -280,13 +285,22 @@ class Handler(BaseHTTPRequestHandler):
         # Do not log prompts, response bodies or credentials.
         pass
 
+    def stream_event(self, payload):
+        body = ("data: " + json.dumps(payload, ensure_ascii=False) + "\n\n").encode("utf-8")
+        self.wfile.write(body)
+        self.wfile.flush()
+
     def respond(self, status, payload, extra_headers=None):
+        if getattr(self, "streaming", False):
+            return self.stream_event({"result": payload} if status < 400 else {"error": payload.get("error", "Resposta interrompida")})
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(body)))
+        if getattr(self, "timings", None):
+            self.send_header("Server-Timing", ", ".join(f"{name};dur={duration:.0f}" for name, duration in self.timings.items()))
         for name, value in (extra_headers or {}).items():
             for item in value if isinstance(value, (list, tuple)) else (value,):
                 self.send_header(name, item)
@@ -449,6 +463,44 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(503, {"error": "Login não configurado."})
             return self.respond(200, {"google_client_id": AUTH.client_id})
         if parsed.path != "/healthz" and not self.access_ok():
+            return
+        if parsed.path.startswith("/api/knowledge/videos/"):
+            if not KNOWLEDGE or self.authenticated_email.rsplit("@", 1)[-1].lower() not in KNOWLEDGE_DOMAINS:
+                return self.respond(403, {"error": "Vídeo indisponível para esta conta."})
+            metadata = KNOWLEDGE.get_video(parsed.path.removeprefix("/api/knowledge/videos/"))
+            if not metadata:
+                return self.respond(404, {"error": "Vídeo não encontrado."})
+            try:
+                requested_range = range_header(self.headers.get("Range"))
+            except ValueError:
+                return self.respond(416, {"error": "Intervalo inválido."})
+            if not VIDEO_SLOTS.acquire(blocking=False):
+                return self.respond(503, {"error": "Player ocupado. Tente novamente em instantes."})
+            started = False
+            try:
+                with video_response(KNOWLEDGE, metadata, requested_range) as upstream:
+                    self.send_response(upstream.status_code)
+                    self.send_header("Content-Type", metadata["mime"])
+                    self.send_header("Cache-Control", "private, no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Accept-Ranges", "bytes")
+                    for name in ("Content-Length", "Content-Range"):
+                        if name in upstream.headers:
+                            self.send_header(name, upstream.headers[name])
+                    self.end_headers()
+                    started = True
+                    if upstream.status_code != 416:
+                        for chunk in upstream.iter_raw(65536):
+                            self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception:
+                if not started:
+                    self.respond(503, {"error": "Não foi possível abrir o vídeo no Basecamp agora."})
+                else:
+                    self.close_connection = True
+            finally:
+                VIDEO_SLOTS.release()
             return
         if parsed.path.startswith("/api/knowledge/documents/"):
             if not KNOWLEDGE or self.authenticated_email.rsplit("@", 1)[-1].lower() not in KNOWLEDGE_DOMAINS:
@@ -615,11 +667,18 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        if length < 2 or length > 30000:
+        if length < 2 or length > 262144:
             return self.respond(413, {"error": "Mensagem muito longa."})
         try:
             payload = json.loads(self.rfile.read(length))
             raw_messages = payload["messages"]
+            stream_response = payload.get("stream") is True
+            knowledge_token = payload.get("knowledge_state")
+            reading_id = payload.get("reading_document")
+            if knowledge_token is not None and (not isinstance(knowledge_token, str) or len(knowledge_token) > 12000):
+                raise ValueError
+            if reading_id is not None and (not isinstance(reading_id, str) or not re.fullmatch(r"[a-f0-9]{64}", reading_id)):
+                raise ValueError
             simulation_request = payload.get("simulation_request")
             wallet_request = payload.get("wallet_request")
             if wallet_request is not None:
@@ -635,17 +694,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError
             if scenario_context is not None and (not isinstance(scenario_context, dict) or len(json.dumps(scenario_context)) > 5000):
                 raise ValueError
-            if not isinstance(raw_messages, list) or not 1 <= len(raw_messages) <= 20:
-                raise ValueError
-            messages = []
-            for item in raw_messages:
-                role = item["role"]
-                content = item["content"]
-                if role not in ("user", "assistant") or not isinstance(content, str) or not 1 <= len(content) <= 4000:
-                    raise ValueError
-                messages.append({"role": role, "content": content})
-            if messages[-1]["role"] != "user" or sum(len(m["content"]) for m in messages) > 20000:
-                raise ValueError
+            messages = validate_messages(raw_messages)
         except WalletInputError as error:
             return self.respond(400, {"error": str(error)})
         except (ValueError, TypeError, KeyError, UnicodeDecodeError):
@@ -661,16 +710,20 @@ class Handler(BaseHTTPRequestHandler):
         if not slots.acquire(blocking=False):
             return self.respond(429, {"error": "A Alt-IA está ocupada. Tente novamente em instantes."})
         try:
+            self.timings = {}
             deadline = time.monotonic() + 88
             user_text = messages[-1]["content"]
-            knowledge_result = knowledge_for(self.authenticated_email, messages) if simulation_request is None and wallet_request is None else None
+            research_started = time.monotonic()
+            knowledge_result = knowledge_for(self.authenticated_email, messages, knowledge_token, reading_id) if simulation_request is None and wallet_request is None else None
+            self.timings["research"] = (time.monotonic() - research_started) * 1000
             internal_sources = knowledge_result["sources"] if knowledge_result else []
+            knowledge_state = research_state(knowledge_result, self.authenticated_email, SCENARIO_SECRET)
             previous_mode = chat_context.get("mode")
             previous_request = chat_context.get("pool_request")
             previous_lending = chat_context.get("lending_request")
             previous_news = chat_context.get("news") or []
             if nerd_mode:
-                return self.respond(200, answer_nerd(messages, nerd_topic, chat_context.get("nerd_query", ""), internal_sources, knowledge_result, deadline))
+                return self.respond(200, {**answer_nerd(messages, nerd_topic, chat_context.get("nerd_query", ""), internal_sources, knowledge_result, deadline), "knowledge_state": knowledge_state})
             if wallet_request is None and simulation_request is None:
                 wallet_request = parse_wallet_text(user_text)
             if wallet_request is None and previous_mode == "wallet" and chat_context.get("wallet_request") \
@@ -743,6 +796,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, simulation)
             knowledge_prompt = evidence_prompt(knowledge_result) if knowledge_result else None
             documents = KNOWLEDGE.documents_for([item["key"] for item in internal_sources]) if internal_sources else []
+            focused = bool(knowledge_result and knowledge_result.get("depth") == "focused")
             request_body = json.dumps({
                 "model": MODEL,
                 "messages": [{"role": "system", "content": SYSTEM_PROMPT},
@@ -750,26 +804,44 @@ class Handler(BaseHTTPRequestHandler):
                              *([{"role": "system", "content": delivery_prompt(documents)}] if internal_sources else []),
                              *messages],
                 **({"response_format": delivery_format(documents)} if internal_sources else {}),
-                "max_tokens": 8192 if internal_sources else 3072,
+                "max_tokens": (4096 if focused else 8192) if internal_sources else 3072,
                 "temperature": 0.35 if internal_sources else 0.7,
                 "top_p": 0.9 if internal_sources else 0.95,
-                "reasoning_effort": "low" if internal_sources else "none",
-                "stream": False,
+                **({"chat_template_kwargs": {"enable_thinking": False}} if focused else
+                   {"reasoning_effort": "low" if internal_sources else "none"}),
+                "stream": stream_response,
+                **({"stream_options": {"include_usage": True}} if stream_response else {}),
             }).encode("utf-8")
             request = urllib.request.Request(ENDPOINT, request_body, {
                 "Authorization": f"Bearer {API_KEY}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             }, method="POST")
+            generation_started = time.monotonic()
             with urllib.request.urlopen(request, timeout=max(1, deadline - time.monotonic())) as upstream:
-                result = json.load(upstream)
+                if stream_response:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.streaming = True
+                    self.close_connection = True
+                    result = consume_stream(upstream, lambda delta: self.stream_event({"delta": delta}),
+                                            bool(internal_sources), deadline)
+                else:
+                    result = json.load(upstream)
+            self.timings["generation"] = (time.monotonic() - generation_started) * 1000
             record_usage(result)
             choice = result["choices"][0]
             answer = choice["message"]["content"]
             if not isinstance(answer, str) or not answer.strip() or choice.get("finish_reason") == "length":
                 raise ValueError("Resposta vazia")
             presentation = deliver(answer, documents) if internal_sources else {"reply": answer.strip()}
-            self.respond(200, {**presentation, "model": MODEL, "mode": "general"})
+            self.respond(200, {**presentation, "model": MODEL, "mode": "general", "knowledge_state": knowledge_state})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
         except urllib.error.HTTPError as error:
             if error.code == 429:
                 self.respond(503, {"error": "O modelo está ocupado. Tente novamente em instantes."})

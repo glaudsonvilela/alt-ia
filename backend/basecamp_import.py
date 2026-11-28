@@ -2,6 +2,7 @@
 
 import argparse
 import io
+import hashlib
 import json
 import logging
 import os
@@ -19,7 +20,9 @@ from basecamp.oauth import discover_from_resource, perform_device_login, refresh
 from pypdf.errors import PyPdfError
 from knowledge_store import KnowledgeStore, decrypt, encrypt, load_key, private_write
 
-TEXT_SUFFIXES = {".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".html", ".htm", ".pdf", ".docx"}
+TEXT_SUFFIXES = {".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".html", ".htm", ".pdf", ".docx", ".pptx", ".xlsx"}
+VISUAL_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".tiff", ".bmp", ".pdf", ".docx", ".pptx", ".xlsx"}
+EXTRACTION_VERSION = 'multimodal-1'
 MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024
 # Malformed PDF diagnostics can contain document bytes. Coverage is reported
 # with counts below instead of writing parser internals to synchronization logs.
@@ -56,22 +59,73 @@ def extract_upload(filename, body):
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(body))
         return "\n\n".join(page.extract_text() or "" for page in reader.pages)
-    if suffix == ".docx":
-        with zipfile.ZipFile(io.BytesIO(body)) as archive:
-            root = ElementTree.fromstring(archive.read("word/document.xml"))
-        uri = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-        return "\n".join("".join(node.text or "" for node in para.iter(uri + "t"))
-                         for para in root.iter(uri + "p"))
+    if suffix in {".docx", ".pptx", ".xlsx"}:
+        from knowledge_extract import office_text
+        return office_text(body, suffix)
     return ""
 
 
+def queue_file(item, record, store, filename):
+    suffix = Path(filename).suffix.lower()
+    if suffix not in VISUAL_SUFFIXES and not str(item.get("content_type", "")).startswith("video/") \
+            and suffix not in {".mp4", ".m4v", ".mov", ".webm"}:
+        return
+    if not item.get("download_url"):
+        return
+    from knowledge_video import api_download_url
+    api_download_url(item["download_url"])
+    revision = hashlib.sha256((EXTRACTION_VERSION + record["updated_at"] + filename
+                              + str(item.get("byte_size", 0))).encode()).hexdigest()
+    store.enqueue_content(record["key"], revision, {"record": record, "filename": filename,
+        "download_url": item["download_url"], "mime": item.get("content_type", ""),
+        "byte_size": int(item.get("byte_size") or 0)})
+
+
+def import_file(account, item, record, store, stats):
+    filename = item.get("filename") or record["title"]
+    if import_video(item, record, store):
+        queue_file(item, record, store, filename)
+        return
+    suffix = Path(filename).suffix.lower()
+    queue_file(item, record, store, filename)
+    if store.unchanged(record["key"], record["updated_at"]) and (suffix != ".pdf" or store.has_pdf(record["key"])):
+        return
+    if suffix not in TEXT_SUFFIXES or int(item.get("byte_size") or 0) > MAX_ATTACHMENT_BYTES:
+        record["body"] = html_text(item.get("description")) + (
+            "\nLeitura visual pendente; o conteúdo da imagem ainda não foi extraído." if suffix in VISUAL_SUFFIXES else
+            "\nArquivo ainda sem extração de conteúdo: formato ou tamanho não suportado.")
+        stats["skipped"] += 1
+        stats["updated"] += int(store.upsert(record))
+        return
+    download = account.download_url(item["download_url"]) if item.get("download_url") else account.uploads.download(upload_id=int(item["id"]))
+    if suffix == '.pdf' and store.unchanged(record['key'], record['updated_at']) and len(download.body) <= MAX_ATTACHMENT_BYTES:
+        store.put_pdf(record['key'], filename, download.body)
+        return
+    if len(download.body) > MAX_ATTACHMENT_BYTES:
+        record["body"] = "Arquivo excede o limite de extração de 32 MiB; conteúdo não lido."
+        stats["skipped"] += 1
+    else:
+        try:
+            content = extract_upload(filename, download.body)
+        except (ValueError, zipfile.BadZipFile, KeyError, PyPdfError):
+            content = ""
+        record["body"] = (html_text(item.get("description")) + "\n" + content).strip() or "Leitura de conteúdo pendente."
+    stats["updated"] += int(store.upsert(record))
+    if suffix == ".pdf" and len(download.body) <= MAX_ATTACHMENT_BYTES:
+        store.put_pdf(record["key"], filename, download.body)
+
+
 def source_record(item, kind, account_id, project):
+    parent = item.get('parent') or {}
+    parent_kind = {'Message': 'message', 'Document': 'document', 'Kanban::Card': 'card',
+                   'Todo': 'todo', 'Upload': 'upload', 'Question::Answer': 'checkin'}.get(parent.get('type'))
     return {
         "key": f"{account_id}:{kind}:{item['id']}",
         "account_id": str(account_id), "project_id": str(project["id"]),
         "project_name": project["name"], "title": item.get("title") or item.get("filename") or kind,
         "url": item.get("app_url") or "", "updated_at": item.get("updated_at") or "",
         "kind": kind, "body": "",
+        'parent_key': f"{account_id}:{parent_kind}:{parent['id']}" if parent_kind and parent.get('id') else '',
     }
 
 
@@ -81,9 +135,20 @@ def import_rich_content(account, item, record, store, seen, stats):
     Use the SDK's authenticated download hop and credential-free redirect.
     Browser preview URLs are not downloadable PDFs and must not be indexed.
     """
-    record["body"] = html_text(item.get("content"))
+    record["body"] = html_text(item.get("content") or item.get('description'))
+    provenance = []
+    if item.get('created_at'):
+        provenance.append('Publicado em ' + item['created_at'])
+    if (item.get('creator') or {}).get('name'):
+        provenance.append('Autor: ' + item['creator']['name'])
+    if (item.get('parent') or {}).get('title'):
+        provenance.append('Discussão/pergunta: ' + item['parent']['title'])
+    if provenance:
+        record['body'] = '[' + '; '.join(provenance) + ']\n' + record['body']
+    if item.get('status') == 'archived':
+        record['body'] = '[Registro arquivado; não assumir vigência atual]\n' + record['body']
     unavailable = []
-    for attachment in item.get("content_attachments") or []:
+    for attachment in (item.get("content_attachments") or []) + (item.get('description_attachments') or []):
         filename = attachment.get("filename") or "anexo"
         attachment_id = attachment.get("id")
         if not attachment_id:
@@ -91,44 +156,33 @@ def import_rich_content(account, item, record, store, seen, stats):
         key = f"{record['key']}:attachment:{attachment_id}"
         seen.add(key)
         stats["examined"] += 1
-        supported = Path(filename).suffix.lower() in TEXT_SUFFIXES
-        too_large = int(attachment.get("byte_size") or 0) > MAX_ATTACHMENT_BYTES
-        if not supported or too_large or not attachment.get("download_url"):
-            unavailable.append(filename)
-            stats["skipped"] += 1
-            # Remove stale extracted text if an attachment changed format.
-            store.upsert({**record, "key": key, "body": ""})
-            continue
-        is_pdf = Path(filename).suffix.lower() == ".pdf"
-        unchanged = store.unchanged(key, record["updated_at"])
-        if unchanged and (not is_pdf or store.has_pdf(key)):
-            continue
-        download = account.download_url(attachment["download_url"])
-        if len(download.body) > MAX_ATTACHMENT_BYTES:
-            unavailable.append(filename)
-            stats["skipped"] += 1
-            store.upsert({**record, "key": key, "body": ""})
-            continue
-        if unchanged and is_pdf:
-            store.put_pdf(key, filename, download.body)
-            continue
-        try:
-            content = extract_upload(filename, download.body)
-        except (ValueError, zipfile.BadZipFile, KeyError, PyPdfError):
-            content = ""
-        if not content.strip():
-            unavailable.append(filename)
-            stats["skipped"] += 1
-        stats["updated"] += int(store.upsert({**record, "key": key, "kind": "attachment",
-            "title": f"{record['title']} — {filename}",
-            "body": content or ("PDF disponível para leitura, sem texto extraível." if is_pdf else "")}))
-        if is_pdf:
-            store.put_pdf(key, filename, download.body)
+        import_file(account, attachment, {**record, "key": key, "kind": "attachment",
+            "parent_key": record['key'], "title": f"{record['title']} — {filename}"}, store, stats)
     if unavailable:
         record["body"] += "\n[Anexos mencionados, sem conteúdo textual importado: " + "; ".join(unavailable) + "]"
     seen.add(record["key"])
     stats["examined"] += 1
     stats["updated"] += int(store.upsert(record))
+
+
+def import_video(item, record, store):
+    suffix = Path(item.get("filename") or record["title"]).suffix.lower()
+    mime = str(item.get("content_type") or "").lower().split(";", 1)[0]
+    if not mime.startswith("video/") and suffix not in {".mp4", ".m4v", ".webm", ".mov"}:
+        return False
+    if not item.get("download_url"):
+        return False
+    if not re.fullmatch(r"video/[a-z0-9.+-]+", mime):
+        mime = {".webm": "video/webm", ".mov": "video/quicktime"}.get(suffix, "video/mp4")
+    description = html_text(item.get("description"))
+    record["body"] = (description + "\nVídeo disponível no player da Alt-IA. "
+                      "Título e descrição são metadados; vídeo sem transcrição indexada.")
+    if not store.unchanged(record["key"], record["updated_at"]):
+        store.upsert(record)
+    store.put_video(record["key"], item.get("filename") or record["title"], item["download_url"],
+                    mime or {".webm": "video/webm", ".mov": "video/quicktime"}.get(suffix, "video/mp4"),
+                    item.get("byte_size", 0))
+    return True
 
 
 def scan_project(account, account_id, project, store):
@@ -154,38 +208,33 @@ def scan_project(account, account_id, project, store):
             record = source_record(item, "upload", account_id, project)
             seen.add(record["key"])
             stats["examined"] += 1
-            filename = item.get("filename") or record["title"]
-            is_pdf = Path(filename).suffix.lower() == ".pdf"
-            unchanged = store.unchanged(record["key"], record["updated_at"])
-            if unchanged and (not is_pdf or store.has_pdf(record["key"])):
-                continue
-            if Path(filename).suffix.lower() not in TEXT_SUFFIXES:
-                record["body"] = html_text(item.get("description"))
-                stats["skipped"] += 1
-                stats["updated"] += int(store.upsert(record))
-                continue
-            download = account.uploads.download(upload_id=int(item["id"]))
-            if unchanged and is_pdf:
-                store.put_pdf(record["key"], filename, download.body)
-                continue
-            try:
-                content = extract_upload(filename, download.body)
-            except (ValueError, zipfile.BadZipFile, KeyError, PyPdfError):
-                content = ""
-            record["body"] = (html_text(item.get("description")) + "\n\n" + content).strip()
-            if not content.strip():
-                stats["skipped"] += 1
-            if is_pdf and not record["body"]:
-                record["body"] = "PDF disponível para leitura, sem texto extraível."
-            stats["updated"] += int(store.upsert(record))
-            if is_pdf:
-                store.put_pdf(record["key"], filename, download.body)
+            import_file(account, item, record, store, stats)
     for board_id in boards:
         for item in account.messages.list(board_id=board_id):
             record = source_record(item, "message", account_id, project)
             if not item.get("content") or ("<bc-attachment" in item["content"] and "content_attachments" not in item):
                 item = account.messages.get(message_id=int(item["id"]))
             import_rich_content(account, item, record, store, seen, stats)
+    # Flat recordings catch archived files and attachments in discussions,
+    # cards and check-in answers which are absent from the document vault.
+    if hasattr(account, 'recordings'):
+        kinds = [('Document', 'document'), ('Upload', 'upload'), ('Message', 'message'),
+                 ('Comment', 'comment'), ('Kanban::Card', 'card'), ('Todo', 'todo'),
+                 ('Question::Answer', 'checkin'), ('Schedule::Entry', 'schedule')]
+        for api_kind, kind in kinds:
+            for status in ('active', 'archived'):
+                items = account.recordings.list(type=api_kind, bucket=str(project['id']), status=status)
+                if getattr(getattr(items, 'meta', None), 'truncated', False):
+                    raise RuntimeError('Paginação incompleta; nenhuma remoção será aplicada ao projeto')
+                for item in items:
+                    record = source_record(item, kind, account_id, project)
+                    if record['key'] in seen:
+                        continue
+                    if kind == 'upload':
+                        seen.add(record['key']); stats['examined'] += 1
+                        import_file(account, item, record, store, stats)
+                    else:
+                        import_rich_content(account, item, record, store, seen, stats)
     store.prune_project(account_id, project["id"], seen)
     return stats
 
@@ -252,6 +301,8 @@ def main(argv=None):
     store = KnowledgeStore(db_path, key_path)
     if args.command == "status":
         print(f"Fontes: {store.count()}; autorização Basecamp: {'presente' if token_path.exists() else 'ausente'}")
+        print('Extrações:', dict(store.db.execute('SELECT status,count(*) FROM content_jobs GROUP BY status')))
+        print('Tipos:', dict(store.db.execute('SELECT kind,count(*) FROM sources GROUP BY kind')))
         return 0
     if args.command == "authorize":
         discovery = discover_from_resource("https://3.basecampapi.com")

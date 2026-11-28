@@ -1,3 +1,6 @@
+import { readChatResponse } from './chat-stream.js';
+import { openKnowledgePlayer } from './knowledge-player.js';
+import { conversationMessages } from './chat-context.js';
 import { animate, stagger } from 'motion';
 import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
 
@@ -148,11 +151,11 @@ function safeResearch(value) {
 }
 
 function safeDocuments(value) {
-  return Array.isArray(value) ? value.filter(item => item?.kind === 'pdf' && /^[a-f0-9]{64}$/.test(item.id) && typeof item.title === 'string')
-    .slice(0, 3).map(item => ({ id: item.id, title: item.title.slice(0, 240), kind: 'pdf' })) : [];
+  return Array.isArray(value) ? value.filter(item => ['pdf', 'video'].includes(item?.kind) && /^[a-f0-9]{64}$/.test(item.id) && typeof item.title === 'string')
+    .slice(0, 3).map(item => ({ id: item.id, title: item.title.slice(0, 240), kind: item.kind })) : [];
 }
-let pdfReaderModule;
-const loadPdfReader = () => pdfReaderModule ||= import(/* @vite-ignore */ '/pdf-reader.js?v=1').catch(error => { pdfReaderModule = null; throw error; });
+let pdfReaderModule, loadedPdfReader;
+const loadPdfReader = () => pdfReaderModule ||= import(/* @vite-ignore */ '/pdf-reader.js?v=2').then(reader => (loadedPdfReader = reader)).catch(error => { pdfReaderModule = null; throw error; });
 const pdfCoverObserver = new IntersectionObserver(entries => {
   for (const entry of entries) {
     if (!entry.isIntersecting) continue;
@@ -168,17 +171,27 @@ function createDocumentCards(documents) {
   for (const item of safeDocuments(documents)) {
     const card = document.createElement('button');
     card.type = 'button'; card.className = 'document-card'; card.dataset.documentId = item.id;
-    card.setAttribute('aria-label', `Ler ${item.title} dentro da Alt-IA`);
+    card.setAttribute('aria-label', `${item.kind === 'video' ? 'Assistir' : 'Ler'} ${item.title} dentro da Alt-IA`);
     const cover = document.createElement('span'); cover.className = 'pdf-cover';
     const canvas = document.createElement('canvas'); canvas.hidden = true; canvas.setAttribute('aria-hidden', 'true');
     const status = document.createElement('span'); status.className = 'pdf-cover-status'; status.textContent = 'Preparando capa…';
     cover.append(canvas, status);
     const title = document.createElement('strong'); title.textContent = item.title;
-    const hint = document.createElement('small'); hint.textContent = 'PDF · Ler aqui';
+    const hint = document.createElement('small'); hint.textContent = item.kind === 'video' ? 'Vídeo · Assistir aqui' : 'PDF · Ler aqui';
+    if (item.kind === 'video') {
+      card.classList.add('video-document-card'); cover.classList.add('video-cover');
+      status.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22"/><path d="m20 15 14 9-14 9Z"/></svg>';
+    }
     card.append(cover, title, hint);
     card.addEventListener('click', async () => {
       card.disabled = true;
       try {
+        const conversation = conversations.find(item => item.id === activeId);
+        if (conversation) { conversation.readingDocument = item.id; conversation.updatedAt = Date.now(); persist(); }
+        if (item.kind === 'video') {
+          openKnowledgePlayer(document.querySelector('#knowledge-video-dialog'), item, closeShortcutDialog);
+          return;
+        }
         const reader = await loadPdfReader();
         const dialog = document.querySelector('#pdf-dialog');
         if (!dialog.open) reader.openReader(dialog, item, closeShortcutDialog);
@@ -186,7 +199,7 @@ function createDocumentCards(documents) {
       finally { card.disabled = false; }
     });
     group.append(card);
-    pdfCoverObserver.observe(card);
+    if (item.kind === 'pdf' && !loadedPdfReader?.paintCachedCover(canvas, status, item.id)) pdfCoverObserver.observe(card);
   }
   return group;
 }
@@ -391,6 +404,7 @@ function readConversations() {
         id: item.id,
         title: typeof item.title === 'string' ? item.title : 'Nova conversa',
         pinned: item.pinned === true,
+        readingDocument: /^[a-f0-9]{64}$/.test(item.readingDocument) ? item.readingDocument : null,
         nerdMode: item.nerdMode === true,
         agentMode: item.agentMode === true,
         nerdTopic: item.nerdTopic === 'strategies' ? 'strategies' : 'research',
@@ -402,6 +416,7 @@ function readConversations() {
             newsContext: message.role === 'ai' ? safeNews(message.newsContext || message.news) : [],
             research: message.role === 'ai' ? safeResearch(message.research) : [],
             documents: message.role === 'ai' ? safeDocuments(message.documents) : [],
+            knowledgeState: typeof message.knowledgeState === 'string' ? message.knowledgeState.slice(0, 12000) : '',
             video: message.role === 'ai' ? safeVideo(message.video) : null,
             nerdQuery: message.role === 'ai' && typeof message.nerdQuery === 'string' ? message.nerdQuery.slice(0, 650) : '',
             mode: message.role === 'ai' && ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd', 'agent'].includes(message.mode) ? message.mode : '',
@@ -2472,19 +2487,12 @@ chatForm?.addEventListener('submit', async (event) => {
   }
   let requestedConfig = null;
   try {
-    const context = [];
-    for (const message of conversation.messages.slice(-20)) {
-      if (message.role === 'ai' && message.text.startsWith('Recebi sua mensagem. A API da Alt-IA ainda')) continue;
-      const role = message.role === 'ai' ? 'assistant' : 'user';
-      const content = message.followUp ? `${message.text}\n\n${message.followUp}` : message.text;
-      if (context.at(-1)?.role === role) context.at(-1).content += `\n\n${content}`;
-      else context.push({ role, content });
-    }
+    const context = conversationMessages(conversation.messages);
     if (agentForRequest) { stopAgentMedia(); await startAgentSession(); }
     const response = await fetch(agentForRequest ? '/api/agent/run' : '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: agentForRequest ? JSON.stringify({ task: text, context: agentConversationContext(conversation) }) : JSON.stringify({ messages: context, nerd_mode: conversation.nerdMode, nerd_topic: conversation.nerdTopic, chat_context: {
+      body: agentForRequest ? JSON.stringify({ task: text, context: agentConversationContext(conversation) }) : JSON.stringify({ messages: context, stream: true, knowledge_state: previousAnswer?.knowledgeState || null, reading_document: conversation.readingDocument || null, nerd_mode: conversation.nerdMode, nerd_topic: conversation.nerdTopic, chat_context: {
         mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.newsContext || previousAnswer?.news || [] : [],
         nerd_query: previousMode === 'nerd' ? previousAnswer?.nerdQuery || '' : '',
         pool_request: previousMode === 'pool' || previousMode === 'historical_pool' ? previousAnswer?.poolRequest || null : null,
@@ -2498,7 +2506,23 @@ chatForm?.addEventListener('submit', async (event) => {
           metrics: previousPool.simulation.metrics, assumptions: previousPool.simulation.assumptions
         } } : {}) })
     });
-    const data = await response.json().catch(() => null);
+    let partial = '';
+    const data = await readChatResponse(response, delta => {
+      partial += delta;
+      if (activeId !== conversationId || !pending.isConnected) return;
+      pending.classList.remove('message-pending');
+      let live = pending.querySelector('.streaming-answer');
+      if (!live) {
+        const body = pending.querySelector('.message-body');
+        if (!body) return;
+        body.replaceChildren();
+        const name = document.createElement('strong'); name.textContent = 'Alt-IA';
+        live = document.createElement('p'); live.className = 'streaming-answer';
+        body.append(name, live);
+      }
+      live.textContent = partial;
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
     if (!data || typeof data !== 'object') {
       throw new Error(response.status >= 500
         ? 'A Alt-IA está temporariamente indisponível. Tente novamente em instantes.'
@@ -2509,6 +2533,7 @@ chatForm?.addEventListener('submit', async (event) => {
     if (!target) return;
     target.messages.push({ role: 'ai', text: data.reply, speech: typeof data.speech === 'string' ? data.speech.slice(0, 220) : '',
       simulation: safeSimulation(data.simulation), news: safeNews(data.news), wallet: safeWallet(data.wallet),
+      knowledgeState: typeof data.knowledge_state === 'string' ? data.knowledge_state.slice(0, 12000) : '',
       research: safeResearch(data.research), documents: safeDocuments(data.documents), video: safeVideo(data.video), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
       newsContext: safeNews(data.news_context || data.news),
       mode: ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd', 'agent'].includes(data.mode) ? data.mode : 'general',

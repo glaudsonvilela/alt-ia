@@ -10,9 +10,9 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=74">
+  <link rel="stylesheet" href="/shell.css?v=75">
   <link rel="stylesheet" href="/agent.css?v=28">
-  <script defer src="/auth-bootstrap.js?v=17"></script>
+  <script defer src="/auth-bootstrap.js?v=18"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -139,7 +139,21 @@
     </div>
   </dialog>
 
-  <dialog class="pool-dialog pdf-dialog" id="pdf-dialog" aria-labelledby="pdf-dialog-title">
+  <dialog class="pool-dialog pdf-dialog knowledge-video-dialog" id="knowledge-video-dialog" aria-labelledby="knowledge-video-title">
+  <div class="pdf-reader-header"><div class="pool-dialog-art pdf-reader-art" aria-hidden="true"><i class="pool-orbit pool-orbit-one"></i><i class="pool-orbit pool-orbit-two"></i><span class="pool-face eye-pod"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i></span><i class="pdf-reader-diamond"></i></div><div><span class="pool-dialog-kicker">ALT-IA · BIBLIOTECA</span><h2 id="knowledge-video-title">Vídeo</h2></div>
+    <button class="pool-dialog-close" type="button" aria-label="Fechar vídeo">×</button></div>
+  <div class="media-stage"><video playsinline preload="metadata" tabindex="0" aria-label="Vídeo do Basecamp"></video><p class="media-status" role="status"></p></div>
+  <div class="media-controls" role="group" aria-label="Controles do vídeo">
+    <input class="media-seek" data-media="seek" type="range" min="0" max="1000" value="0" aria-label="Posição do vídeo">
+    <button data-media="play" type="button" aria-label="Reproduzir"></button><span class="media-time">0:00 / 0:00</span><span class="media-space"></span>
+    <button data-media="mute" type="button" aria-label="Silenciar" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4ZM17 8c3 2 3 6 0 8"/></svg></button>
+    <input data-media="volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+    <select data-media="rate" aria-label="Velocidade"><option value="0.75">0,75×</option><option value="1" selected>1×</option><option value="1.25">1,25×</option><option value="1.5">1,5×</option><option value="2">2×</option></select>
+    <button data-media="full" type="button" aria-label="Tela cheia"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button>
+  </div>
+</dialog>
+
+<dialog class="pool-dialog pdf-dialog" id="pdf-dialog" aria-labelledby="pdf-dialog-title">
   <div class="pdf-reader-header"><div class="pool-dialog-art pdf-reader-art" aria-hidden="true"><i class="pool-orbit pool-orbit-one"></i><i class="pool-orbit pool-orbit-two"></i><span class="pool-face eye-pod"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i></span><i class="pdf-reader-diamond"></i></div><div><span class="pool-dialog-kicker">ALT-IA · BIBLIOTECA</span><h2 id="pdf-dialog-title">Documento</h2></div>
     <button class="pool-dialog-close" type="button" aria-label="Fechar documento">×</button></div>
   <div class="pdf-toolbar" role="group" aria-label="Controles do documento">

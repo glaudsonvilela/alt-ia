@@ -5,6 +5,14 @@ import agent_browser
 
 
 class AgentBrowserTests(unittest.TestCase):
+    def test_media_filename_is_not_opened_as_a_domain(self):
+        blank = {'url':'about:blank','elements':[]}
+        with patch.object(agent_browser, 'worker_call', return_value=blank) as worker, \
+             patch.object(agent_browser, 'search_web', return_value={'sources':[]}), \
+             patch.object(agent_browser, 'choose_action', return_value={'action':'finish','answer':'Não encontrei.'}):
+            agent_browser.run('Abra o vídeo Estratégias KAMINO.mp4', 'a'*48, 'test')
+        self.assertEqual(worker.call_count, 1)
+
     def setUp(self):
         self.speech_patch = patch.object(agent_browser, "generate_speech", return_value="Slipknot mistura peso e melodia. 🎸")
         self.speech_patch.start()

@@ -89,7 +89,12 @@ def scene_times(url, start, duration):
     for number in range(frames):
         frame = np.frombuffer(result.stdout, np.uint8, frame_bytes, number*frame_bytes).reshape((180,320,3))
         cuts.update(detector.process_frame(number,frame))
-    return [start + max(0, min(duration-.2, number/2 + .5)) for number in sorted(cuts)]
+    ordered = sorted(cuts)
+    # Bound visual-model calls per minute, retaining evenly spaced scene cuts.
+    # Audio remains integral; visuals are explicitly marked as sampled.
+    if len(ordered) > 4:
+        ordered = [ordered[round(i*(len(ordered)-1)/3)] for i in range(4)]
+    return [start + max(0, min(duration-.2, number/2 + .5)) for number in ordered]
 
 
 def read_video(store, metadata, visual, api_key, progress, checkpoint):
@@ -107,25 +112,41 @@ def read_video(store, metadata, visual, api_key, progress, checkpoint):
         start = int(progress.get('seconds', 0))
         for offset in range(start, math.ceil(duration), 60):
             end = min(offset + 60, duration)
-            text = f'[Vídeo {timestamp(offset)}–{timestamp(end)}]'
-            if has_audio:
-                pcm = subprocess.run(['ffmpeg', '-v', 'error', '-threads', '1', '-ss', str(offset),
-                    '-i', url, '-t', str(end-offset), '-vn', '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1'],
-                    capture_output=True, timeout=120, check=True).stdout
-                if not pcm:
-                    raise ValueError('Áudio do intervalo não decodificado')
-                words = transcribe_pcm(pcm, api_key)
-                text += '\n[Transcrição automática; pode conter erros em nomes e números]\n' + (words or '[Sem fala reconhecida neste intervalo]')
+            pending = progress.get('pending_interval', {})
+            text = pending.get('text') if pending.get('offset') == offset else None
+            if not text:
+                text = f'[Vídeo {timestamp(offset)}–{timestamp(end)}]'
+                if has_audio:
+                    pcm = subprocess.run(['ffmpeg', '-v', 'error', '-threads', '1', '-ss', str(offset),
+                        '-i', url, '-t', str(end-offset), '-vn', '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1'],
+                        capture_output=True, timeout=120, check=True).stdout
+                    if not pcm:
+                        raise ValueError('Áudio do intervalo não decodificado')
+                    words = transcribe_pcm(pcm, api_key)
+                    text += '\n[Transcrição automática; pode conter erros em nomes e números]\n' + (words or '[Sem fala reconhecida neste intervalo]')
+                pending = {'offset': offset, 'text': text, 'frames_done': 0}
+            def publish_partial():
+                pending['text'] = text
+                state = {'seconds':offset, 'duration':duration, 'sections':list(sections), 'pending_interval':dict(pending)}
+                checkpoint(state, '\n\n'.join([*sections, text]))
+            # Make speech searchable before slower visual interpretation finishes.
+            publish_partial()
             if has_video:
-                for frame_at in scene_times(url, offset, end-offset):
+                if 'frames' not in pending:
+                    pending['frames'] = scene_times(url, offset, end-offset)
+                for frame_index, frame_at in enumerate(pending['frames']):
+                    if frame_index < pending.get('frames_done', 0):
+                        continue
                     frame = subprocess.run(['ffmpeg', '-v', 'error', '-threads', '1', '-ss', str(frame_at),
                         '-i', url, '-frames:v', '1', '-vf', 'scale=1280:-2', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'],
                         capture_output=True, timeout=90, check=True).stdout
                     if not frame:
                         raise ValueError('Quadro visual não decodificado')
                     text += f'\n[Quadro representativo em {timestamp(frame_at)}; não cobre cada quadro]\n' + visual.read(frame)
+                    pending['frames_done'] = frame_index + 1
+                    publish_partial()
             sections.append(text)
             progress = {'seconds': offset + 60, 'duration': duration, 'sections': sections}
             checkpoint(progress, '\n\n'.join(sections))
-        return ('[Memória do vídeo: áudio percorrido integralmente; PySceneDetect identifica mudanças em amostragem de 2fps, com quadros adicionais a cada 30s. '
+        return ('[Memória do vídeo: áudio percorrido integralmente; PySceneDetect identifica mudanças em amostragem de 2fps, com até quatro quadros representativos por minuto. '
                 'Não equivale à leitura de cada quadro; detalhes transitórios podem não estar presentes.]\n\n' + '\n\n'.join(sections))

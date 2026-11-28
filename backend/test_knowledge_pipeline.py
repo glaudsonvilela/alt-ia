@@ -21,13 +21,30 @@ class PipelineTest(unittest.TestCase):
         self.store.upsert({'key':self.key,'account_id':'7','project_id':'2','project_name':'Research',
                           'title':'Tutorial','url':'','kind':'document','updated_at':'2026','body':'Explicação interna'})
 
-    def test_agent_handoff_requires_available_capability_and_keeps_task(self):
-        complete=lambda *_:{'intent':'browser','needs_knowledge':False,'question':'Abra outro vídeo da banda indicada'}
+    def test_browser_intent_cannot_skip_repository(self):
+        complete=lambda *_:{'intent':'browser','needs_knowledge':False,'source_ids':['S1'],'question':'Abra outro vídeo da banda indicada'}
         messages=[{'role':'user','content':'agora outro'}]
         result=research(self.store,messages,complete,browser_available=True)
-        self.assertEqual(result['intent'],'browser');self.assertEqual(result['sources'],[])
+        self.assertEqual(result['intent'],'browser');self.assertEqual(result['sources'][0]['key'],self.key)
         self.assertEqual(result['question'],'Abra outro vídeo da banda indicada')
         self.assertNotEqual(research(self.store,messages,complete)['intent'],'browser')
+
+    def test_web_confirmation_requires_signed_offer_and_immediate_answer(self):
+        from chat_context import confirmed_web_task, research_state
+        secret=b'x'*32; email='test@altside.com'
+        question='Quer que eu abra o agente para procurar na web?'
+        token=research_state({'sources':[],'question':'vídeos de Kamino',
+            'web_offer':{'question':question,'task':'vídeos de Kamino'}},email,secret)
+        history=[{'role':'assistant','content':'Não encontrei.\n\n'+question+'\n[Arquivos mostrados nesta resposta: PDF]'},
+                 {'role':'user','content':'sim'}]
+        self.assertEqual(confirmed_web_task(token,email,secret,history),'vídeos de Kamino')
+        self.assertIsNone(confirmed_web_task(token,'other@altside.com',secret,history))
+        self.assertIsNone(confirmed_web_task(token+'x',email,secret,history))
+        for text in ['não', 'sim, mas não abra', 'explique lending', 'o documento diz sim']:
+            history[-1]['content']=text
+            self.assertIsNone(confirmed_web_task(token,email,secret,history))
+        history[-1]['content']='sim';history[-2]['content']='Quer aprofundar?'
+        self.assertIsNone(confirmed_web_task(token,email,secret,history))
 
     def test_pdf_resume_reads_only_unfinished_pages_and_checkpoints_content(self):
         pages=[]
@@ -42,6 +59,34 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual([s[0] for s in snapshots],[2,3])
         self.assertEqual(len(snapshots[-1][2]),3)
         self.assertIn(saved,result);self.assertIn('página 3',result)
+
+    def test_video_publishes_audio_before_visual_and_resumes_without_retranscribing(self):
+        from contextlib import nullcontext
+        from knowledge_transcribe import read_video
+        import json
+        states=[]
+        def checkpoint(state,body):
+            states.append((json.loads(json.dumps(state)), body))
+        def process(args, **kwargs):
+            if args[0]=='ffprobe':
+                return SimpleNamespace(stdout=b'{"format":{"duration":60},"streams":[{"codec_type":"audio"},{"codec_type":"video"}]}')
+            return SimpleNamespace(stdout=b'fixture')
+        visual=Mock();visual.read.side_effect=['Primeiro slide',ValueError('interrupted')]
+        with patch('knowledge_transcribe.media_bridge',return_value=nullcontext('http://local')), \
+             patch('knowledge_transcribe.subprocess.run',side_effect=process), \
+             patch('knowledge_transcribe.scene_times',return_value=[0.5,30.5]), \
+             patch('knowledge_transcribe.transcribe_pcm',return_value='Condição falada da estratégia') as transcribe:
+            with self.assertRaises(ValueError):
+                read_video(None,{},visual,'',{},checkpoint)
+            self.assertIn('Condição falada', states[0][1])
+            self.assertNotIn('Primeiro slide', states[0][1])
+            saved=states[-1][0]
+            visual.read.side_effect=None;visual.read.return_value='Segundo slide'
+            result=read_video(None,{},visual,'',saved,checkpoint)
+            transcribe.assert_called_once()
+            self.assertEqual(result.count('Primeiro slide'),1)
+            self.assertEqual(result.count('Segundo slide'),1)
+            self.assertEqual(states[-1][0]['seconds'],60)
 
     def test_long_pdf_passages_keep_page_provenance(self):
         from knowledge_store import chunk_text

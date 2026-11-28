@@ -39,6 +39,21 @@ class MemoryTest(unittest.TestCase):
         self.assertIsNotNone(current.get_video(identifier))
         self.assertEqual(current.search('rebalanceamento')[0]['key'],self.record['key'])
         self.assertNotIn(b'rebalanceamento',(self.root/'knowledge.enc').read_bytes())
+        from knowledge_store import decrypt
+        artifact=current.video_text_path(self.record['key'])
+        self.assertTrue(artifact.is_file())
+        self.assertNotIn(b'rebalanceamento',artifact.read_bytes())
+        self.assertIn(b'rebalanceamento',decrypt(current.key,artifact.read_bytes()))
+        current.prune_project('7','3',set())
+        self.assertFalse(artifact.exists())
+
+    def test_requested_content_gets_priority_without_losing_progress(self):
+        second={**self.record,'key':'7:message:9:attachment:10','parent_key':'7:message:9','title':'AAA first alphabetically'}
+        self.store.upsert(second)
+        self.store.enqueue_content(second['key'],'rev1',{**self.payload,'record':second})
+        self.store.save()
+        self.store.prioritize_content([self.record['parent_key']])
+        self.assertEqual(self.worker.claim()[0],self.record['key'])
 
     def test_revocation_cannot_be_undone_by_running_extraction(self):
         job = self.worker.claim()

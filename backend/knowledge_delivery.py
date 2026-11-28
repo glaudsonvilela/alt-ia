@@ -11,8 +11,9 @@ def delivery_format(documents):
     return {"type": "json_schema", "json_schema": {"name": "altside_answer", "strict": True,
         "schema": {"type": "object", "additionalProperties": False,
             "properties": {"answer": {"type": "string"}, "follow_up": {"type": "string"},
-                           "document_ids": {"type": "array", "items": items, "maxItems": 3 if documents else 0}},
-            "required": ["answer", "follow_up", "document_ids"]}}}
+                           "document_ids": {"type": "array", "items": items, "maxItems": 3 if documents else 0},
+                           "needs_web": {"type": "boolean"}},
+            "required": ["answer", "follow_up", "document_ids", "needs_web"]}}}
 
 
 def delivery_prompt(documents):
@@ -33,7 +34,13 @@ abrangente pede profundidade proporcional. Evite transformar toda resposta em um
 Entregue SOMENTE JSON com os campos:
 {"answer":"explicação completa em Markdown simples, sem links nem marcadores de citação",
  "follow_up":"uma pergunta breve e específica para continuar o assunto",
- "document_ids":["IDs exatos dos PDFs úteis para esta resposta"]}.
+ "document_ids":["IDs exatos dos PDFs úteis para esta resposta"], "needs_web":false}.
+O repositório é SEMPRE a primeira opção. Use needs_web=true SOMENTE se as evidências internas
+não atenderem ao pedido e uma pesquisa externa puder ajudar. Não execute nem afirme ter executado
+buscas externas. O servidor perguntará se a pessoa quer abrir o agente antes de qualquer navegação.
+Se existe um vídeo interno adequado, entregue-o com needs_web=false, mesmo sem transcrição.
+Se o vídeo solicitado existe mas está com transcrição pendente, explique essa lacuna; não substitua
+o vídeo por um da web e não invente o resumo. Conversa casual e recusas não precisam da web.
 Perguntas de continuação ficam somente em follow_up; não inclua outra pergunta em answer.
 Sempre encerre com uma pergunta pertinente em follow_up, sem repeti-la em answer. Em um panorama de
 estratégias, convide a escolher qual aprofundar. Em um aprofundamento, proponha o próximo passo relevante.
@@ -73,4 +80,5 @@ def deliver(content, documents):
     allowed.update({item["id"]: item for item in documents})
     ids = value.get("document_ids")
     selected = {allowed[i]["id"]: allowed[i] for i in ids if isinstance(i, str) and i in allowed} if isinstance(ids, list) else {}
-    return {"reply": answer + "\n\n" + question, "documents": list(selected.values())[:3], "research": []}
+    return {"reply": answer + "\n\n" + question, "documents": list(selected.values())[:3], "research": [],
+            "needs_web": value.get('needs_web') is True}

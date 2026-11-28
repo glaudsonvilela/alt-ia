@@ -50,6 +50,8 @@ def worker_call(method, path, api_key, payload=None, image=False, timeout=25):
             detail = json.load(error).get("error", "Falha no navegador temporário.")
         except (ValueError, OSError):
             detail = "Falha no navegador temporário."
+        if re.search(r'ENOTFOUND|EAI_AGAIN|ERR_NAME|ECONN|ETIMEDOUT|getaddrinfo|net::', str(detail), re.I):
+            detail = 'Não consegui acessar esse endereço. Posso tentar outra fonte para o mesmo pedido.'
         raise ValueError(detail) from error
     except OSError as error:
         raise ValueError("Navegador temporário indisponível agora.") from error
@@ -270,6 +272,10 @@ def run(task, session_id, api_key, context=None):
             steps.append(f"Selecionou {current_video['url']}")
             return media_result(current_video)
     explicit_url = re.search(r"(?<![\w@])(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s<>\"']*)?", task, re.I)
+    # A media filename (e.g. KAMINO.mp4) is not an internet address.
+    if explicit_url and re.search(r'\.(?:mp[34]|pdf|mov|webm|m4v|png|jpe?g)(?:$|[/?#])',
+                                  task[explicit_url.start():].split()[0], re.I):
+        explicit_url = None
     if explicit_url:
         target_url = explicit_url.group(0).rstrip(".,)")
         if not target_url.startswith(("https://", "http://")):

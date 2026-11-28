@@ -30,6 +30,7 @@ class Worker:
         self.key_file = key_file
         self.api_key = api_key
         self.lane = 0
+        self.turn = 0
 
     @contextmanager
     def transaction(self):
@@ -59,7 +60,9 @@ class Worker:
             def rank(row):
                 value = json.loads(row[2]); state = json.loads(row[3])
                 lane = 0 if value['mime'].startswith('image/') else 1 if value['mime'].startswith('video/') else 2
-                return ((lane-self.lane)%3, state.get('last_processed',0))
+                requested = store.db.execute('SELECT requested_at FROM content_priority WHERE source_key=?', (row[0],)).fetchone()
+                urgent = bool(requested and requested[0] > time.time()-21600 and self.turn % 4 != 3)
+                return (not urgent, 0 if urgent else (lane-self.lane)%3, state.get('last_processed',0))
             for key, revision, payload, progress, attempts in sorted(rows,key=rank):
                 if source and key != source:
                     continue
@@ -68,6 +71,7 @@ class Worker:
                     continue
                 store.db.execute("UPDATE content_jobs SET status='processing',attempts=attempts+1 WHERE source_key=?", (key,))
                 self.lane = (self.lane+1)%3
+                self.turn += 1
                 return key, revision, json.loads(payload), state
         return None
 
@@ -79,6 +83,10 @@ class Worker:
                 raise Superseded()
             if body is not None:
                 store.upsert({**payload['record'], 'body': body})
+                if payload['mime'].startswith('video/') or Path(payload['filename']).suffix.lower() in {'.mp4','.mov','.webm','.m4v'}:
+                    # Compact UTF-8 text only; media stays at Basecamp. The same
+                    # passages are indexed in the encrypted searchable database.
+                    store.write_video_text(key, payload['record']['title'], body)
             store.db.execute('UPDATE content_jobs SET status=?,detail=? WHERE source_key=?', (status, detail[:500], key))
             if progress is not None:
                 store.db.execute('UPDATE content_jobs SET progress=? WHERE source_key=?', (json.dumps(progress, ensure_ascii=False), key))
@@ -105,7 +113,7 @@ class Worker:
                     if state['seconds'] < state['duration'] and state['seconds'] - progress.get('seconds',0) >= 60:
                         raise ContinueLater()
                 body = read_video(store, payload, visual, self.api_key, progress, checkpoint)
-                detail = 'Áudio integral; cenas detectadas a 2fps + quadros a cada 30s; transcrição automática.'
+                detail = 'Áudio integral; até quatro quadros representativos por minuto; transcrição automática.'
             else:
                 from basecamp import Client
                 from knowledge_video import access_token

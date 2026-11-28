@@ -1,5 +1,22 @@
 """Bounded conversation transport and account-bound retrieval continuity."""
 from scenario_tokens import issue, verify
+import re
+import unicodedata
+
+
+def confirmed_web_task(token, email, secret, messages):
+    """Only an answer to a server-issued offer can authorize a main-chat handoff."""
+    state = read_research_state(token, email, secret)
+    if not state or not state.get('web_offer') or len(messages) < 2:
+        return None
+    previous_answer = re.sub(r'\n\[Arquivos mostrados nesta resposta: [\s\S]*\]$', '', messages[-2]['content']).rstrip()
+    if messages[-2]['role'] != 'assistant' or not previous_answer.endswith(state['web_offer']['question']):
+        return None
+    text = unicodedata.normalize('NFKD', messages[-1]['content'].lower())
+    text = ''.join(c for c in text if not unicodedata.combining(c)).strip(' .!,?')
+    if not re.fullmatch(r'(?:sim(?:[, ]+(?:pode|por favor|quero))?|pode(?: sim| procurar| buscar| abrir| pesquisar)?|quero sim|ok|claro|prossiga|(?:abra|abre) o agente|(?:pode )?(?:procurar|pesquisar|buscar) na (?:web|internet))', text):
+        return None
+    return state['web_offer']['task']
 
 
 def validate_messages(raw):
@@ -20,11 +37,12 @@ def validate_messages(raw):
 
 
 def research_state(result, email, secret):
-    if not result or not result.get("sources"):
+    if not result or not (result.get("sources") or result.get('web_offer')):
         return ""
     return issue({"purpose": "knowledge", "account": email,
                   "question": result["question"],
-                  "source_ids": [item["key"] for item in result["sources"]]}, secret)
+                  "source_ids": [item["key"] for item in result["sources"]],
+                  "web_offer": result.get('web_offer')}, secret)
 
 
 def read_research_state(token, email, secret):

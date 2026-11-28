@@ -6,6 +6,7 @@ the last complete snapshot while an import is running.
 """
 
 import hashlib
+import fcntl
 import json
 import os
 import re
@@ -182,6 +183,7 @@ class KnowledgeStore:
             db.execute('CREATE INDEX IF NOT EXISTS chunks_source_ordinal ON chunks(source_key,ordinal)')
             db.execute('CREATE INDEX IF NOT EXISTS links_parent ON source_links(parent_key)')
             db.execute('CREATE TABLE IF NOT EXISTS video_previews (source_key TEXT PRIMARY KEY, url TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS content_priority (source_key TEXT PRIMARY KEY, requested_at REAL NOT NULL)')
             self.db = db
             self.signature = signature
             if old is not None:
@@ -208,6 +210,8 @@ class KnowledgeStore:
             return {row[0] for row in self.db.execute("SELECT project_id FROM selection WHERE account_id=?", (str(account_id),))}
 
     def _delete(self, key):
+        self.video_text_path(key).unlink(missing_ok=True)
+        self.db.execute('DELETE FROM content_priority WHERE source_key=?', (key,))
         self.db.execute('DELETE FROM remote_pdf_files WHERE source_key=?', (key,))
         self.db.execute('DELETE FROM source_links WHERE child_key=?', (key,))
         self.db.execute("DELETE FROM content_jobs WHERE source_key=?", (key,))
@@ -407,6 +411,31 @@ class KnowledgeStore:
         with self.lock:
             row = self.db.execute("SELECT status,detail FROM content_jobs WHERE source_key=?", (key,)).fetchone()
             return {"status": row[0], "detail": row[1]} if row else None
+
+    def video_text_path(self, key):
+        return self.path.parent / 'video-text' / (hashlib.sha256(key.encode()).hexdigest() + '.txt.enc')
+
+    def write_video_text(self, key, title, body):
+        private_write(self.video_text_path(key), encrypt(self.key, (title + '\n\n' + body).encode('utf-8')))
+
+    def prioritize_content(self, keys):
+        """Queue requested sources and their attachments without running extraction in chat."""
+        if not keys:
+            return
+        with self.lock, (self.path.parent / 'sync.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self._reload(force=True)
+            changed = False
+            with self.db:
+                for key in keys[:14]:
+                    rows = self.db.execute('''SELECT j.source_key FROM content_jobs j
+                        WHERE (j.source_key=? OR j.source_key IN (SELECT child_key FROM source_links WHERE parent_key=?))
+                        AND j.status IN ('pending','processing','retry')''', (key,key)).fetchall()
+                    for (source_key,) in rows:
+                        self.db.execute('INSERT OR REPLACE INTO content_priority VALUES (?,?)', (source_key,time.time()))
+                        changed = True
+            if changed:
+                self.save()
 
     def discussion_parents(self, keys):
         with self.lock:

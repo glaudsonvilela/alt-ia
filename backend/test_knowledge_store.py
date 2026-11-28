@@ -83,7 +83,7 @@ class KnowledgeStoreTest(unittest.TestCase):
         self.assertNotIn("[F2]", result["reply"])
         self.assertTrue(result["reply"].endswith("Quer comparar os riscos?"))
         schema = delivery_format([document])["json_schema"]["schema"]
-        self.assertEqual(set(schema["required"]), {"answer", "follow_up", "document_ids"})
+        self.assertEqual(set(schema["required"]), {"answer", "follow_up", "document_ids", "needs_web"})
         self.assertEqual(schema["properties"]["document_ids"]["items"]["enum"], ["D1"])
         selected = deliver(json.dumps({"answer": "Explicação", "follow_up": "Quer aprofundar?", "document_ids": ["D1"]}), [document])
         self.assertEqual(selected["documents"], [document])

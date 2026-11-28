@@ -34,15 +34,15 @@ pools, lending ou risco. simulate só quando a pessoa pede calcular/montar uma p
 depth=focused para uma continuação pontual, escolha de opção, pedido de arquivo/vídeo ou explicação
 curta de um ponto. depth=analysis para comparações, visão ampla, cálculos, decisões ou análise detalhada.
 Não responda à pergunta nesta etapa nem use afirmações anteriores do assistente como prova documental.
-browser_available=true significa que o chat pode acionar o navegador da Alt-IA. Use intent=browser
-e needs_knowledge=false quando a pessoa pedir abrir/navegar/interagir com um site externo ou reproduzir
-vídeos/músicas externos, inclusive continuações ('agora outro da banda X'). question deve conter a tarefa
-autossuficiente. Explicar um assunto, mencionar YouTube, citar um comando ou pedir para NÃO abrir não
-é autorização para navegar. Abrir um PDF/vídeo do repositório interno continua sendo explain.
+O repositório tem prioridade, inclusive para pedidos de vídeos. Procure e selecione os arquivos internos
+ANTES de considerar a web. Um vídeo sem transcrição ainda pode ser assistido: selecione seu registro.
+intent=browser indica apenas uma possível necessidade externa; NUNCA autorização para abrir o agente.
+Mesmo nesse caso, selecione fontes internas pertinentes e mantenha needs_knowledge=true.
+question deve preservar a tarefa sem inventar URLs, converter nomes de arquivos em sites ou acrescentar ações.
 No catálogo compacto cada linha é [id, título, projeto, pai]; projects traduz os códigos de projeto.
 O chat principal também pesquisa a internet, inclusive no celular. Preencha web_query quando a pessoa
 pedir pesquisa pública, notícias, informações atuais, confirmação externa ou comparação com o cenário atual.
-Pode consultar a base interna e a web no mesmo pedido. Não use web_query para abrir/tocar conteúdo (browser).
+web_query é somente uma sugestão; a web depende de confirmação posterior da pessoa.
 Use somente termos públicos nessa busca: nunca copie trechos, dados pessoais ou estratégias internas.
 Para análise dos arquivos internos sem pedido de atualização externa, web_query vazio.
 """
@@ -108,7 +108,7 @@ def research(store, messages, complete, previous=None, reading_document=None, br
         result["intent"] = intent if intent in {"explain", "simulate", "other"} or intent == 'browser' and browser_available else "other"
         result["question"] = str(plan.get("question") or question)[:1200]
         result['web_query'] = str(plan.get('web_query') or '')[:350]
-        if plan.get("needs_knowledge") is False or result['intent'] == 'browser':
+        if plan.get("needs_knowledge") is False and result['intent'] != 'browser' and not result['web_query'] and not plan.get('source_ids'):
             result["status"] = "not_needed"
             return result
         keys = [aliases.get(key, key) for key in clean_list(plan.get("source_ids"), 12, 200)]

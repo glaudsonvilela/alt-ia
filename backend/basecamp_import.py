@@ -3,6 +3,7 @@
 import argparse
 import io
 import json
+import logging
 import os
 import re
 import sys
@@ -15,7 +16,15 @@ from xml.etree import ElementTree
 
 from basecamp import Client
 from basecamp.oauth import discover_from_resource, perform_device_login, refresh_token
+from pypdf.errors import PyPdfError
 from knowledge_store import KnowledgeStore, decrypt, encrypt, load_key, private_write
+
+TEXT_SUFFIXES = {".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".html", ".htm", ".pdf", ".docx"}
+MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024
+# Malformed PDF diagnostics can contain document bytes. Coverage is reported
+# with counts below instead of writing parser internals to synchronization logs.
+logging.getLogger("pypdf").addHandler(logging.NullHandler())
+logging.getLogger("pypdf").propagate = False
 
 
 class PlainText(HTMLParser):
@@ -66,6 +75,54 @@ def source_record(item, kind, account_id, project):
     }
 
 
+def import_rich_content(account, item, record, store, seen, stats):
+    """Index inline files as sources, retaining their parent/project provenance.
+
+    Use the SDK's authenticated download hop and credential-free redirect.
+    Browser preview URLs are not downloadable PDFs and must not be indexed.
+    """
+    record["body"] = html_text(item.get("content"))
+    unavailable = []
+    for attachment in item.get("content_attachments") or []:
+        filename = attachment.get("filename") or "anexo"
+        attachment_id = attachment.get("id")
+        if not attachment_id:
+            continue
+        key = f"{record['key']}:attachment:{attachment_id}"
+        seen.add(key)
+        stats["examined"] += 1
+        supported = Path(filename).suffix.lower() in TEXT_SUFFIXES
+        too_large = int(attachment.get("byte_size") or 0) > MAX_ATTACHMENT_BYTES
+        if not supported or too_large or not attachment.get("download_url"):
+            unavailable.append(filename)
+            stats["skipped"] += 1
+            # Remove stale extracted text if an attachment changed format.
+            store.upsert({**record, "key": key, "body": ""})
+            continue
+        if store.unchanged(key, record["updated_at"]):
+            continue
+        download = account.download_url(attachment["download_url"])
+        if len(download.body) > MAX_ATTACHMENT_BYTES:
+            unavailable.append(filename)
+            stats["skipped"] += 1
+            store.upsert({**record, "key": key, "body": ""})
+            continue
+        try:
+            content = extract_upload(filename, download.body)
+        except (ValueError, zipfile.BadZipFile, KeyError, PyPdfError):
+            content = ""
+        if not content.strip():
+            unavailable.append(filename)
+            stats["skipped"] += 1
+        stats["updated"] += int(store.upsert({**record, "key": key, "kind": "attachment",
+            "title": f"{record['title']} — {filename}", "body": content}))
+    if unavailable:
+        record["body"] += "\n[Anexos mencionados, sem conteúdo textual importado: " + "; ".join(unavailable) + "]"
+    seen.add(record["key"])
+    stats["examined"] += 1
+    stats["updated"] += int(store.upsert(record))
+
+
 def scan_project(account, account_id, project, store):
     details = account.projects.get(project_id=int(project["id"]))
     dock = details.get("dock") or []
@@ -82,10 +139,9 @@ def scan_project(account, account_id, project, store):
             vaults.append(int(folder["id"]))
         for item in account.documents.list(vault_id=vault_id):
             record = source_record(item, "document", account_id, project)
-            record["body"] = html_text(item.get("content") or account.documents.get(document_id=int(item["id"])).get("content", ""))
-            seen.add(record["key"])
-            stats["examined"] += 1
-            stats["updated"] += int(store.upsert(record))
+            if not item.get("content") or ("<bc-attachment" in item["content"] and "content_attachments" not in item):
+                item = account.documents.get(document_id=int(item["id"]))
+            import_rich_content(account, item, record, store, seen, stats)
         for item in account.uploads.list(vault_id=vault_id):
             record = source_record(item, "upload", account_id, project)
             seen.add(record["key"])
@@ -93,7 +149,7 @@ def scan_project(account, account_id, project, store):
             if store.unchanged(record["key"], record["updated_at"]):
                 continue
             filename = item.get("filename") or record["title"]
-            if Path(filename).suffix.lower() not in {".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".html", ".htm", ".pdf", ".docx"}:
+            if Path(filename).suffix.lower() not in TEXT_SUFFIXES:
                 record["body"] = html_text(item.get("description"))
                 stats["skipped"] += 1
                 stats["updated"] += int(store.upsert(record))
@@ -101,7 +157,7 @@ def scan_project(account, account_id, project, store):
             download = account.uploads.download(upload_id=int(item["id"]))
             try:
                 content = extract_upload(filename, download.body)
-            except (ValueError, zipfile.BadZipFile, KeyError):
+            except (ValueError, zipfile.BadZipFile, KeyError, PyPdfError):
                 content = ""
             record["body"] = (html_text(item.get("description")) + "\n\n" + content).strip()
             if not content.strip():
@@ -110,10 +166,9 @@ def scan_project(account, account_id, project, store):
     for board_id in boards:
         for item in account.messages.list(board_id=board_id):
             record = source_record(item, "message", account_id, project)
-            record["body"] = html_text(item.get("content") or account.messages.get(message_id=int(item["id"])).get("content", ""))
-            seen.add(record["key"])
-            stats["examined"] += 1
-            stats["updated"] += int(store.upsert(record))
+            if not item.get("content") or ("<bc-attachment" in item["content"] and "content_attachments" not in item):
+                item = account.messages.get(message_id=int(item["id"]))
+            import_rich_content(account, item, record, store, seen, stats)
     store.prune_project(account_id, project["id"], seen)
     return stats
 

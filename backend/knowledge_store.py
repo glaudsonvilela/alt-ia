@@ -187,6 +187,8 @@ class KnowledgeStore:
         with self.lock, self.db:
             prior = self.db.execute("SELECT digest FROM sources WHERE source_key=?", (key,)).fetchone()
             if prior and prior[0] == digest:
+                self.db.execute("UPDATE sources SET updated_at=?,url=?,project_name=?,kind=? WHERE source_key=?",
+                                (source["updated_at"], source["url"], source["project_name"], source["kind"], key))
                 return False
             self._delete(key)
             if not body:
@@ -217,49 +219,100 @@ class KnowledgeStore:
         expression = " OR ".join('"' + term + '"*' if len(term) >= 6 else '"' + term + '"' for term in terms)
         with self.lock:
             rows = self.db.execute("""
-                SELECT s.title,s.url,s.project_name,c.body,bm25(chunks_fts,3.0,1.0) score
+                SELECT s.source_key,s.title,s.url,s.project_name,c.body,bm25(chunks_fts,3.0,1.0) score
                 FROM chunks_fts JOIN chunks c ON c.id=chunks_fts.rowid
                 JOIN sources s ON s.source_key=c.source_key
                 WHERE chunks_fts MATCH ? ORDER BY score LIMIT ?
             """, (expression, limit * 3)).fetchall()
         output, seen = [], set()
-        for title, url, project, body, score in rows:
-            if url in seen:
+        for key, title, url, project, body, score in rows:
+            if key in seen:
                 continue
-            seen.add(url)
-            output.append({"title": title, "url": url, "project": project, "excerpt": body, "score": score})
+            seen.add(key)
+            output.append({"key": key, "title": title, "url": url, "project": project, "excerpt": body, "score": score})
             if len(output) >= limit:
                 break
         return output
 
-    def research(self, query, limit=7):
-        """Collect distinct, substantive documents for a broad company strategy question."""
-        normalized = search_terms(query)
-        company = "altside" in unicodedata.normalize("NFKD", query.lower())
-        if not (company and normalized == ["estrategia"]):
-            return self.search(query, limit=limit)
-        sources, seen, themes = [], set(), set()
-        for facet, quota in (("filosofia", 1), ("processo research", 1), ("estrategia", 5)):
-            added = 0
-            for item in self.search(facet, limit=30):
-                title = unicodedata.normalize("NFKD", item["title"].lower())
-                title = "".join(char for char in title if not unicodedata.combining(char))
-                words = WORD.findall(title)
-                theme = words[0][:4] if words else title[:4]
-                if (item["url"] in seen or title.endswith(".pdf") or "pastas" in title
-                        or "calendario" in title or "objetivos e metas" in title
-                        or len(item["excerpt"]) < (250 if facet == "estrategia" else 150)
-                        or (facet == "estrategia" and theme in themes)):
+    def catalog(self):
+        """Every indexed source, including books and short/link-only records."""
+        self._reload()
+        with self.lock:
+            rows = self.db.execute("""
+                SELECT s.source_key,s.title,s.project_name,s.kind,s.updated_at,
+                       substr(c.body,1,220),
+                       (SELECT count(*) FROM chunks x WHERE x.source_key=s.source_key)
+                FROM sources s JOIN chunks c ON c.source_key=s.source_key AND c.ordinal=0
+                ORDER BY s.project_id,s.title,s.source_key
+            """).fetchall()
+        return [{**dict(zip(("id", "title", "project", "kind", "updated_at", "preview", "chunks"), row)),
+                 "parent_id": row[0].rsplit(":attachment:", 1)[0] if row[3] == "attachment" else None}
+                for row in rows]
+
+    def read_sources(self, keys, queries, limit=14, budget=48000):
+        """Read short sources fully and query-relevant passages of longer ones.
+
+        Ordinal labels and coverage keep excerpts from masquerading as complete
+        documents. Reading a record also opens its indexed inline attachments;
+        the model need not guess that a short parent has a substantive PDF child.
+        """
+        self._reload()
+        output = []
+        terms = list(dict.fromkeys(term for query in queries for term in search_terms(query)))[:40]
+        expression = " OR ".join('"' + term + '"*' for term in terms)
+        keys = list(dict.fromkeys(keys))[:limit]
+        with self.lock:
+            for index, key in enumerate(keys):
+                source = self.db.execute(
+                    "SELECT title,url,project_name,updated_at,kind FROM sources WHERE source_key=?", (key,)
+                ).fetchone()
+                if not source:
                     continue
-                sources.append(item)
-                seen.add(item["url"])
-                themes.add(theme)
-                added += 1
-                if added == quota or len(sources) == limit:
+                prefix = key + ":attachment:"
+                children = self.db.execute(
+                    "SELECT source_key,title FROM sources WHERE kind='attachment' AND substr(source_key,1,?)=? ORDER BY title",
+                    (len(prefix), prefix)).fetchall()
+                rows, priority, ranked, locations, totals = [], [], [], {}, {}
+                for doc_key, title in [(key, source[0]), *children]:
+                    chunks = self.db.execute("SELECT ordinal,body FROM chunks WHERE source_key=? ORDER BY ordinal", (doc_key,)).fetchall()
+                    totals[doc_key] = (title, len(chunks))
+                    for ordinal, body in chunks:
+                        locations[(doc_key, ordinal)] = len(rows)
+                        rows.append((doc_key, ordinal, f"[arquivo: {title[:220]}; trecho {ordinal + 1}/{len(chunks)}] {body}"))
+                    hits = self.db.execute("""
+                        SELECT c.ordinal,bm25(chunks_fts) score FROM chunks_fts JOIN chunks c ON c.id=chunks_fts.rowid
+                        WHERE chunks_fts MATCH ? AND c.source_key=? ORDER BY score LIMIT 8
+                    """, (expression, doc_key)).fetchall() if expression else []
+                    if chunks:
+                        priority.append(locations[(doc_key, hits[0][0] if hits else 0)])
+                    ranked.extend((score, locations[(doc_key, ordinal)]) for ordinal, score in hits)
+                allowance = min(budget, 8000, max(1500, budget // max(1, len(keys) - index)))
+                if sum(len(row[2]) + 1 for row in rows) <= allowance:
+                    chosen = rows
+                else:
+                    priority += [index for _, index in sorted(ranked)]
+                    priority += [locations[(rows[n][0], rows[n][1] + delta)] for n in list(priority)
+                                 for delta in (-1, 1) if (rows[n][0], rows[n][1] + delta) in locations]
+                    selected, size = set(), 0
+                    for position in priority:
+                        if position not in selected:
+                            length = len(rows[position][2]) + 1
+                            if size + length <= allowance:
+                                selected.add(position)
+                                size += length
+                    chosen = [rows[n] for n in sorted(selected)]
+                if not chosen:
+                    continue
+                excerpt = "\n".join(body for _, _, body in chosen)
+                budget -= len(excerpt)
+                output.append({"key": key, "title": source[0], "url": source[1], "project": source[2],
+                               "updated_at": source[3], "kind": source[4], "excerpt": excerpt,
+                               "coverage": "complete" if len(chosen) == len(rows) else "partial",
+                               "files": [{"title": title, "passages_read": sum(row[0] == doc_key for row in chosen),
+                                          "total_passages": count} for doc_key, (title, count) in totals.items()]})
+                if budget < 1400:
                     break
-            if len(sources) == limit:
-                break
-        return sources or self.search(query, limit=limit)
+        return output
 
     def count(self):
         with self.lock:

@@ -142,7 +142,7 @@ function safeNews(value) {
 
 function safeResearch(value) {
   if (!Array.isArray(value)) return [];
-  return value.slice(0, 14).filter((item) => item && typeof item.title === 'string' && typeof item.url === 'string'
+  return value.slice(0, 24).filter((item) => item && typeof item.title === 'string' && typeof item.url === 'string'
     && /^https:\/\/[^\s/]+/.test(item.url)).map((item) => ({ title: item.title.slice(0, 220),
       url: item.url.slice(0, 700), summary: String(item.summary || '').slice(0, 550), source: String(item.source || '').slice(0, 80) }));
 }

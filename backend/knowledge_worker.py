@@ -116,12 +116,15 @@ class Worker:
                     download = account.download_url(payload['download_url'])
                     if len(download.body) > 256 * 1024 * 1024:
                         raise ValueError('Arquivo excede a memória de trabalho de 256 MiB')
-                    def document_checkpoint(done, total):
-                        self.update(job, detail=f'Páginas/imagens: {done}/{total}', progress={
-                            'pages':done,'total':total,'last_processed':time.time()})
+                    def document_checkpoint(done, total, sections=None):
+                        # Publish completed pages immediately; resume at the next
+                        # page instead of rereading the entire prefix every turn.
+                        self.update(job, body=('[Leitura parcial: %s/%s páginas]\n' % (done,total) + '\n\n'.join(sections)) if sections else None,
+                            detail=f'Páginas/imagens: {done}/{total}', progress={
+                            'pages':done,'total':total,'sections': sections or [],'last_processed':time.time()})
                         if done < total and done - progress.get('pages',0) >= 5:
                             raise ContinueLater()
-                    body = extract_document(payload['filename'], download.body, visual, document_checkpoint)
+                    body = extract_document(payload['filename'], download.body, visual, document_checkpoint, progress)
                 detail = 'Texto e leitura visual extraídos; ambiguidades sinalizadas no conteúdo.'
             if not body.strip():
                 raise ValueError('Extração sem texto')

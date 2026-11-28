@@ -156,7 +156,7 @@ class KnowledgeStoreTest(unittest.TestCase):
         calls = []
         def complete(system, data):
             calls.append(data)
-            alias = next(item["id"] for item in data["catalog"] if item["title"] == "MÉTODO DE ENTRADA DCA")
+            alias = next(item[0] for item in data["catalog"] if item[1] == "MÉTODO DE ENTRADA DCA")
             return {"intent": "explain", "source_ids": [alias, "invented"], "queries": ["compras"]}
         result = research(self.store, [{"role": "user", "content": "Como distribuir as entradas?"}], complete)
         self.assertEqual([item["key"] for item in result["sources"]], ["7:document:4"])

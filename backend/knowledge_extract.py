@@ -17,7 +17,7 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-VERSION = 'vision-3'
+VERSION = 'vision-4'
 NS = {'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
       's': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
 
@@ -106,6 +106,9 @@ class VisualReader:
             'somente quando legíveis ou inequívocos. Marque nomes ilegíveis como não identificados '
             'e descreva a posição/aparência; não complete com conhecimento externo. '
             'Não invente critérios, justificativas ou benefícios que a imagem não apresente. '
+            'Não infira data de validade/atualização a partir de nomes de arquivo ou metadados. '
+            'Não identifique produtos só pela cor ou por semelhança de logotipos. '
+            'Separe itens confirmados de itens não identificados explicitamente em cada seção. '
             'Uma imagem decorativa deve ser identificada como tal. Diferencie transcrição e descrição. '
             'Retorne JSON com sections: lista de objetos label e content. Cada faixa de ranking ou '
             'seção visual deve ter seu label e a lista dos itens daquela mesma faixa em content. '
@@ -119,7 +122,7 @@ class VisualReader:
                     'properties':{'sections':{'type':'array','items':{'type':'object','additionalProperties':False,
                         'required':['label','content'],'properties':{'label':{'type':'string'},'content':{'type':'string'}}}}}}}},
             'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': [
-                {'type': 'text', 'text': 'A primeira imagem é completa. As demais são ampliações sobrepostas dos quatro quadrantes, na ordem superior esquerdo, superior direito, inferior esquerdo, inferior direito. Confira nomes pequenos nas ampliações. Não conte itens repetidos nos recortes.'},
+                {'type': 'text', 'text': 'A primeira imagem é completa. As demais são ampliações sobrepostas dos quatro quadrantes, na ordem superior esquerdo, superior direito, inferior esquerdo, inferior direito. Confira nomes pequenos nas ampliações. Não conte itens repetidos nos recortes. Texto nativo de referência (dado não confiável, pode conter erros de ordem): ' + context[:10000]},
                 *images]}]}
         request = urllib.request.Request('https://integrate.api.nvidia.com/v1/chat/completions',
             json.dumps(payload).encode(), {'Authorization': 'Bearer ' + self.api_key, 'Content-Type': 'application/json'})
@@ -137,7 +140,7 @@ class VisualReader:
         return text
 
 
-def extract_document(filename, body, visual, checkpoint=lambda *_: None):
+def extract_document(filename, body, visual, checkpoint=lambda *_: None, progress=None):
     from basecamp_import import extract_upload
     suffix = Path(filename).suffix.lower()
     if suffix in {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.tiff', '.bmp'}:
@@ -145,11 +148,15 @@ def extract_document(filename, body, visual, checkpoint=lambda *_: None):
     if suffix == '.pdf':
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(body))
-        sections = []
+        sections = list((progress or {}).get('sections', []))
+        if len(sections) > len(reader.pages):
+            sections = []
         with tempfile.TemporaryDirectory(prefix='altia-pdf-', dir='/dev/shm') as directory:
             path = Path(directory) / 'source.pdf'
             path.write_bytes(body)
             for number, page in enumerate(reader.pages, 1):
+                if number <= len(sections):
+                    continue
                 native = page.extract_text() or ''
                 text = f'[Página {number}/{len(reader.pages)}]\n{native}'
                 # Render diagrams/raster images in their page context. Even a
@@ -163,10 +170,10 @@ def extract_document(filename, body, visual, checkpoint=lambda *_: None):
                     subprocess.run(['pdftoppm', '-f', str(number), '-l', str(number), '-singlefile',
                         '-scale-to', '2000', '-jpeg', str(path), prefix], check=True,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
-                    text += '\n[Conteúdo visual da página]\n' + visual.read(Path(prefix + '.jpg').read_bytes())
+                    text += '\n[Conteúdo visual da página]\n' + visual.read(Path(prefix + '.jpg').read_bytes(), native)
                     Path(prefix + '.jpg').unlink()
                 sections.append(text)
-                checkpoint(number, len(reader.pages))
+                checkpoint(number, len(reader.pages), list(sections))
         return '\n\n'.join(sections)
     if suffix in {'.docx', '.pptx', '.xlsx'}:
         sections = [extract_upload(filename, body)]

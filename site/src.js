@@ -181,6 +181,11 @@ function createDocumentCards(documents) {
     const hint = document.createElement('small'); hint.textContent = item.kind === 'video' ? 'Vídeo · Assistir aqui' : 'PDF · Ler aqui';
     if (item.kind === 'video') {
       card.classList.add('video-document-card'); cover.classList.add('video-cover');
+      const poster = document.createElement('img');
+      poster.alt = ''; poster.loading = 'lazy'; poster.decoding = 'async';
+      poster.src = `/api/knowledge/video-covers/${item.id}`;
+      poster.addEventListener('error', () => poster.remove(), {once:true});
+      cover.prepend(poster);
       status.innerHTML = '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22"/><path d="m20 15 14 9-14 9Z"/></svg>';
     }
     card.append(cover, title, hint);
@@ -452,6 +457,7 @@ const agentDesktop = window.matchMedia('(min-width: 900px) and (pointer: fine)')
 function currentConversation() { return conversations.find((item) => item.id === activeId); }
 function isNerdMode() { return currentConversation()?.nerdMode ?? draftNerdMode; }
 function isAgentMode() { return agentDesktop.matches && (currentConversation()?.agentMode ?? draftAgentMode); }
+function ownsAgentWindow() { return agentDesktop.matches && (agentOwnerId ? agentOwnerId === activeId : isAgentMode()); }
 function nerdTopic() { return currentConversation()?.nerdTopic || draftNerdTopic; }
 
 function applyNerdModeUI() {
@@ -460,7 +466,8 @@ function applyNerdModeUI() {
   const topic = nerdTopic();
   site?.classList.toggle('nerd-mode', active);
   site?.classList.toggle('agent-mode', agent);
-  site?.classList.toggle('agent-session-open', agent && agentStarted);
+  const browserVisible = ownsAgentWindow() && agentStarted;
+  site?.classList.toggle('agent-session-open', browserVisible);
   document.documentElement.dataset.altAgentActive = agentStarted ? 'true' : 'false';
   const mascot = welcome?.querySelector('.welcome-character');
   if (mascot) {
@@ -473,11 +480,11 @@ function applyNerdModeUI() {
   if (agentShortcutStatus && !agent) agentShortcutStatus.hidden = true;
   if (agentIntro) agentIntro.hidden = !agent;
   if (agentWindow) {
-    agentWindow.hidden = !(agent && agentStarted);
+    agentWindow.hidden = !browserVisible;
     agentWindow.classList.remove('agent-window-inline');
     if (agentWindow.parentElement !== agentWindowHome) agentWindowHome?.append(agentWindow);
   }
-  if (agentDock) agentDock.hidden = !agentStarted || agent || Boolean(agentPipWindow && !agentPipWindow.closed);
+  if (agentDock) agentDock.hidden = !agentStarted || browserVisible || Boolean(agentPipWindow && !agentPipWindow.closed);
   const kicker = welcome?.querySelector('.welcome-kicker');
   const title = welcome?.querySelector('h1');
   const description = welcome?.querySelector(':scope > p');
@@ -1120,7 +1127,7 @@ function renderConversation() {
   } else {
     const fragment = document.createDocumentFragment();
     const seenDocuments = new Set();
-    conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode ? null : message.video, unseenDocuments(message.documents, seenDocuments))));
+    conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode || (message.mode === 'agent' && agentStarted && agentOwnerId === conversation.id) ? null : message.video, unseenDocuments(message.documents, seenDocuments))));
     chatMessages.append(fragment);
   }
   const work = conversationWork.get(activeId);
@@ -1425,7 +1432,7 @@ async function agentRequest(path, payload = {}, method = 'POST') {
   return data;
 }
 async function startAgentSession() {
-  if (agentStarted || !isAgentMode()) return;
+  if (agentStarted || !agentDesktop.matches) return;
   if (agentStartPromise) return agentStartPromise;
   agentStartPromise = (async () => {
     try {
@@ -1501,7 +1508,7 @@ async function refreshAgentWindow(force = false) {
     const shotKey = `${state.url}:${state.updated}`;
     if (!playing && state.url && state.url !== 'about:blank' && (force || shotKey !== agentLastShotKey)) {
       const imageUrl = `/api/agent/image?t=${Date.now()}`;
-      if (agentImage && isAgentMode()) agentImage.src = imageUrl;
+      if (agentImage && ownsAgentWindow()) agentImage.src = imageUrl;
       if (agentDockImage && !agentDock.hidden) agentDockImage.src = imageUrl;
       if (agentPipImage) agentPipImage.src = imageUrl;
       agentLastShotKey = shotKey;
@@ -1537,7 +1544,7 @@ function agentVideoUrl(video, seconds = 0) {
 }
 function syncAgentMediaSurface() {
   if (!agentCurrentVideo) return;
-  const surface = document.hidden && agentPipMedia ? 'pip' : isAgentMode() ? 'main' : 'dock';
+  const surface = document.hidden && agentPipMedia ? 'pip' : ownsAgentWindow() ? 'main' : 'dock';
   if (surface === agentMediaSurface) return;
   if (agentMediaPlayer) {
     try { agentPlaybackSeconds = Math.max(agentPlaybackSeconds, agentMediaPlayer.getCurrentTime() || 0); } catch { /* Player still loading. */ }
@@ -1594,7 +1601,7 @@ function showAgentMedia(value) {
   stopAgentMedia();
   agentCurrentVideo = video;
   agentCompanionChannel.postMessage({ type: 'media', video });
-  if (isAgentMode() && agentWindow) {
+  if (ownsAgentWindow() && agentWindow) {
     agentWindow.hidden = false;
     site?.classList.add('agent-session-open');
   }
@@ -2482,7 +2489,7 @@ chatForm?.addEventListener('submit', async (event) => {
   persist();
   renderHistory();
   const conversationId = conversation.id;
-  const agentForRequest = conversation.agentMode && agentDesktop.matches;
+  let agentForRequest = conversation.agentMode && agentDesktop.matches;
   if (agentForRequest) {
     agentOwnerId = conversationId;
     agentPipHasReply = false;
@@ -2500,11 +2507,11 @@ chatForm?.addEventListener('submit', async (event) => {
   try {
     const context = conversationMessages(conversation.messages);
     if (agentForRequest) { stopAgentMedia(); await startAgentSession(); }
-    const response = await fetch(agentForRequest ? '/api/agent/run' : '/api/chat', {
+    let response = await fetch(agentForRequest ? '/api/agent/run' : '/api/chat', {
       method: 'POST',
       signal: work.controller.signal,
       headers: { 'Content-Type': 'application/json' },
-      body: agentForRequest ? JSON.stringify({ task: text, context: agentConversationContext(conversation) }) : JSON.stringify({ messages: context, stream: true, knowledge_state: previousAnswer?.knowledgeState || null, reading_document: conversation.readingDocument || null, nerd_mode: conversation.nerdMode, nerd_topic: conversation.nerdTopic, chat_context: {
+      body: agentForRequest ? JSON.stringify({ task: text, context: agentConversationContext(conversation) }) : JSON.stringify({ messages: context, stream: true, browser_available: agentDesktop.matches, knowledge_state: previousAnswer?.knowledgeState || null, reading_document: conversation.readingDocument || null, nerd_mode: conversation.nerdMode, nerd_topic: conversation.nerdTopic, chat_context: {
         mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.newsContext || previousAnswer?.news || [] : [],
         nerd_query: previousMode === 'nerd' ? previousAnswer?.nerdQuery || '' : '',
         pool_request: previousMode === 'pool' || previousMode === 'historical_pool' ? previousAnswer?.poolRequest || null : null,
@@ -2518,7 +2525,7 @@ chatForm?.addEventListener('submit', async (event) => {
           metrics: previousPool.simulation.metrics, assumptions: previousPool.simulation.assumptions
         } } : {}) })
     });
-    const data = await readChatResponse(response, delta => {
+    let data = await readChatResponse(response, delta => {
       work.partial += delta;
       if (work.controller.signal.aborted) return;
       pending.classList.remove('message-pending');
@@ -2534,6 +2541,22 @@ chatForm?.addEventListener('submit', async (event) => {
       live.textContent = work.partial;
       if (activeId === conversationId) chatMessages.scrollTop = chatMessages.scrollHeight;
     });
+    if (response.ok && agentDesktop.matches && typeof data?.agent_request?.task === 'string') {
+      if (work.controller.signal.aborted) return;
+      agentForRequest = true;
+      agentOwnerId = conversationId;
+      agentPipHasReply = false;
+      agentDockSpeech.textContent = 'Estou explorando o que você pediu… 🔎';
+      const status = pending.querySelector('.message-body p');
+      if (status) status.textContent = 'Navegando e preparando o conteúdo…';
+      stopAgentMedia();
+      await startAgentSession();
+      applyNerdModeUI();
+      response = await fetch('/api/agent/run', {method:'POST', signal:work.controller.signal,
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({task:data.agent_request.task.slice(0,1500), context:agentConversationContext(conversation)})});
+      data = await readChatResponse(response, () => {});
+    }
     if (!data || typeof data !== 'object') {
       throw new Error(response.status >= 500
         ? 'A Alt-IA está temporariamente indisponível. Tente novamente em instantes.'

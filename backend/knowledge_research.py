@@ -16,9 +16,10 @@ Para perguntas amplas, cubra perspectivas complementares e projetos pertinentes.
 investigue todos os lados. Inclua fontes de processos, contexto e aplicações quando relevantes.
 Livros de terceiros e materiais de referência não são automaticamente políticas da empresa.
 Não confunda a empresa Altside com a ferramenta de simulação Alt-IA.
-Retorne SOMENTE JSON: {"intent":"explain|simulate|other", "needs_knowledge":true,
+Retorne SOMENTE JSON: {"intent":"explain|simulate|browser|other", "needs_knowledge":true,
 "question":"pedido autossuficiente interpretado", "depth":"focused|analysis", "source_ids":["IDs exatos do catálogo"],
-"queries":["até quatro buscas curtas complementares com sinônimos e termos corrigidos"]}.
+"queries":["até quatro buscas curtas complementares com sinônimos e termos corrigidos"],
+"web_query":"busca pública autossuficiente, ou vazio quando desnecessária"}.
 Selecione até 12 fontes, em ordem de relevância. As prévias dos resultados locais ajudam a verificar a cobertura
 na mesma etapa: descarte coincidências irrelevantes e escolha fontes complementares no catálogo.
 Resolva referências como 'a segunda', 'essa', 'sim' a partir da última pergunta e da ordem das opções na conversa.
@@ -33,6 +34,17 @@ pools, lending ou risco. simulate só quando a pessoa pede calcular/montar uma p
 depth=focused para uma continuação pontual, escolha de opção, pedido de arquivo/vídeo ou explicação
 curta de um ponto. depth=analysis para comparações, visão ampla, cálculos, decisões ou análise detalhada.
 Não responda à pergunta nesta etapa nem use afirmações anteriores do assistente como prova documental.
+browser_available=true significa que o chat pode acionar o navegador da Alt-IA. Use intent=browser
+e needs_knowledge=false quando a pessoa pedir abrir/navegar/interagir com um site externo ou reproduzir
+vídeos/músicas externos, inclusive continuações ('agora outro da banda X'). question deve conter a tarefa
+autossuficiente. Explicar um assunto, mencionar YouTube, citar um comando ou pedir para NÃO abrir não
+é autorização para navegar. Abrir um PDF/vídeo do repositório interno continua sendo explain.
+No catálogo compacto cada linha é [id, título, projeto, pai]; projects traduz os códigos de projeto.
+O chat principal também pesquisa a internet, inclusive no celular. Preencha web_query quando a pessoa
+pedir pesquisa pública, notícias, informações atuais, confirmação externa ou comparação com o cenário atual.
+Pode consultar a base interna e a web no mesmo pedido. Não use web_query para abrir/tocar conteúdo (browser).
+Use somente termos públicos nessa busca: nunca copie trechos, dados pessoais ou estratégias internas.
+Para análise dos arquivos internos sem pedido de atualização externa, web_query vazio.
 """
 
 
@@ -41,7 +53,7 @@ def clean_list(value, limit, length):
         if isinstance(value, list) else []
 
 
-def research(store, messages, complete, previous=None, reading_document=None):
+def research(store, messages, complete, previous=None, reading_document=None, browser_available=False):
     """One semantic planning call with local candidates and the entire compact catalog.
 
     Sources are always reread from the current encrypted snapshot. The compact
@@ -69,12 +81,12 @@ def research(store, messages, complete, previous=None, reading_document=None):
                 candidates.append({"id": reverse[hit["key"]], "excerpt": hit["excerpt"][:650]})
     discussion_keys = {item['id'] for item in catalog if item['kind'] in {'comment', 'card', 'checkin', 'todo', 'schedule'}}
     discussion_keys.update(item['id'] for item in catalog if item.get('parent_id') in discussion_keys)
-    compact = [{"id": reverse[item["id"]], "title": item["title"], "project": item["project"],
-                "preview": item["preview"][:100],
-                **({"parent": reverse[item["parent_id"]]} if item.get("parent_id") in reverse else {})}
+    projects = {name: f'P{n}' for n, name in enumerate(dict.fromkeys(item['project'] for item in catalog), 1)}
+    compact = [[reverse[item['id']], item['title'], projects[item['project']], reverse.get(item.get('parent_id'), '')]
                for item in catalog if item['id'] not in discussion_keys
                or item['id'] in seen or item['id'] in previous_keys]
-    payload = {"conversation": conversation, "catalog": compact, "candidates": candidates[:8],
+    payload = {"conversation": conversation, "catalog": compact, "projects": {v:k for k,v in projects.items()},
+               "browser_available": browser_available, "candidates": candidates[:8],
                "previous_research": {"question": str(previous.get("question", ""))[:1200],
                                      "source_ids": [reverse[key] for key in previous_keys]},
                "reading_document": reading_document}
@@ -93,9 +105,10 @@ def research(store, messages, complete, previous=None, reading_document=None):
             raise ValueError("Plano inválido")
         result["depth"] = "focused" if plan.get("depth") == "focused" else "analysis"
         intent = plan.get("intent")
-        result["intent"] = intent if intent in {"explain", "simulate", "other"} else "other"
+        result["intent"] = intent if intent in {"explain", "simulate", "other"} or intent == 'browser' and browser_available else "other"
         result["question"] = str(plan.get("question") or question)[:1200]
-        if plan.get("needs_knowledge") is False:
+        result['web_query'] = str(plan.get('web_query') or '')[:350]
+        if plan.get("needs_knowledge") is False or result['intent'] == 'browser':
             result["status"] = "not_needed"
             return result
         keys = [aliases.get(key, key) for key in clean_list(plan.get("source_ids"), 12, 200)]
@@ -141,6 +154,14 @@ Transcrições automáticas podem errar nomes/números. Quadros amostrados não 
 Relacione o que está nas imagens, nas páginas e nas falas com os demais documentos. Responda com
 explicações úteis ao consultor, incluindo condições de aplicação e perguntas de aprofundamento.
 Datas de atualização ajudam a comparar versões, mas não provam vigência. Não trate uma referência
+de data no nome de arquivo como data oficial de atualização de ranking, estratégia ou política.
+Descrições de cor/aparência e nomes não identificados NÃO são identidades confirmadas. Não os
+apresente como produtos recomendados nem complete nomes, taxas, benefícios ou critérios por suposição.
+Quando parte da imagem estiver ilegível, apresente os itens legíveis com sua categoria documentada
+e explique objetivamente quais itens faltam identificar. Nunca promova uma incerteza a fato.
+Uma data de upload, captura de tela ou comentário não estabelece a validade atual de benefícios.
+Não atribua informações de conhecimento geral ao arquivo ou à empresa.
+Não trate uma referência
 externa como política oficial. Quando houver conflito, exponha a divergência e suas consequências.
 Notícias e comentários são registros datados: diferencie fatos noticiados, perguntas, opiniões,
 respostas e decisões confirmadas. Uma resposta em discussão não vira política oficial automaticamente.

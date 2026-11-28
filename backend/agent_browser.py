@@ -232,7 +232,8 @@ def choose_action(task, snapshot, steps, api_key, search_results=None, context=N
         if attempt:
             messages.append({"role": "user", "content": "Escolha a próxima ação e responda apenas um objeto JSON válido."})
         body = json.dumps({"model": MODEL, "messages": messages,
-            "max_tokens": 950, "temperature": 0.1, "reasoning_effort": "medium", "stream": False}).encode()
+            "max_tokens": 950, "temperature": 0.1, "chat_template_kwargs": {"enable_thinking": False},
+            "response_format": {"type":"json_object"}, "stream": False}).encode()
         request = urllib.request.Request(ENDPOINT, body, {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(request, timeout=65) as upstream:
             model_result = json.load(upstream)
@@ -261,7 +262,7 @@ def run(task, session_id, api_key, context=None):
     searches = 0
     reads = 0
     def media_result(video, commentary="", speech=""):
-        spoken = generate_speech(task, video, search_results, snapshot, api_key) or str(speech or "").strip()[:220]
+        spoken = str(speech or '').strip()[:220] or generate_speech(task, video, search_results, snapshot, api_key)
         return selected_media(video, steps, commentary, spoken)
     if requested_video(task) and re.search(r"\b(?:essa|esse|aberta|aberto|atual)\b", task, re.I):
         current_video = youtube_media(snapshot.get("url", ""), snapshot.get("title", ""), task)

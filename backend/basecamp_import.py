@@ -190,6 +190,8 @@ def import_video(item, record, store):
     store.put_video(record["key"], item.get("filename") or record["title"], item["download_url"],
                     mime or {".webm": "video/webm", ".mov": "video/quicktime"}.get(suffix, "video/mp4"),
                     item.get("byte_size", 0))
+    if item.get('thumbnail_url'):
+        store.put_video_preview(record['key'], item['thumbnail_url'])
     return True
 
 

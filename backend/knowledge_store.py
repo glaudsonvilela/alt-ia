@@ -76,6 +76,17 @@ def decrypt(key, ciphertext):
 
 
 def chunk_text(text, size=1400, overlap=180):
+    # Never merge different pages/time intervals into an unlabeled passage.
+    # Repeat the origin on long pages so later chunks retain their provenance.
+    boundaries = list(re.finditer(r'(?m)^\[(?:Página \d+/\d+|Vídeo \d{2}:\d{2}:\d{2}[^\]\n]*)\]', text))
+    if boundaries:
+        output = chunk_text(text[:boundaries[0].start()], size, overlap)
+        for index, match in enumerate(boundaries):
+            end = boundaries[index+1].start() if index+1 < len(boundaries) else len(text)
+            label = match.group(0)
+            parts = chunk_text(text[match.end():end], max(300,size-len(label)-1), overlap)
+            output.extend(label+' '+part for part in (parts or ['']))
+        return output
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return []
@@ -168,6 +179,9 @@ class KnowledgeStore:
                 digest TEXT PRIMARY KEY, body TEXT NOT NULL
             )""")
             db.execute('CREATE TABLE IF NOT EXISTS source_links (child_key TEXT PRIMARY KEY, parent_key TEXT NOT NULL)')
+            db.execute('CREATE INDEX IF NOT EXISTS chunks_source_ordinal ON chunks(source_key,ordinal)')
+            db.execute('CREATE INDEX IF NOT EXISTS links_parent ON source_links(parent_key)')
+            db.execute('CREATE TABLE IF NOT EXISTS video_previews (source_key TEXT PRIMARY KEY, url TEXT NOT NULL)')
             self.db = db
             self.signature = signature
             if old is not None:
@@ -198,6 +212,7 @@ class KnowledgeStore:
         self.db.execute('DELETE FROM source_links WHERE child_key=?', (key,))
         self.db.execute("DELETE FROM content_jobs WHERE source_key=?", (key,))
         self.db.execute("DELETE FROM video_files WHERE source_key=?", (key,))
+        self.db.execute('DELETE FROM video_previews WHERE source_key=?', (key,))
         self.db.execute("DELETE FROM document_files WHERE source_key=?", (key,))
         self.db.execute("DELETE FROM chunks WHERE source_key=?", (key,))
         self.db.execute("DELETE FROM sources WHERE source_key=?", (key,))
@@ -291,6 +306,20 @@ class KnowledgeStore:
             if self.db.execute("SELECT 1 FROM sources WHERE source_key=?", (key,)).fetchone():
                 self.db.execute("INSERT OR REPLACE INTO video_files VALUES (?,?,?,?,?,?)",
                     (identifier, key, filename[:240], download_url, mime, max(0, int(byte_size or 0))))
+
+    def put_video_preview(self, key, url):
+        from knowledge_preview import preview_origin
+        preview_origin(url)
+        with self.lock, self.db:
+            self.db.execute('INSERT OR REPLACE INTO video_previews VALUES (?,?)', (key,url))
+
+    def get_video_preview(self, identifier):
+        if not isinstance(identifier,str) or not re.fullmatch(r'[a-f0-9]{64}',identifier):
+            return None
+        self._reload()
+        with self.lock:
+            row = self.db.execute('SELECT p.url FROM video_previews p JOIN video_files f ON f.source_key=p.source_key JOIN sources s ON s.source_key=f.source_key WHERE f.id=?', (identifier,)).fetchone()
+        return row[0] if row else None
 
     def put_remote_pdf(self, key, filename, download_url, byte_size):
         from knowledge_video import api_download_url

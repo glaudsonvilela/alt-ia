@@ -63,6 +63,7 @@ export function openKnowledgePlayer(dialog, item, close) {
     if (document.fullscreenElement === dialog) void document.exitFullscreen().catch(() => {});
   }, { once: true });
   dialog.showModal(); update();
+  video.poster = `/api/knowledge/video-covers/${item.id}`;
   video.src = `/api/knowledge/videos/${item.id}`;
   video.play().catch(() => { status.textContent = 'Toque em reproduzir para começar.'; status.hidden = false; });
 }

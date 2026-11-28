@@ -13,6 +13,7 @@ import secrets
 import sqlite3
 import tempfile
 import threading
+import unicodedata
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -20,7 +21,16 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 MAGIC = b"ALTIA-KB-1\0"
 WORD = re.compile(r"[^\W_]{3,}", re.UNICODE)
-STOP = {"para", "como", "qual", "quais", "sobre", "mais", "essa", "esse", "isso", "uma", "com", "que", "dos", "das", "por", "the", "and"}
+STOP = {"para", "como", "qual", "quais", "sobre", "mais", "essa", "esse", "isso", "uma", "com", "que", "dos", "das", "por", "the", "and", "sao", "sua", "suas", "principais", "quero", "saber", "fale", "explique", "mostre", "descreva", "resuma", "resumo", "liste", "lista", "conte", "empresa"}
+
+
+def search_terms(query):
+    plain = unicodedata.normalize("NFKD", query.lower())
+    plain = "".join(char for char in plain if not unicodedata.combining(char))
+    terms = list(dict.fromkeys(word[:-1] if word.endswith("s") and len(word) > 5 else word
+                               for word in WORD.findall(plain) if word not in STOP))[:16]
+    focused = [word for word in terms if word not in {"altside", "altia"}]
+    return focused or terms
 
 
 def load_key(path):
@@ -201,10 +211,10 @@ class KnowledgeStore:
 
     def search(self, query, limit=5):
         self._reload()
-        terms = list(dict.fromkeys(t.lower() for t in WORD.findall(query) if t.lower() not in STOP))[:16]
+        terms = search_terms(query)
         if not terms:
             return []
-        expression = " OR ".join('"' + t.replace('"', '') + '"' for t in terms)
+        expression = " OR ".join('"' + term + '"*' if len(term) >= 6 else '"' + term + '"' for term in terms)
         with self.lock:
             rows = self.db.execute("""
                 SELECT s.title,s.url,s.project_name,c.body,bm25(chunks_fts,3.0,1.0) score
@@ -221,6 +231,35 @@ class KnowledgeStore:
             if len(output) >= limit:
                 break
         return output
+
+    def research(self, query, limit=7):
+        """Collect distinct, substantive documents for a broad company strategy question."""
+        normalized = search_terms(query)
+        company = "altside" in unicodedata.normalize("NFKD", query.lower())
+        if not (company and normalized == ["estrategia"]):
+            return self.search(query, limit=limit)
+        sources, seen, themes = [], set(), set()
+        for facet, quota in (("filosofia", 1), ("processo research", 1), ("estrategia", 5)):
+            added = 0
+            for item in self.search(facet, limit=30):
+                title = unicodedata.normalize("NFKD", item["title"].lower())
+                title = "".join(char for char in title if not unicodedata.combining(char))
+                words = WORD.findall(title)
+                theme = words[0][:4] if words else title[:4]
+                if (item["url"] in seen or title.endswith(".pdf") or "pastas" in title
+                        or "calendario" in title or "objetivos e metas" in title
+                        or len(item["excerpt"]) < (250 if facet == "estrategia" else 150)
+                        or (facet == "estrategia" and theme in themes)):
+                    continue
+                sources.append(item)
+                seen.add(item["url"])
+                themes.add(theme)
+                added += 1
+                if added == quota or len(sources) == limit:
+                    break
+            if len(sources) == limit:
+                break
+        return sources or self.search(query, limit=limit)
 
     def count(self):
         with self.lock:

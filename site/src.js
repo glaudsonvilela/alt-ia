@@ -142,7 +142,7 @@ function safeNews(value) {
 
 function safeResearch(value) {
   if (!Array.isArray(value)) return [];
-  return value.slice(0, 7).filter((item) => item && typeof item.title === 'string' && typeof item.url === 'string'
+  return value.slice(0, 14).filter((item) => item && typeof item.title === 'string' && typeof item.url === 'string'
     && /^https:\/\/[^\s/]+/.test(item.url)).map((item) => ({ title: item.title.slice(0, 220),
       url: item.url.slice(0, 700), summary: String(item.summary || '').slice(0, 550), source: String(item.source || '').slice(0, 80) }));
 }
@@ -941,7 +941,7 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
     author.textContent = 'Alt-IA';
     body.append(author);
   }
-  if (nerdMode && role === 'ai' && research?.length) renderNerdAnswer(body, text);
+  if (role === 'ai' && research?.length) renderNerdAnswer(body, text);
   else {
     const paragraph = document.createElement('p');
     paragraph.textContent = text;

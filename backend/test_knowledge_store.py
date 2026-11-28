@@ -4,7 +4,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from knowledge_store import KnowledgeStore
+from knowledge_store import KnowledgeStore, search_terms
 from basecamp_import import html_text, source_record, scan_project
 
 
@@ -52,6 +52,28 @@ class KnowledgeStoreTest(unittest.TestCase):
         wrong.write_bytes(os.urandom(32))
         with self.assertRaises(Exception):
             KnowledgeStore(self.path, wrong)
+
+    def test_strategy_overview_uses_documents_instead_of_folder_guide(self):
+        self.store.select("7", {"42"})
+        for number, title, body in (
+            (1, "GUIA PRÁTICO DAS PASTAS", "Este guia apresenta as pastas de estratégias da Altside. " * 8),
+            (2, "FILOSOFIA DA ALTSIDE", "A filosofia da Altside considera objetivos, horizonte e risco. " * 7),
+            (3, "PROCESSO DE RESEARCH", "A equipe compara hipóteses, fontes e cenários antes de recomendar. " * 7),
+            (4, "MÉTODO DE ENTRADA DCA", "A estratégia de entrada distribui compras no tempo e observa risco. " * 7),
+            (5, "Objetivos e Metas", "A empresa discute estratégias em suas metas anuais. " * 8),
+        ):
+            self.store.upsert({"key": f"7:document:{number}", "account_id": "7", "project_id": "42",
+                "project_name": "Research", "title": title, "url": f"https://3.basecamp.com/doc/{number}",
+                "kind": "document", "updated_at": "2026-11-28", "body": body})
+        self.store.save()
+        self.assertEqual(search_terms("Quais as estratégias da Altside?"), ["estrategia"])
+        self.assertEqual(search_terms("Quero saber as estratégias da Altside"), ["estrategia"])
+        titles = [item["title"] for item in self.store.research("Quais as estratégias da Altside?")]
+        self.assertIn("FILOSOFIA DA ALTSIDE", titles)
+        self.assertIn("PROCESSO DE RESEARCH", titles)
+        self.assertIn("MÉTODO DE ENTRADA DCA", titles)
+        self.assertNotIn("GUIA PRÁTICO DAS PASTAS", titles)
+        self.assertNotIn("Objetivos e Metas", titles)
 
     def test_snapshot_reload_across_request_threads(self):
         self.store.select("7", {"42"})

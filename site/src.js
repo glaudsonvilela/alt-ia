@@ -2,6 +2,7 @@ import { ConversationWork, unseenDocuments } from './conversation-work.js';
 import { readChatResponse } from './chat-stream.js';
 import { openKnowledgePlayer } from './knowledge-player.js';
 import { conversationMessages } from './chat-context.js';
+import { createThinkingGame } from './thinking-game.js';
 import { animate, stagger } from 'motion';
 import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
 
@@ -2499,6 +2500,8 @@ chatForm?.addEventListener('submit', async (event) => {
     : /\b(news|not[ií]cias?|manchetes)\b/i.test(text) ? 'Buscando notícias…' : 'Pensando…', null, '', [], null, [], conversation.nerdMode);
   pending.classList.add('message-pending');
   const work = conversationWork.start(conversationId, pending);
+  const thinkingGame = createThinkingGame(work.controller.signal);
+  pending.querySelector('.message-body').append(thinkingGame.element);
   renderHistory();
   syncComposerWork();
   if (isFirstMessage) await revealFirstMessage(conversationId);
@@ -2528,6 +2531,7 @@ chatForm?.addEventListener('submit', async (event) => {
     let data = await readChatResponse(response, delta => {
       work.partial += delta;
       if (work.controller.signal.aborted) return;
+      thinkingGame.destroy();
       pending.classList.remove('message-pending');
       let live = pending.querySelector('.streaming-answer');
       if (!live) {
@@ -2599,6 +2603,7 @@ chatForm?.addEventListener('submit', async (event) => {
     conversationWork.finish(conversationId, work, message);
     if (activeId === conversationId) renderConversation();
   } finally {
+    thinkingGame.destroy();
     if (conversationWork.busy(conversationId)) conversationWork.finish(conversationId, work);
     renderHistory();
     syncComposerWork();

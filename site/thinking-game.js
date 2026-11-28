@@ -19,17 +19,40 @@ export function createThinkingGame(signal) {
   let y = ground - size, velocity = 0, score = 0, distance = 0;
   let obstacles = [], spawn = 0.85, running = false, dead = false;
   let visible = false, disposed = false, frame = 0, last = 0;
+  let appearanceTime = 0, nextPaint = 0;
+  const frameInterval = 1000 / 60;
+  const palette = [[249,163,179], [244,154,118], [181,134,207], [119,167,235], [102,203,169]];
+  // Precompute the geometry once. Each frame only interpolates 48 points.
+  const outlines = [2, 4, 1.5, 3].map(exponent => Array.from({length:48}, (_, i) => {
+    const angle = i * Math.PI * 2 / 48;
+    const c = Math.cos(angle), s = Math.sin(angle);
+    const radius = 15 / Math.pow(Math.abs(c) ** exponent + Math.abs(s) ** exponent, 1 / exponent);
+    return [radius * c, radius * s];
+  }));
+
+  function drawBody() {
+    const phase = appearanceTime / 1.5;
+    const index = Math.floor(phase);
+    const fraction = phase - index;
+    const blend = fraction * fraction * (3 - 2 * fraction);
+    const from = outlines[index % outlines.length], to = outlines[(index + 1) % outlines.length];
+    const first = palette[index % palette.length], second = palette[(index + 1) % palette.length];
+    ctx.fillStyle = `rgb(${first.map((v, i) => Math.round(v + (second[i] - v) * blend)).join(',')})`;
+    ctx.beginPath();
+    for (let i = 0; i < from.length; i++) {
+      const px = from[i][0] + (to[i][0] - from[i][0]) * blend;
+      const py = from[i][1] + (to[i][1] - from[i][1]) * blend;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+  }
 
   function rounded(px, py, w, h, radius, color) {
     ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(px, py, w, h, radius); ctx.fill();
   }
   function draw() {
     ctx.clearRect(0, 0, width, height);
-    ctx.strokeStyle = '#b586cf12'; ctx.lineWidth = 1;
-    for (let i = 0; i < 8; i++) {
-      const gx = i * 70 - distance * 0.15 % 70;
-      ctx.beginPath(); ctx.moveTo(gx, 18); ctx.lineTo(gx, ground); ctx.stroke();
-    }
+    ctx.lineWidth = 1;
     ctx.strokeStyle = '#b586cf38';
     ctx.beginPath(); ctx.moveTo(16, ground + 1); ctx.lineTo(width - 16, ground + 1); ctx.stroke();
     for (let i = 0; i < 7; i++) {
@@ -40,7 +63,7 @@ export function createThinkingGame(signal) {
     ctx.beginPath(); ctx.ellipse(x + 15, ground + 2, 17 - (ground - size - y) * 0.08, 3, 0, 0, Math.PI * 2); ctx.fill();
     ctx.save(); ctx.translate(x + size / 2, y + size / 2);
     ctx.rotate(Math.max(-0.14, Math.min(0.14, velocity / 2500)));
-    rounded(-15, -15, size, size, 11, dead ? '#b586cf' : '#f9a3b3');
+    drawBody();
     for (const eye of [-7, 6]) {
       ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(eye, -2, 6, 9, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#24202d'; ctx.beginPath(); ctx.ellipse(eye + 1.5, 0, 2.8, dead ? 1.4 : 4.5, 0, 0, Math.PI * 2); ctx.fill();
@@ -59,8 +82,12 @@ export function createThinkingGame(signal) {
   function tick(now) {
     frame = 0;
     if (disposed || !running || !visible || document.hidden) { last = 0; return; }
+    // Follow the display clock, capped at 60 paints/s on high-refresh screens.
+    if (now + 0.75 < nextPaint) { schedule(); return; }
     const dt = last ? Math.min((now - last) / 1000, 0.035) : 0;
     last = now;
+    nextPaint = Math.max(nextPaint + frameInterval, now);
+    appearanceTime += dt;
     const speed = Math.min(190 + score * 5, 260);
     distance += speed * dt;
     velocity += 1150 * dt; y = Math.min(ground - size, y + velocity * dt);
@@ -94,7 +121,7 @@ export function createThinkingGame(signal) {
     if (disposed) return;
     if (!running) {
       obstacles = []; score = 0; distance = 0; spawn = 0.85; y = ground - size;
-      running = true; dead = false; scoreLabel.value = '00';
+      running = true; dead = false; last = 0; nextPaint = 0; scoreLabel.value = '00';
       hint.textContent = 'Toque ou pressione espaço / ↑ para pular';
       button.setAttribute('aria-label', 'Pular obstáculo');
     }
@@ -107,7 +134,7 @@ export function createThinkingGame(signal) {
     }
   }
   function visibility() {
-    cancelAnimationFrame(frame); frame = 0; last = 0; schedule();
+    cancelAnimationFrame(frame); frame = 0; last = 0; nextPaint = 0; schedule();
   }
   const observer = new IntersectionObserver(entries => {
     visible = entries[0].isIntersecting; visibility();

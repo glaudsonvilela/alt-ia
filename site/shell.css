@@ -488,7 +488,7 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 @media(prefers-reduced-motion:reduce){.history-row.is-responding .history-logo svg,.history-row.is-responding .history-logo::after{animation:none}.history-row.is-responding .history-logo::after{background:#c49ae7}}
 
 /* Waiting-room runner: quiet until the person chooses to play. */
-.thinking-game{width:420px;max-width:100%;box-sizing:border-box;margin-top:16px;padding:12px 14px 10px;border:1px solid #b586cf30;border-radius:16px;background:linear-gradient(145deg,#292530,#1d1c24);overflow:hidden;contain:content}
+.thinking-game{width:420px;max-width:100%;box-sizing:border-box;margin-top:16px;padding:12px 14px 10px;border:0;border-radius:0;background:transparent;box-shadow:none;overflow:hidden;contain:content}
 .thinking-game-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;line-height:1.4;color:#c5b8d1;letter-spacing:.02em}
 .thinking-game-heading output{font-size:12px;color:#e5c7f4;font-variant-numeric:tabular-nums;min-width:24px;text-align:right}
 .thinking-game-play{display:block;width:100%;margin:4px 0 0;padding:0;background:transparent;border:0;border-radius:10px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}

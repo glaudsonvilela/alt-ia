@@ -1,2 +1,4 @@
 google-auth[requests]>=2.0,<3
 cryptography>=43,<51
+basecamp-sdk==0.39.0
+pypdf>=7,<8

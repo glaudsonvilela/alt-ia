@@ -84,3 +84,21 @@ No **Modo Agente**, a janela do navegador fica ao lado do chat. A captura enviad
 ```bash
 python3 -m unittest discover -s backend -p 'test_*.py' -v
 ```
+# Basecamp: conhecimento interno
+
+O importador em `backend/basecamp_import.py` usa a autorização por dispositivo da API oficial do Basecamp, com escopo de leitura e renovação para sincronizações futuras. Ele não copia cookies do navegador. A autorização e a base SQLite com índice de busca são arquivos criptografados com AES-GCM; a chave de 32 bytes deve ficar em um caminho privado e separado da base. O servidor só consulta essa base para contas do domínio definido em `ALT_IA_KNOWLEDGE_ALLOWED_DOMAINS` (padrão: `altside.com`).
+
+No servidor, instale `backend/requirements.txt`, defina `ALT_IA_KNOWLEDGE_KEY_FILE` e execute:
+
+```sh
+python backend/basecamp_import.py --state-dir /var/lib/alt-ia/knowledge init
+python backend/basecamp_import.py --state-dir /var/lib/alt-ia/knowledge authorize
+python backend/basecamp_import.py --state-dir /var/lib/alt-ia/knowledge accounts
+python backend/basecamp_import.py --state-dir /var/lib/alt-ia/knowledge list --account ID_DA_CONTA
+python backend/basecamp_import.py --state-dir /var/lib/alt-ia/knowledge select --account ID_DA_CONTA ID_DO_PROJETO [OUTROS_IDS...]
+python backend/basecamp_import.py --state-dir /var/lib/alt-ia/knowledge sync --account ID_DA_CONTA
+```
+
+`authorize` mostra um endereço e código para a pessoa aprovar na própria conta. `select` determina quais projetos entram na base e remove conteúdo de projetos desmarcados. `sync` visita Docs & Files (pastas, documentos e uploads de texto/PDF/DOCX) e Message Boards dos projetos escolhidos, atualiza itens alterados e remove os que não estão mais lá. Imagens e PDFs digitalizados sem texto são reportados como itens sem texto pesquisável. A importação não grava o conteúdo em logs; o texto só é enviado à NVIDIA quando recuperado para responder a uma pergunta pertinente.
+
+Para ativar a consulta no servidor, defina `ALT_IA_KNOWLEDGE_DB=/var/lib/alt-ia/knowledge/knowledge.enc` e `ALT_IA_KNOWLEDGE_KEY_FILE=/run/secrets/alt-ia-knowledge-key`. Mantenha o diretório de dados e o arquivo da chave acessíveis apenas ao serviço. A API não deve expor esses arquivos pela página web. Se a autorização for revogada no Basecamp, a sincronização para; para descartar também a cópia local, remova a seleção e a base criptografada.

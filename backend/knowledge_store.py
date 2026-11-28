@@ -13,6 +13,8 @@ import secrets
 import sqlite3
 import tempfile
 import threading
+import time
+from collections import OrderedDict
 import unicodedata
 from pathlib import Path
 
@@ -97,6 +99,7 @@ class KnowledgeStore:
         self.path = Path(path)
         self.key = load_key(key_file)
         self.lock = threading.RLock()
+        self.pdf_cache = OrderedDict()
         self.signature = None
         self.db = None
         self._reload(force=True)
@@ -257,13 +260,28 @@ class KnowledgeStore:
                 JOIN sources s ON s.source_key=f.source_key WHERE f.id=?""", (identifier,)).fetchone()
         if not row or not re.fullmatch(r"[a-f0-9]{64}", row[1]):
             return None
-        try:
-            body = decrypt(self.key, (self.path.parent / "documents" / (row[1] + ".enc")).read_bytes())
-        except FileNotFoundError:
-            return None
-        if hashlib.sha256(body).hexdigest() != row[1]:
-            raise ValueError("PDF inconsistente")
-        return row[0], body
+        # Range requests often read the same file several times. Decrypt once,
+        # retain at most 64 MiB for two minutes, and validate source access above
+        # on every request (including cache hits).
+        with self.lock:
+            now = time.monotonic()
+            for digest, (expires, _) in list(self.pdf_cache.items()):
+                if expires <= now:
+                    del self.pdf_cache[digest]
+            cached = self.pdf_cache.get(row[1])
+            if cached:
+                self.pdf_cache.move_to_end(row[1])
+                return row[0], cached[1]
+            try:
+                body = decrypt(self.key, (self.path.parent / "documents" / (row[1] + ".enc")).read_bytes())
+            except FileNotFoundError:
+                return None
+            if hashlib.sha256(body).hexdigest() != row[1]:
+                raise ValueError("PDF inconsistente")
+            self.pdf_cache[row[1]] = (now + 120, body)
+            while sum(len(item[1]) for item in self.pdf_cache.values()) > 64 * 1024 * 1024:
+                self.pdf_cache.popitem(last=False)
+            return row[0], body
 
     def put_video(self, key, filename, download_url, mime, byte_size):
         from knowledge_video import api_download_url

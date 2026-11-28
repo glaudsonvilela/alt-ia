@@ -2,23 +2,57 @@ import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 
 GlobalWorkerOptions.workerSrc = '/pdf.worker.js?v=1';
 
+// Reuse the same parsed document for its cover and reader. Fetch ranges on
+// demand instead of downloading every page before displaying the first one.
+const pdfs = new Map();
+function trimPdfs() {
+  for (const [id, entry] of pdfs) {
+    if (pdfs.size <= 3) break;
+    if (!entry.users) { clearTimeout(entry.timer); pdfs.delete(id); void entry.task.destroy(); }
+  }
+}
 async function loadPdf(id, signal) {
   if (!/^[a-f0-9]{64}$/.test(id)) throw new Error('Documento inválido.');
-  const response = await fetch(`/api/knowledge/documents/${id}`, { credentials: 'same-origin', cache: 'no-store', signal });
-  if (!response.ok) throw new Error(response.status === 401 ? 'Entre na sua conta para ler este documento.' : 'Não foi possível abrir este documento agora.');
-  const data = new Uint8Array(await response.arrayBuffer());
   if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
-  const task = getDocument({ data, cMapUrl: '/pdf-assets/cmaps/', cMapPacked: true,
-    standardFontDataUrl: '/pdf-assets/standard_fonts/', wasmUrl: '/pdf-assets/wasm/', useWasm: false, isEvalSupported: false,
-    isOffscreenCanvasSupported: false, disableWorkerRendering: true,
-    enableXfa: false, stopAtErrors: false });
-  signal.addEventListener('abort', () => { void task.destroy(); }, { once: true });
-  return task.promise;
+  let entry = pdfs.get(id);
+  if (!entry) {
+    const task = getDocument({ url: `/api/knowledge/documents/${id}`, withCredentials: true,
+      disableStream: true, disableAutoFetch: true, rangeChunkSize: 524288,
+      cMapUrl: '/pdf-assets/cmaps/', cMapPacked: true,
+      standardFontDataUrl: '/pdf-assets/standard_fonts/', wasmUrl: '/pdf-assets/wasm/', useWasm: false, isEvalSupported: false,
+      isOffscreenCanvasSupported: false, disableWorkerRendering: true,
+      enableXfa: false, stopAtErrors: false });
+    entry = { task, users: 0, timer: null };
+    pdfs.set(id, entry);
+    task.promise.catch(() => { if (pdfs.get(id) === entry) pdfs.delete(id); });
+  }
+  clearTimeout(entry.timer);
+  entry.users++;
+  pdfs.delete(id); pdfs.set(id, entry);
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true; signal.removeEventListener('abort', release);
+    entry.users--;
+    if (!entry.users) {
+      entry.timer = setTimeout(() => {
+        if (pdfs.get(id) === entry && !entry.users) { pdfs.delete(id); void entry.task.destroy(); }
+      }, 120000);
+      trimPdfs();
+    }
+  };
+  signal.addEventListener('abort', release, { once: true });
+  try {
+    const pdf = await entry.task.promise;
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    return pdf;
+  } catch (error) { release(); throw error; }
 }
 
 // Share one decode per document, and paint cached covers synchronously when
 // the chat is rebuilt. The cache is memory-only and bounded to 24 covers.
-let coverQueue = Promise.resolve();
+const coverQueues = [Promise.resolve(), Promise.resolve()];
+let nextCoverQueue = 0;
 const covers = new Map();
 const pendingCovers = new Map();
 export function paintCachedCover(canvas, label, id) {
@@ -32,7 +66,8 @@ export function paintCachedCover(canvas, label, id) {
 export function renderCover(card, canvas, label, id) {
   if (paintCachedCover(canvas, label, id)) return Promise.resolve();
   if (!pendingCovers.has(id)) {
-    const work = coverQueue.catch(() => {}).then(async () => {
+    const lane = nextCoverQueue++ % coverQueues.length;
+    const work = coverQueues[lane].catch(() => {}).then(async () => {
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), 25000);
       try {
@@ -48,7 +83,7 @@ export function renderCover(card, canvas, label, id) {
       } finally { clearTimeout(timer); abort.abort(); }
     });
     pendingCovers.set(id, work);
-    coverQueue = work;
+    coverQueues[lane] = work;
     work.finally(() => pendingCovers.delete(id)).catch(() => {});
   }
   return pendingCovers.get(id).then(() => {

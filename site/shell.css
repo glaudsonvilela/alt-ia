@@ -476,3 +476,11 @@ body,.chat-form textarea{font-family:Geist,Arial,sans-serif}
 @media(max-width:600px){.media-controls{gap:8px;padding:10px 12px 14px}.media-controls [data-media=volume]{display:none}.media-time{font-size:11px}}
 
 .streaming-answer{white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* Same 24px mascot footprint; motion never shifts the conversation title. */
+.history-row.is-responding .history-logo{position:relative;opacity:1}
+.history-row.is-responding .history-logo svg{animation:history-mascot-hop 1.25s cubic-bezier(.45,0,.25,1) infinite;transform-origin:50% 85%}
+.history-row.is-responding .history-logo::after{content:"";position:absolute;left:6px;right:6px;bottom:-2px;height:2px;border-radius:50%;background:#c49ae766;animation:history-mascot-shadow 1.25s ease-in-out infinite}
+@keyframes history-mascot-hop{0%,100%{transform:translateY(0) scale(1.04,.96) rotate(-3deg)}45%{transform:translateY(-4px) scale(.96,1.04) rotate(5deg)}70%{transform:translateY(0) scale(1.08,.92) rotate(-3deg)}}
+@keyframes history-mascot-shadow{0%,70%,100%{transform:scaleX(1);opacity:.7}45%{transform:scaleX(.65);opacity:.3}}
+@media(prefers-reduced-motion:reduce){.history-row.is-responding .history-logo svg,.history-row.is-responding .history-logo::after{animation:none}.history-row.is-responding .history-logo::after{background:#c49ae7}}

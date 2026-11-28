@@ -1,3 +1,4 @@
+import { ConversationWork, unseenDocuments } from './conversation-work.js';
 import { readChatResponse } from './chat-stream.js';
 import { openKnowledgePlayer } from './knowledge-player.js';
 import { conversationMessages } from './chat-context.js';
@@ -155,7 +156,7 @@ function safeDocuments(value) {
     .slice(0, 3).map(item => ({ id: item.id, title: item.title.slice(0, 240), kind: item.kind })) : [];
 }
 let pdfReaderModule, loadedPdfReader;
-const loadPdfReader = () => pdfReaderModule ||= import(/* @vite-ignore */ '/pdf-reader.js?v=2').then(reader => (loadedPdfReader = reader)).catch(error => { pdfReaderModule = null; throw error; });
+const loadPdfReader = () => pdfReaderModule ||= import(/* @vite-ignore */ '/pdf-reader.js?v=3').then(reader => (loadedPdfReader = reader)).catch(error => { pdfReaderModule = null; throw error; });
 const pdfCoverObserver = new IntersectionObserver(entries => {
   for (const entry of entries) {
     if (!entry.isIntersecting) continue;
@@ -433,6 +434,7 @@ function readConversations() {
 }
 
 const conversations = readConversations();
+const conversationWork = new ConversationWork();
 let deletedHistory = [];
 try {
   const savedDeleted = JSON.parse(localStorage.getItem(deletedKey) || '[]');
@@ -613,7 +615,10 @@ function renderHistory() {
     button.type = 'button';
     button.className = 'history-item';
     button.setAttribute('aria-current', conversation.id === activeId ? 'page' : 'false');
-    button.title = conversation.title;
+    const busy = conversationWork.busy(conversation.id);
+    button.title = busy ? `${conversation.title} · Respondendo…` : conversation.title;
+    button.setAttribute('aria-label', button.title);
+    row.classList.toggle('is-responding', busy);
     const icon = createHistoryLogo(conversation.nerdMode, conversation.agentMode);
     const label = document.createElement('span');
     label.className = 'history-item-label';
@@ -660,6 +665,7 @@ function renderHistory() {
         [...historyNav.querySelectorAll('.history-action-delete')].find((item) => item.dataset.conversationId === conversation.id)?.focus();
         return;
       }
+      conversationWork.cancel(conversation.id);
       const index = conversations.findIndex((item) => item.id === conversation.id);
       if (index !== -1) conversations.splice(index, 1);
       queueHistoryDelete(conversation.id);
@@ -1113,9 +1119,13 @@ function renderConversation() {
     if (welcome) chatMessages.append(welcome);
   } else {
     const fragment = document.createDocumentFragment();
-  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode ? null : message.video, message.documents)));
+    const seenDocuments = new Set();
+    conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode ? null : message.video, unseenDocuments(message.documents, seenDocuments))));
     chatMessages.append(fragment);
   }
+  const work = conversationWork.get(activeId);
+  if (work?.node) chatMessages.append(work.node);
+  syncComposerWork();
   requestAnimationFrame(() => { chatMessages.scrollTop = conversation?.messages.length ? chatMessages.scrollHeight : 0; });
 }
 
@@ -1806,7 +1816,7 @@ document.querySelectorAll('[data-prompt]').forEach((suggestion) => {
 });
 
 document.querySelector('[data-action="news-daily"]')?.addEventListener('click', () => {
-  if (!chatInput || isSubmitting) return;
+  if (!chatInput || isSubmitting()) return;
   chatInput.value = 'Resumo das notícias de hoje';
   resizeComposer();
   chatForm?.requestSubmit();
@@ -1980,7 +1990,7 @@ document.querySelector('#wallet-dialog-close')?.addEventListener('click', () => 
 walletDialog?.addEventListener('click', (event) => { if (event.target === walletDialog) closeShortcutDialog(walletDialog); });
 walletForm?.addEventListener('submit', (event) => {
   event.preventDefault();
-  if (isSubmitting) return;
+  if (isSubmitting()) return;
   const network = walletNetwork.value;
   const address = walletAddress.value.trim();
   const valid = network === 'ethereum' ? /^0x[0-9a-fA-F]{40}$/.test(address)
@@ -2000,7 +2010,7 @@ walletForm?.addEventListener('submit', (event) => {
 
 lendingForm?.addEventListener('submit', (event) => {
   event.preventDefault();
-  if (isSubmitting || !lendingMarketData) return;
+  if (isSubmitting() || !lendingMarketData) return;
   const rows = (container, supply) => [...container.children].map((row) => {
     const inputs = row.querySelectorAll('input');
     const result = { asset: row.querySelector('select').value, amount: inputs[0].value.trim().replace(',', '.'), price: inputs[1].value.trim().replace(',', '.') };
@@ -2376,7 +2386,7 @@ for (const [button, edge] of [[poolFloorHandle, 'floor'], [poolCeilingHandle, 'c
 
 poolForm?.addEventListener('submit', (event) => {
   event.preventDefault();
-  if (isSubmitting) return showPoolError('Aguarde a resposta atual antes de enviar outra simulação.');
+  if (isSubmitting()) return showPoolError('Aguarde a resposta atual antes de enviar outra simulação.');
   const pool = selectedPool();
   const capital = poolCapital.value.trim().replace(',', '.');
   const ticks = Number(poolRange.value);
@@ -2413,7 +2423,12 @@ chatInput?.addEventListener('keydown', (event) => {
   }
 });
 
-let isSubmitting = false;
+function isSubmitting() { return conversationWork.busy(activeId); }
+function syncComposerWork() {
+  const busy = isSubmitting();
+  chatForm.querySelector('button[type="submit"]').disabled = busy;
+  chatMessages.setAttribute('aria-busy', String(busy));
+}
 async function revealFirstMessage(conversationId) {
   if (!welcome?.isConnected || activeId !== conversationId) {
     if (activeId === conversationId) renderConversation();
@@ -2442,7 +2457,7 @@ async function revealFirstMessage(conversationId) {
 chatForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const text = chatInput?.value.trim();
-  if (!text || isSubmitting) return;
+  if (!text || isSubmitting()) return;
   const simulationRequest = pendingSimulationRequest;
   pendingSimulationRequest = null;
   const walletRequest = pendingWalletRequest;
@@ -2473,24 +2488,21 @@ chatForm?.addEventListener('submit', async (event) => {
     agentPipHasReply = false;
     agentDockSpeech.textContent = 'Estou explorando o que você pediu… 🔎';
   }
-  isSubmitting = true;
-  chatForm.querySelector('button[type="submit"]').disabled = true;
-  chatMessages.setAttribute('aria-busy', 'true');
-  if (isFirstMessage) await revealFirstMessage(conversationId);
-  else renderConversation();
   const pending = createMessage('ai', agentForRequest ? 'Navegando e analisando a página…' : conversation.nerdMode ? 'Pesquisando fontes e analisando…' : walletRequest ? 'Consultando a wallet e organizando os dados…'
     : /\b(news|not[ií]cias?|manchetes)\b/i.test(text) ? 'Buscando notícias…' : 'Pensando…', null, '', [], null, [], conversation.nerdMode);
   pending.classList.add('message-pending');
-  if (activeId === conversationId) {
-    chatMessages.append(pending);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-  }
+  const work = conversationWork.start(conversationId, pending);
+  renderHistory();
+  syncComposerWork();
+  if (isFirstMessage) await revealFirstMessage(conversationId);
+  else renderConversation();
   let requestedConfig = null;
   try {
     const context = conversationMessages(conversation.messages);
     if (agentForRequest) { stopAgentMedia(); await startAgentSession(); }
     const response = await fetch(agentForRequest ? '/api/agent/run' : '/api/chat', {
       method: 'POST',
+      signal: work.controller.signal,
       headers: { 'Content-Type': 'application/json' },
       body: agentForRequest ? JSON.stringify({ task: text, context: agentConversationContext(conversation) }) : JSON.stringify({ messages: context, stream: true, knowledge_state: previousAnswer?.knowledgeState || null, reading_document: conversation.readingDocument || null, nerd_mode: conversation.nerdMode, nerd_topic: conversation.nerdTopic, chat_context: {
         mode: previousMode, news_topic: previousAnswer?.newsTopic || '', news: previousMode === 'news' ? previousAnswer?.newsContext || previousAnswer?.news || [] : [],
@@ -2506,10 +2518,9 @@ chatForm?.addEventListener('submit', async (event) => {
           metrics: previousPool.simulation.metrics, assumptions: previousPool.simulation.assumptions
         } } : {}) })
     });
-    let partial = '';
     const data = await readChatResponse(response, delta => {
-      partial += delta;
-      if (activeId !== conversationId || !pending.isConnected) return;
+      work.partial += delta;
+      if (work.controller.signal.aborted) return;
       pending.classList.remove('message-pending');
       let live = pending.querySelector('.streaming-answer');
       if (!live) {
@@ -2520,8 +2531,8 @@ chatForm?.addEventListener('submit', async (event) => {
         live = document.createElement('p'); live.className = 'streaming-answer';
         body.append(name, live);
       }
-      live.textContent = partial;
-      chatMessages.scrollTop = chatMessages.scrollHeight;
+      live.textContent = work.partial;
+      if (activeId === conversationId) chatMessages.scrollTop = chatMessages.scrollHeight;
     });
     if (!data || typeof data !== 'object') {
       throw new Error(response.status >= 500
@@ -2534,7 +2545,7 @@ chatForm?.addEventListener('submit', async (event) => {
     target.messages.push({ role: 'ai', text: data.reply, speech: typeof data.speech === 'string' ? data.speech.slice(0, 220) : '',
       simulation: safeSimulation(data.simulation), news: safeNews(data.news), wallet: safeWallet(data.wallet),
       knowledgeState: typeof data.knowledge_state === 'string' ? data.knowledge_state.slice(0, 12000) : '',
-      research: safeResearch(data.research), documents: safeDocuments(data.documents), video: safeVideo(data.video), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
+      research: safeResearch(data.research), documents: unseenDocuments(safeDocuments(data.documents), new Set(target.messages.flatMap(message => (message.documents || []).map(item => `${item.kind}:${item.id}`)))), video: safeVideo(data.video), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
       newsContext: safeNews(data.news_context || data.news),
       mode: ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd', 'agent'].includes(data.mode) ? data.mode : 'general',
       newsTopic: typeof data.news_topic === 'string' ? data.news_topic.slice(0, 30) : '',
@@ -2543,6 +2554,7 @@ chatForm?.addEventListener('submit', async (event) => {
       walletRequest: safeWalletRequest(data.wallet_request),
       scenarioToken: typeof data.scenario_token === 'string' ? data.scenario_token.slice(0, 12000) : '',
       followUp: typeof data.follow_up === 'string' ? data.follow_up.slice(0, 280) : '' });
+    conversationWork.finish(conversationId, work);
     target.updatedAt = Date.now();
     persist();
     renderHistory();
@@ -2557,17 +2569,16 @@ chatForm?.addEventListener('submit', async (event) => {
     if (data.input_request?.kind === 'pool') requestedConfig = data.input_request;
     if (data.input_request?.kind === 'lending') requestedConfig = data.input_request;
   } catch (error) {
-    if (activeId === conversationId) {
-      renderConversation();
-      const notice = createMessage('ai', error.message || 'Falha ao conectar. Tente novamente.');
-      notice.classList.add('message-error');
-      chatMessages.append(notice);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
+    if (work.controller.signal.aborted || !conversations.some(item => item.id === conversationId)) return;
+    const message = error.message || 'Falha ao conectar. Tente novamente.';
+    work.node = createMessage('ai', message);
+    work.node.classList.add('message-error');
+    conversationWork.finish(conversationId, work, message);
+    if (activeId === conversationId) renderConversation();
   } finally {
-    isSubmitting = false;
-    chatForm.querySelector('button[type="submit"]').disabled = false;
-    chatMessages.removeAttribute('aria-busy');
+    if (conversationWork.busy(conversationId)) conversationWork.finish(conversationId, work);
+    renderHistory();
+    syncComposerWork();
     pending.remove();
     if (requestedConfig && activeId === conversationId) {
       if (requestedConfig.kind === 'lending') openLendingDialog(requestedConfig);

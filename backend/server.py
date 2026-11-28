@@ -1,4 +1,5 @@
 """Server-side proxy for the private Alt-IA chat."""
+from knowledge_http import byte_window
 
 import json
 import os
@@ -519,14 +520,26 @@ class Handler(BaseHTTPRequestHandler):
             if not document:
                 return self.respond(404, {"error": "Documento não encontrado."})
             body = document[1]
-            self.send_response(200)
+            size = len(body)
+            try:
+                start, stop = byte_window(self.headers.get('Range'), size)
+            except ValueError:
+                return self.respond(416, {'error':'Intervalo inválido.'}, {'Content-Range':f'bytes */{size}'})
+            partial = bool(self.headers.get('Range'))
+            self.send_response(206 if partial else 200)
+            self.send_header('Accept-Ranges', 'bytes')
+            if partial:
+                self.send_header('Content-Range', f'bytes {start}-{stop-1}/{size}')
             self.send_header("Content-Type", "application/pdf")
             self.send_header("Content-Disposition", 'inline; filename="documento.pdf"')
             self.send_header("Cache-Control", "private, no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Length", str(stop-start))
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.wfile.write(memoryview(body)[start:stop])
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             return
         if parsed.path == "/api/access-check":
             self.send_response(204)

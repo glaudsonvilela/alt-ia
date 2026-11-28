@@ -157,13 +157,20 @@ function safeDocuments(value) {
     .slice(0, 3).map(item => ({ id: item.id, title: item.title.slice(0, 240), kind: item.kind })) : [];
 }
 let pdfReaderModule, loadedPdfReader;
-const loadPdfReader = () => pdfReaderModule ||= import(/* @vite-ignore */ '/pdf-reader.js?v=3').then(reader => (loadedPdfReader = reader)).catch(error => { pdfReaderModule = null; throw error; });
+let pendingNewsRequest = false;
+const loadPdfReader = () => pdfReaderModule ||= import(/* @vite-ignore */ '/pdf-reader.js?v=4').then(reader => (loadedPdfReader = reader)).catch(error => { pdfReaderModule = null; throw error; });
 const pdfCoverObserver = new IntersectionObserver(entries => {
   for (const entry of entries) {
     if (!entry.isIntersecting) continue;
     const card = entry.target;
     pdfCoverObserver.unobserve(card);
-    loadPdfReader().then(reader => reader.renderCover(card, card.querySelector('canvas'), card.querySelector('.pdf-cover-status'), card.dataset.documentId))
+    loadPdfReader().then(async reader => {
+      const paint = () => reader.renderCover(card, card.querySelector('canvas'), card.querySelector('.pdf-cover-status'), card.dataset.documentId);
+      if (await paint() === false && card.isConnected && !card.dataset.coverRetried) {
+        card.dataset.coverRetried = 'true';
+        setTimeout(() => { if (card.isConnected) void paint(); }, 2000);
+      }
+    })
       .catch(() => { card.querySelector('.pdf-cover-status').textContent = 'PDF · Clique para ler'; });
   }
 }, { rootMargin: '160px' });
@@ -1104,6 +1111,14 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
       const host = document.createElement('small');
       host.textContent = item.source;
       link.append(number, title, host);
+      link.title = 'Abrir esta fonte na janela do agente';
+      link.addEventListener('click', event => {
+        if (!agentDesktop.matches || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        event.preventDefault();
+        if (isSubmitting()) return;
+        chatInput.value = `Abra esta página: ${item.url}`;
+        chatForm.requestSubmit();
+      });
       sources.append(link);
     });
     body.append(sources);
@@ -1133,14 +1148,14 @@ function renderConversation() {
     conversation.messages.forEach((message, index) => {
       const row = createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode || (message.mode === 'agent' && agentStarted && agentOwnerId === conversation.id) ? null : message.video, unseenDocuments(message.documents, message.requestedDocuments ? new Set() : seenDocuments));
       if (index === conversation.messages.length - 1 && message.role === 'ai' && message.knowledgeState
-        && (message.webOffer || message.text.trim().endsWith('Quer que eu abra o agente para procurar na web?'))) {
+        && (message.webOffer || /Quer que eu (?:abra o agente para procurar na web|pesquise na web e traga as informações aqui)\?$/.test(message.text.trim()))) {
         const choice = document.createElement('section');
         choice.className = 'agent-choice'; choice.setAttribute('aria-label', 'Pesquisar com o agente');
         const mark = document.createElement('span'); mark.className = 'agent-choice-mark'; mark.setAttribute('aria-hidden', 'true');
         mark.innerHTML = '<i></i><i></i>';
         const copy = document.createElement('div');
         const title = document.createElement('strong'); title.textContent = 'Vamos explorar?';
-        const hint = document.createElement('small'); hint.textContent = 'O agente pesquisa e traz o resultado para esta conversa.';
+        const hint = document.createElement('small'); hint.textContent = 'A pesquisa traz as informações aqui. Você escolhe se quer abrir uma página depois.';
         const actions = document.createElement('div'); actions.className = 'agent-choice-actions';
         for (const [label, answer] of [['Sim, pesquisar', 'Sim, pesquisar'], ['Não agora', 'Não agora']]) {
           const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
@@ -1852,7 +1867,8 @@ document.querySelectorAll('[data-prompt]').forEach((suggestion) => {
 
 document.querySelector('[data-action="news-daily"]')?.addEventListener('click', () => {
   if (!chatInput || isSubmitting()) return;
-  chatInput.value = 'Resumo das notícias de hoje';
+  pendingNewsRequest = true;
+  chatInput.value = 'Resumo das notícias de cripto e macro de hoje';
   resizeComposer();
   chatForm?.requestSubmit();
 });
@@ -2495,6 +2511,8 @@ chatForm?.addEventListener('submit', async (event) => {
   const text = chatInput?.value.trim();
   if (!text || isSubmitting()) return;
   const simulationRequest = pendingSimulationRequest;
+  const newsRequest = pendingNewsRequest;
+  pendingNewsRequest = false;
   pendingSimulationRequest = null;
   const walletRequest = pendingWalletRequest;
   pendingWalletRequest = null;
@@ -2520,7 +2538,7 @@ chatForm?.addEventListener('submit', async (event) => {
   persist();
   renderHistory();
   const conversationId = conversation.id;
-  let agentForRequest = conversation.agentMode && agentDesktop.matches;
+  let agentForRequest = !newsRequest && conversation.agentMode && agentDesktop.matches;
   if (agentForRequest) {
     agentOwnerId = conversationId;
     agentPipHasReply = false;
@@ -2552,6 +2570,7 @@ chatForm?.addEventListener('submit', async (event) => {
         wallet_request: previousMode === 'wallet' ? previousAnswer?.walletRequest || null : null
       }, ...(simulationRequest ? { simulation_request: simulationRequest } : {}),
         ...(walletRequest ? { wallet_request: walletRequest } : {}),
+        ...(newsRequest ? { news_request: 'daily' } : {}),
         ...(previousPool?.scenarioToken ? { scenario_token: previousPool.scenarioToken } : {}),
         ...(previousPool?.simulation ? { scenario_context: {
           kind: previousPool.simulation.kind, title: previousPool.simulation.title, subtitle: previousPool.simulation.subtitle,

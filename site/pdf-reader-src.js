@@ -1,4 +1,5 @@
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import { abortable } from './abortable-task.js';
 
 GlobalWorkerOptions.workerSrc = '/pdf.worker.js?v=1';
 
@@ -22,9 +23,9 @@ async function loadPdf(id, signal) {
       standardFontDataUrl: '/pdf-assets/standard_fonts/', wasmUrl: '/pdf-assets/wasm/', useWasm: false, isEvalSupported: false,
       isOffscreenCanvasSupported: false, disableWorkerRendering: true,
       enableXfa: false, stopAtErrors: false });
-    entry = { task, users: 0, timer: null };
+    entry = { task, users: 0, timer: null, ready: false };
     pdfs.set(id, entry);
-    task.promise.catch(() => { if (pdfs.get(id) === entry) pdfs.delete(id); });
+    task.promise.then(() => { entry.ready = true; }).catch(() => { if (pdfs.get(id) === entry) pdfs.delete(id); });
   }
   clearTimeout(entry.timer);
   entry.users++;
@@ -35,6 +36,11 @@ async function loadPdf(id, signal) {
     released = true; signal.removeEventListener('abort', release);
     entry.users--;
     if (!entry.users) {
+      if (signal.aborted && !entry.ready) {
+        if (pdfs.get(id) === entry) pdfs.delete(id);
+        void entry.task.destroy().catch(() => {});
+        return;
+      }
       entry.timer = setTimeout(() => {
         if (pdfs.get(id) === entry && !entry.users) { pdfs.delete(id); void entry.task.destroy(); }
       }, 120000);
@@ -43,7 +49,7 @@ async function loadPdf(id, signal) {
   };
   signal.addEventListener('abort', release, { once: true });
   try {
-    const pdf = await entry.task.promise;
+    const pdf = await abortable(entry.task.promise, signal);
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     return pdf;
   } catch (error) { release(); throw error; }
@@ -72,12 +78,15 @@ export function renderCover(card, canvas, label, id) {
       const timer = setTimeout(() => abort.abort(), 25000);
       try {
         const pdf = await loadPdf(id, abort.signal);
-        const page = await pdf.getPage(1);
+        const page = await abortable(pdf.getPage(1), abort.signal);
         const base = page.getViewport({ scale: 1 });
         const viewport = page.getViewport({ scale: Math.min(360 / base.width, 440 / base.height) });
         const buffer = document.createElement('canvas');
         buffer.width = Math.ceil(viewport.width); buffer.height = Math.ceil(viewport.height);
-        await page.render({ canvasContext: buffer.getContext('2d'), viewport }).promise;
+        const render = page.render({ canvasContext: buffer.getContext('2d'), viewport });
+        abort.signal.addEventListener('abort', () => render.cancel(), { once: true });
+        await abortable(render.promise, abort.signal);
+        if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
         covers.set(id, buffer.getContext('2d').getImageData(0, 0, buffer.width, buffer.height));
         if (covers.size > 24) covers.delete(covers.keys().next().value);
       } finally { clearTimeout(timer); abort.abort(); }
@@ -87,8 +96,12 @@ export function renderCover(card, canvas, label, id) {
     work.finally(() => pendingCovers.delete(id)).catch(() => {});
   }
   return pendingCovers.get(id).then(() => {
-    if (card.isConnected) paintCachedCover(canvas, label, id);
-  }).catch(() => { if (card.isConnected) label.textContent = 'PDF · Clique para ler'; });
+    if (card.isConnected) { paintCachedCover(canvas, label, id); delete card.dataset.coverFailed; }
+    return true;
+  }).catch(() => {
+    if (card.isConnected) { label.textContent = 'Capa indisponível · PDF disponível para ler'; card.dataset.coverFailed = 'true'; }
+    return false;
+  });
 }
 
 export function openReader(dialog, document, close) {

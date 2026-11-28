@@ -119,7 +119,8 @@ class PipelineTest(unittest.TestCase):
         result={'question':'Pesquise notícias de hoje sobre a Orca na Solana','web_query':'Orca Solana notícias hoje'}
         offer=current_web_offer(result)
         self.assertEqual(offer['task'],result['question'])
-        self.assertIn('agente',offer['question'])
+        self.assertIn('informações aqui',offer['question'])
+        self.assertEqual(offer['query'], result['web_query'])
         self.assertIsNone(current_web_offer({**result,'web_query':''}))
         self.assertIsNone(current_web_offer({**result,'media_request':'show_video'}))
 

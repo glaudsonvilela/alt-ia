@@ -6,6 +6,18 @@ from news_agent import LOCAL_TIME, plan, run
 
 
 class NewsAgentTests(unittest.TestCase):
+    def test_daily_never_fills_remaining_slots_with_sports_or_general_news(self):
+        current = datetime.now(timezone.utc).isoformat()
+        titles = ['Bitcoin ETFs recebem aportes', 'Fed mantém juros', 'Final do campeonato de futebol',
+                  'Mercado da bola: clube contrata atacante', 'Sol aparece durante o clássico']
+        feed = {'news': {'articles': [{'title': title, 'url': f'https://example.org/{i}',
+                'publishedAt': current, 'source': 'Fonte', 'summary': ''} for i, title in enumerate(titles)]}}
+        with patch('news_agent._load', return_value=feed):
+            result = run('Resumo das notícias de hoje')
+        self.assertEqual([item['title'] for item in result['news']], titles[:2])
+        with patch('news_agent._load', return_value={'news': {'articles': feed['news']['articles'][2:]}}):
+            self.assertEqual(run('Resumo das notícias de hoje')['news'], [])
+
     def test_news_intent_does_not_capture_simulation(self):
         self.assertEqual(plan("Resumo das notícias de hoje"), {"scope": "daily"})
         self.assertEqual(plan("notícias da HYPE")["asset"], "HYPE")

@@ -18,7 +18,7 @@ def web_offer_decision(token, email, secret, messages):
         return {'accepted': False, 'task': state['web_offer']['task']}
     if not re.fullmatch(r'(?:s|sim(?:[, ]+(?:pode|por favor|quero|pesquisar))?|pode(?: sim| procurar| buscar| abrir| pesquisar)?|quero sim|ok|claro|prossiga|(?:abra|abre) o agente|(?:pode )?(?:procurar|pesquisar|buscar) na (?:web|internet))', text):
         return None
-    return {'accepted': True, 'task': state['web_offer']['task']}
+    return {'accepted': True, 'task': state['web_offer']['task'], 'query': state['web_offer'].get('query', '')}
 
 
 def confirmed_web_task(token, email, secret, messages):
@@ -44,11 +44,12 @@ def validate_messages(raw):
 
 
 def research_state(result, email, secret):
-    if not result or not (result.get("sources") or result.get('web_offer')):
+    if not result or not (result.get("sources") or result.get('web_offer') or result.get('web_query')):
         return ""
     return issue({"purpose": "knowledge", "account": email,
                   "question": result["question"],
                   "source_ids": [item["key"] for item in result["sources"]],
+                  "web_query": result.get('web_query', ''),
                   "web_offer": result.get('web_offer')}, secret)
 
 

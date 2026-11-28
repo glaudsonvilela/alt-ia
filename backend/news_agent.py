@@ -152,14 +152,22 @@ def _review(items, aliases=None, today=None):
     return selected
 
 
-def _pick_daily(items):
-    crypto = re.compile(r"\b(cripto|crypto|bitcoin|ethereum|solana|defi|onchain|stablecoin|blockchain|hyperliquid|aave|usdc|btc|eth|sol)\b", re.I)
+def _market_kind(item):
+    crypto = re.compile(r"\b(criptos?|criptoativos?|cryptos?|cryptocurrenc\w*|bitcoin|ethereum|solana|defi|onchain|stablecoins?|blockchain|hyperliquid|aave|usdc|btc|eth)\b", re.I)
     crypto_sources = ("coindesk", "the block", "wublockchain", "checkonchain", "decrypt", "alea research", "cointelegraph")
-    relevant = [item for item in items if crypto.search(item["title"] + " " + item["summary"])
-                or item["source"].casefold().startswith(crypto_sources)]
+    text = item['title'] + ' ' + item.get('summary', '')
+    if crypto.search(text) or item['source'].casefold().startswith(crypto_sources):
+        return 'crypto'
+    if re.search(r'\b(juros|interest rates?|infla[cç][aã]o|inflation|deflation|fed|federal reserve|banco central|central bank|selic|copom|d[oó]lar|treasur\w*|tesouro|a[cç][oõ]es|equities|stock market|etfs?|bolsa de valores|ibovespa|nasdaq|s&p|pib|gdp|recess[aã]o|recession|c[aâ]mbio|pol[ií]tica monet[aá]ria|monetary policy)\b', text, re.I):
+        return 'macro'
+    return None
+
+
+def _pick_daily(items):
+    relevant = [item for item in items if _market_kind(item) == 'crypto']
     chosen = relevant[:4]
     chosen_urls = {item["url"] for item in chosen}
-    chosen += [item for item in items if item["url"] not in chosen_urls][:3]
+    chosen += [item for item in items if item["url"] not in chosen_urls and _market_kind(item)][:3]
     return chosen[:7]
 
 
@@ -167,7 +175,7 @@ def _present(plan_value, selected, count, today):
     date_label = today.strftime("%d/%m/%Y")
     if plan_value["scope"] == "daily":
         if not selected:
-            return {"reply": f"🗞️ Ainda não há notícias publicadas hoje ({date_label}) no feed do Research Lab. Vou conferir novamente quando você pedir.", "follow_up": "Quer consultar as notícias de uma moeda específica?", "news": [], "mode": "news", "news_topic": ""}
+            return {"reply": f"🗞️ Não encontrei notícias de cripto e macro publicadas hoje ({date_label}) no feed do Research Lab. Vou conferir novamente quando você pedir.", "follow_up": "Quer consultar as notícias de uma moeda específica?", "news": [], "mode": "news", "news_topic": ""}
         intro = f"🗞️ Resumo de hoje ({date_label}): o Research Lab reuniu {count} notícia{'s' if count != 1 else ''} até agora. Separei destaques de cripto e macro, com fontes e datas."
         question = "Quer que eu filtre as notícias de uma moeda específica?"
         selected = _pick_daily(selected)
@@ -192,7 +200,7 @@ def run(text, previous=None, topic=None):
         articles = (feed.get("news") or {}).get("articles") or []
         defi = (feed.get("defiNews") or {}).get("articles") or []
         items = [_article(item, "feed") for item in [*articles, *defi]]
-        selected = _review(items, today=today)
+        selected = [item for item in _review(items, today=today) if _market_kind(item)]
     else:
         body = json.dumps({"ativo": decision["asset"], "etapa": "buscar"}, ensure_ascii=False)
         result = _load("/api/analise-ativo", body, ttl=600)

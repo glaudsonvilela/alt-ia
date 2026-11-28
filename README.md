@@ -144,7 +144,7 @@ Cada requisição pertence ao ID da conversa e preserva o texto parcial e seu in
 
 ### Prioridade interna e memória leve dos vídeos
 
-No chat principal, a pesquisa no catálogo e a leitura de evidências vêm antes da navegação. O plano do modelo não autoriza uma busca externa. Se faltar material pertinente, a resposta oferece abrir o agente; somente uma confirmação da pessoa à oferta assinada e vinculada à conta produz `agent_request`. Um vídeo interno sem transcrição pode ser reproduzido, mas não pode ser resumido como se tivesse sido assistido. Os modos de pesquisa explicitamente escolhidos continuam disponíveis.
+No chat principal, a pesquisa no catálogo e a leitura de evidências vêm antes da navegação. Pedidos explícitos de pesquisa pública autorizam buscar e responder no chat, com uma consulta resolvida pelo contexto. Se faltar material pertinente sem pedido externo, a resposta oferece pesquisar; a confirmação assinada e vinculada à conta autoriza a busca, sem abrir janela. `agent_request` fica reservado para pedidos de abrir ou interagir com páginas e vídeos. Um vídeo interno sem transcrição pode ser reproduzido, mas não pode ser resumido como se tivesse sido assistido. Os modos de pesquisa explicitamente escolhidos continuam disponíveis.
 
 A fala transcrita é indexada antes da interpretação visual terminar. Cada intervalo guarda o áudio reconhecido, os quadros já interpretados e os horários, permitindo retomar sem repetir o intervalo concluído. O worker também grava `video-text/<hash-da-fonte>.txt.enc`: texto UTF-8 criptografado com AES-GCM, contendo título, transcrição e descrições visuais. Não há endpoint público para esses arquivos; o chat consulta os trechos indexados na base. Ao remover uma fonte, seu arquivo textual é removido. Nenhum vídeo original é persistido.
 
@@ -169,3 +169,9 @@ A imagem `alt-ia-browser:15` usa `--init --pids-limit 512`, preservando os limit
 Pedidos simples de abrir um site encerram a tarefa quando a navegação confirma sucesso, sem pedir ao modelo mais uma confirmação textual. Pedidos compostos, pesquisa e análise continuam pelo ciclo de ferramentas. Erros de carregamento não são tratados como abertura bem-sucedida.
 
 O chat mantém o Nemotron Super VL e o contexto documental, com `chat_template_kwargs.enable_thinking=false` na geração da resposta, incluindo o modo de pesquisa. O parâmetro genérico `reasoning_effort` não evitava que a fase anterior à resposta consumisse o orçamento inteiro. O controle por template é descrito na [documentação da NVIDIA](https://github.com/NVIDIA-AI-Blueprints/nemotron-voice-agent/blob/main/docs/how-to/configure-llm.md). O campo `timings_ms.first_token` registra o tempo até o primeiro trecho público; `research` e `generation` separam busca e geração. A transmissão incremental nunca publica raciocínio interno ou IDs privados de documentos.
+
+### Pesquisa, News e capas
+
+O atalho News envia `news_request: daily`, separado do roteamento conversacional. O resumo diário só admite cripto e macroeconomia; não completa espaços com notícias gerais. A pesquisa pública do chat usa o contexto para resolver referências e entrega fontes clicáveis; no computador, clicar em uma fonte solicita sua abertura no agente.
+
+As capas limitam download e renderização a 25 segundos, liberando a fila mesmo se PDF.js não resolver uma promessa. Uma falha tem uma tentativa adicional e estado explícito; o cache preserva capas já renderizadas. Teste de regressão: `node --test site/test-abortable-task.mjs`. O tom de resposta mantém português acessível, termos explicados e emojis moderados em todos os modos.

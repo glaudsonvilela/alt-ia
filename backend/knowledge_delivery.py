@@ -19,6 +19,10 @@ def delivery_format(documents):
 def delivery_prompt(documents):
     return """Você representa a Altside e ajuda seus consultores a compreender e aplicar o conhecimento.
 Responda diretamente à pessoa em português claro, cruzando o material consultado com sua análise.
+Mantenha um tom acolhedor e fácil de entender em qualquer assunto. Use 1 a 3 emojis pertinentes
+para orientar a leitura, parágrafos curtos e termos técnicos explicados na primeira ocorrência.
+Comece pela resposta prática; use um exemplo simples quando ajudar, sem infantilizar a pessoa.
+Preserve números, condições, riscos e incertezas. Uma resposta amigável também deve ser precisa.
 Ao explicar estratégias, mostre quais são, como funcionam, em quais condições fazem sentido e os riscos
 relevantes. Não substitua a explicação por nomes de arquivos, pastas, links ou resumos de fontes.
 Não declare que toda referência arquivada é uma estratégia adotada: diferencie adoção documentada,
@@ -37,7 +41,9 @@ Entregue SOMENTE JSON com os campos:
  "document_ids":["IDs exatos dos PDFs ou vídeos úteis para esta resposta"], "needs_web":false}.
 O repositório é SEMPRE a primeira opção. Use needs_web=true SOMENTE se as evidências internas
 não atenderem ao pedido e uma pesquisa externa puder ajudar. Não execute nem afirme ter executado
-buscas externas. O servidor perguntará se a pessoa quer abrir o agente antes de qualquer navegação.
+buscas externas. Quando o contexto incluir uma PESQUISA PÚBLICA EXECUTADA, use esses resultados
+para responder e deixe needs_web=false. Pesquisar informações não abre janela de navegador.
+Sem pesquisa já executada, o servidor perguntará se a pessoa quer pesquisar na web.
 Se existe um vídeo interno adequado, entregue-o com needs_web=false, mesmo sem transcrição.
 Se o pedido é resumir um vídeo com transcrição pendente, explique essa lacuna; não invente o resumo.
 Se o pedido é MOSTRAR ou ASSISTIR, selecione o vídeo em document_ids e apresente o player, sem negar essa capacidade. Conversa casual e recusas não precisam da web.
@@ -109,5 +115,6 @@ def current_web_offer(result):
     """A current/public research plan must expose the available tool, not deny it."""
     if not result or not result.get('web_query') or result.get('media_request') in {'show_video','show_pdf'}:
         return None
-    question = 'Quer que eu abra o agente para procurar na web?'
-    return {'question':question, 'task':str(result.get('question') or result['web_query'])[:1500]}
+    question = 'Quer que eu pesquise na web e traga as informações aqui?'
+    return {'question':question, 'task':str(result.get('question') or result['web_query'])[:1500],
+            'query': str(result['web_query'])[:350]}

@@ -254,6 +254,21 @@ def choose_action(task, snapshot, steps, api_key, search_results=None, context=N
     raise ValueError("O agente não conseguiu planejar a próxima ação.")
 
 
+def navigation_only(task):
+    """A simple open request needs no extra model turn after the page is verified."""
+    return (len(task) <= 240
+            and bool(re.match(r'^\s*(?:por favor[, ]+)?(?:abra|abre|abrir|acesse|acessar|entre)\b', task, re.I))
+            and not re.search(r'\b(?:e|depois|ent[aã]o|pesquis\w*|busc\w*|analis\w*|resum\w*|leia|ler|compare|verifique|explique|mostre|not[ií]cias|v[ií]deo|youtube)\b', task, re.I))
+
+
+def opened_page_result(task, snapshot, steps):
+    if (navigation_only(task) and snapshot.get('status') in ('Pronto para navegar', 'Página aberta.')
+            and snapshot.get('url', '').startswith(('https://', 'http://'))):
+        return {'reply': 'Abri o site na janela do agente.', 'speech': 'O site está aberto na janela do agente.',
+                'mode': 'agent', 'steps': steps, 'url': snapshot['url']}
+    return None
+
+
 def run(task, session_id, api_key, context=None):
     if not isinstance(task, str) or not 1 <= len(task.strip()) <= 1500:
         raise ValueError("Descreva o que o agente deve fazer.")
@@ -287,6 +302,9 @@ def run(task, session_id, api_key, context=None):
         snapshot = worker_call("POST", session_path(session_id, "/navigate"), api_key,
                                {"url": target_url}, timeout=28)
         steps.append(f"Abriu {snapshot.get('url', '')[:200]}")
+        opened = opened_page_result(task, snapshot, steps)
+        if opened:
+            return opened
     elif requested_video(task) and snapshot.get("url") in ("", "about:blank"):
         query = media_search_query(task)
         if query:
@@ -376,6 +394,9 @@ def run(task, session_id, api_key, context=None):
             next_snapshot = worker_call("POST", session_path(session_id, "/navigate"), api_key,
                                         {"url": target_url}, timeout=28)
             steps.append(f"Abriu {next_snapshot.get('url', '')[:200]}")
+            opened = opened_page_result(task, next_snapshot, steps)
+            if opened:
+                return opened
         elif action == "click":
             index = plan.get("index")
             if not isinstance(index, int):

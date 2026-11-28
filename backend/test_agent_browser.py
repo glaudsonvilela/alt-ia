@@ -5,6 +5,24 @@ import agent_browser
 
 
 class AgentBrowserTests(unittest.TestCase):
+    def test_simple_open_stops_after_verified_navigation(self):
+        blank = {'url': 'about:blank', 'elements': []}
+        page = {'url': 'https://kamino.com/home', 'status': 'Pronto para navegar'}
+        with patch.object(agent_browser, 'worker_call', side_effect=[blank, page]), \
+             patch.object(agent_browser, 'choose_action', return_value={'action': 'navigate', 'url': page['url']}) as model:
+            result = agent_browser.run('Abra o site da Kamino Finance.', 'a'*48, 'test')
+        self.assertEqual(result['url'], page['url'])
+        self.assertEqual(model.call_count, 1)
+
+    def test_failed_navigation_is_not_reported_as_open(self):
+        page = {'url': 'https://kamino.com/home', 'status': 'Não foi possível carregar esta página.'}
+        self.assertIsNone(agent_browser.opened_page_result('Abra a Kamino', page, []))
+
+    def test_compound_requests_still_require_reasoning_after_navigation(self):
+        for task in ['Abra a Kamino e analise os rendimentos', 'Abra o site e leia tudo',
+                     'Abra um vídeo da Kamino', 'Pesquise as notícias sobre a Kamino']:
+            self.assertFalse(agent_browser.navigation_only(task), task)
+
     def test_media_filename_is_not_opened_as_a_domain(self):
         blank = {'url':'about:blank','elements':[]}
         with patch.object(agent_browser, 'worker_call', return_value=blank) as worker, \

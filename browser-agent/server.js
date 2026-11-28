@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright-core';
+import { BrowserManager, bounded } from './browser-lifecycle.js';
 
 const token = readFileSync('/run/secrets/browser-token', 'utf8').trim();
 const sessions = new Map();
@@ -82,20 +83,13 @@ proxy.on('connect', async (req, socket, head) => {
 });
 await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
 const proxyPort = proxy.address().port;
-const chromeProcess = spawn('xvfb-run', ['-a', chromium.executablePath(),
-  '--user-data-dir=/tmp/alt-ia-chrome', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=9223',
-  '--no-sandbox',
-  '--no-first-run', '--no-default-browser-check', '--disable-dev-shm-usage', '--disable-background-networking',
-  '--disable-component-update', '--disable-default-apps', '--disable-sync', '--mute-audio', '--window-size=1280,720',
-  `--proxy-server=http://127.0.0.1:${proxyPort}`, '--proxy-bypass-list=<-loopback>', 'about:blank'],
-{ stdio: ['ignore', 'ignore', 'inherit'] });
-process.once('exit', () => chromeProcess.kill('SIGTERM'));
-let browser;
-for (let attempt = 0; attempt < 40 && !browser; attempt += 1) {
-  try { browser = await chromium.connectOverCDP('http://127.0.0.1:9223', { timeout: 1000 }); }
-  catch { await new Promise(resolve => setTimeout(resolve, 300)); }
-}
-if (!browser) throw Error('Navegador temporário não iniciou.');
+// Launch through Playwright so it owns Chromium and can recover a stuck process.
+// Keep a rendered browser: some public apps reject headless navigation.
+const browserManager = new BrowserManager(() => chromium.launch({
+  headless: false, timeout: 8000,
+  args: ['--no-sandbox', '--disable-dev-shm-usage', '--mute-audio',
+    `--proxy-server=http://127.0.0.1:${proxyPort}`, '--proxy-bypass-list=<-loopback>'],
+}), () => sessions.clear());
 
 function json(res, status, value) {
   const body = JSON.stringify(value);
@@ -103,7 +97,8 @@ function json(res, status, value) {
   res.end(body);
 }
 async function sessionStatus(session) {
-  return { url: session.page.url(), title: (await session.page.title().catch(() => '')).slice(0, 200),
+  if (session.page.isClosed() || !session.context.browser()?.isConnected()) throw Error('Sessão encerrada.');
+  return { url: session.page.url(), title: session.title || '',
     status: session.status, updated: session.updated, cursor: session.cursor || null };
 }
 async function input(req) {
@@ -113,7 +108,8 @@ async function input(req) {
 }
 async function snapshot(session) {
   const page = session.page;
-  return { url: page.url(), title: (await page.title().catch(() => '')).slice(0, 200),
+  session.title = (await bounded(page.title(), 2000, 'page_title_timeout').catch(() => '')).slice(0, 200);
+  return { url: page.url(), title: session.title,
     text: (await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')).slice(0, 11000),
     elements: await page.locator('a,button,input,textarea,[role="button"]').evaluateAll(nodes => nodes.slice(0, 100).map((el, index) => {
       const box = el.getBoundingClientRect();
@@ -195,7 +191,7 @@ async function closeSession(id) {
   const session = sessions.get(id);
   if (!session) return;
   sessions.delete(id);
-  await session.context.close().catch(() => {});
+  await bounded(session.context.close(), 2000, 'context_close_timeout').catch(() => {});
 }
 function touch(session) {
   session.updated = Math.max(Date.now(), session.updated + 1);
@@ -209,36 +205,42 @@ http.createServer(async (req, res) => {
   try {
     if (req.method === 'POST' && parts.length === 1 && parts[0] === 'sessions') {
       if (sessions.size >= MAX_SESSIONS) return json(res, 429, { error: 'Navegadores ocupados. Tente novamente em instantes.' });
-      const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1,
-        acceptDownloads: false, serviceWorkers: 'block', permissions: [] });
-      await context.route('**/*', async route => {
-        const url = route.request().url();
-        if (url === 'about:blank' || url.startsWith('data:') && route.request().resourceType() === 'image') return route.continue();
-        // The remote viewport is a still-image preview; media plays in the user's
-        // browser. Avoid decoding background video/audio in the VM.
-        if (route.request().resourceType() === 'media') return route.abort();
-        // The pinned-IP proxy checks every network request. Keep this browser hook
-        // synchronous so each image/script does not wait for a second DNS lookup.
-        try { allowedUrl(url); await route.continue(); } catch { await route.abort(); }
+      const id = await browserManager.create(async context => {
+        await context.route('**/*', async route => {
+          const url = route.request().url();
+          if (url === 'about:blank' || url.startsWith('data:') && route.request().resourceType() === 'image') return route.continue();
+          // The remote viewport is a still-image preview; media plays in the user's
+          // browser. Avoid decoding background video/audio in the VM.
+          if (route.request().resourceType() === 'media') return route.abort();
+          // The pinned-IP proxy checks every network request. Keep this browser hook
+          // synchronous so each image/script does not wait for a second DNS lookup.
+          try { allowedUrl(url); await route.continue(); } catch { await route.abort(); }
+        });
+      }, ({ context, page }) => {
+        if (sessions.size >= MAX_SESSIONS) {
+          const error = Error('Navegadores ocupados. Tente novamente em instantes.');
+          error.code = 'SESSION_CAPACITY';
+          throw error;
+        }
+        page.setDefaultTimeout(12000);
+        page.on('download', download => download.cancel());
+        const id = crypto.randomBytes(24).toString('hex');
+        const session = { context, page, status: 'Pronto para abrir um site.', updated: Date.now(), lastAccess: Date.now(), cursor: null,
+          image: null, cdp: null };
+        page.on('load', () => touch(session));
+        context.on('page', popup => {
+          if (popup === session.page) return;
+          session.page = popup;
+          session.cdp = null;
+          session.image = null;
+          popup.on('load', () => touch(session));
+          popup.setDefaultTimeout(12000);
+          popup.on('download', download => download.cancel());
+          session.status = 'Abrindo nova página';
+        });
+        sessions.set(id, session);
+        return id;
       });
-      const page = await context.newPage();
-      page.setDefaultTimeout(12000);
-      page.on('download', download => download.cancel());
-      const id = crypto.randomBytes(24).toString('hex');
-      const session = { context, page, status: 'Pronto para abrir um site.', updated: Date.now(), lastAccess: Date.now(), cursor: null,
-        image: null, cdp: null };
-      page.on('load', () => touch(session));
-      context.on('page', popup => {
-        if (popup === session.page) return;
-        session.page = popup;
-        session.cdp = null;
-        session.image = null;
-        popup.on('load', () => touch(session));
-        popup.setDefaultTimeout(12000);
-        popup.on('download', download => download.cancel());
-        session.status = 'Abrindo nova página';
-      });
-      sessions.set(id, session);
       return json(res, 200, { id });
     }
     const session = sessions.get(parts[1]);

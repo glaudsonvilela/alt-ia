@@ -264,7 +264,7 @@ def answer_nerd(messages, topic, previous_query, internal_sources=None, knowledg
                                                                                 "exhaustive": False}}, ensure_ascii=False)}],
         **({"response_format": delivery_format(documents)} if internal_sources else {}),
         "max_tokens": 8192 if internal_sources else 4096, "temperature": 0.45, "top_p": 0.9,
-        "reasoning_effort": "high", "stream": False}).encode("utf-8")
+        "chat_template_kwargs": {"enable_thinking": False}, "stream": False}).encode("utf-8")
     request = urllib.request.Request(ENDPOINT, request_body, {
         "Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json", "Accept": "application/json",
     }, method="POST")
@@ -434,7 +434,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.respond(200, {"active": True})
                     except ValueError:
                         pass
-                session_id = worker_call("POST", "/sessions", API_KEY, {})["id"]
+                session_id = worker_call("POST", "/sessions", API_KEY, {}, timeout=35)["id"]
                 cookie = f"alt_ia_agent={cookie_value(session_id, API_KEY)}; HttpOnly; Secure; SameSite=Strict; Path=/api/agent; Max-Age=720"
                 return self.respond(200, {"active": True}, {"Set-Cookie": cookie})
             session_id = self.agent_session()
@@ -754,7 +754,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(429, {"error": "A Alt-IA está ocupada. Tente novamente em instantes."})
         try:
             self.timings = {}
-            deadline = time.monotonic() + 88
+            request_started = time.monotonic()
+            deadline = request_started + 88
             user_text = messages[-1]["content"]
             decision = web_offer_decision(knowledge_token, self.authenticated_email, SCENARIO_SECRET, messages)
             if decision and not decision['accepted']:
@@ -891,8 +892,10 @@ class Handler(BaseHTTPRequestHandler):
                 "max_tokens": (4096 if focused else 8192) if internal_sources else 3072,
                 "temperature": 0.35 if internal_sources else 0.7,
                 "top_p": 0.9 if internal_sources else 0.95,
-                **({"chat_template_kwargs": {"enable_thinking": False}} if focused else
-                   {"reasoning_effort": "low" if internal_sources else "none"}),
+                # Nemotron's template flag controls its hidden pre-answer phase.
+                # reasoning_effort alone allowed that phase to consume the entire
+                # token budget on broad questions, leaving no deliverable answer.
+                "chat_template_kwargs": {"enable_thinking": False},
                 "stream": stream_response,
                 **({"stream_options": {"include_usage": True}} if stream_response else {}),
             }).encode("utf-8")
@@ -912,8 +915,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.streaming = True
                     self.close_connection = True
-                    result = consume_stream(upstream, lambda delta: self.stream_event({"delta": delta}),
-                                            True, deadline)
+                    def emit_delta(delta):
+                        self.timings.setdefault('first_token', (time.monotonic() - request_started) * 1000)
+                        self.stream_event({"delta": delta})
+                    result = consume_stream(upstream, emit_delta, True, deadline)
                 else:
                     result = json.load(upstream)
             self.timings["generation"] = (time.monotonic() - generation_started) * 1000

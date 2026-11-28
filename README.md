@@ -159,3 +159,13 @@ A resposta enviada ao modelo informa os segundos disponíveis e separa áudio in
 A oferta de busca externa aparece com **Sim, pesquisar** e **Não agora**, mantendo a assinatura da conta e o assunto resolvido. Também reconhece `s`, `sim` e recusas breves digitadas, somente como resposta imediata à oferta. Os botões deixam de aparecer após a escolha. Pedidos diretos para abrir um protocolo preservam o contexto DeFi e continuam distintos de pedidos por vídeos internos.
 
 O mini game usa cinco formas de obstáculos, sem repetição imediata, e moedas em grupos independentes de zero a cinco com alturas e trajetórias variadas. Anéis de coleta, brilho, rastro de salto, impacto e fumaça usam quantidades limitadas de partículas no mesmo canvas transparente, com até 60 pinturas por segundo.
+
+### Recuperação do navegador e latência
+
+O navegador é lançado e gerenciado pelo Playwright, com Xvfb no processo de entrada do contêiner. A criação de uma página tem limite de quatro segundos; uma falha reinicia o navegador uma vez, limpa as sessões inválidas e tenta novamente. Criações simultâneas são serializadas e o limite de quatro sessões continua valendo. O frontend valida a sessão antes de cada tarefa e recria sessões expiradas. Consultas de status usam o título já observado, sem uma avaliação de página a cada consulta.
+
+A imagem `alt-ia-browser:15` usa `--init --pids-limit 512`, preservando os limites de 2 GiB, `/dev/shm` de 512 MiB, filesystem somente leitura, seccomp, `cap-drop ALL` e rede interna. O limite anterior de 256 tarefas havia registrado 288 recusas de criação; páginas novas ficavam presas até o timeout da API. O proxy continua validando IP público em cada conexão. Reiniciar o navegador fecha suas sessões temporárias; o login da Alt-IA e o histórico não dependem delas.
+
+Pedidos simples de abrir um site encerram a tarefa quando a navegação confirma sucesso, sem pedir ao modelo mais uma confirmação textual. Pedidos compostos, pesquisa e análise continuam pelo ciclo de ferramentas. Erros de carregamento não são tratados como abertura bem-sucedida.
+
+O chat mantém o Nemotron Super VL e o contexto documental, com `chat_template_kwargs.enable_thinking=false` na geração da resposta, incluindo o modo de pesquisa. O parâmetro genérico `reasoning_effort` não evitava que a fase anterior à resposta consumisse o orçamento inteiro. O controle por template é descrito na [documentação da NVIDIA](https://github.com/NVIDIA-AI-Blueprints/nemotron-voice-agent/blob/main/docs/how-to/configure-llm.md). O campo `timings_ms.first_token` registra o tempo até o primeiro trecho público; `research` e `generation` separam busca e geração. A transmissão incremental nunca publica raciocínio interno ou IDs privados de documentos.

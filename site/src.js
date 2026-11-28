@@ -1458,7 +1458,9 @@ async function agentRequest(path, payload = {}, method = 'POST') {
   return data;
 }
 async function startAgentSession() {
-  if (agentStarted || !agentDesktop.matches) return;
+  // Validate the server session before each task: it may have expired or recovered
+  // while the window stayed open in this tab.
+  if (!agentDesktop.matches) return;
   if (agentStartPromise) return agentStartPromise;
   agentStartPromise = (async () => {
     try {

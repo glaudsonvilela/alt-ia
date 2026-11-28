@@ -4,12 +4,13 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "build": "esbuild src.js --bundle --format=iife --target=es2020 --minify --outfile=app.js"
+    "build": "node build.mjs"
   },
   "dependencies": {
     "geist": "^1.9.2",
     "lightweight-charts": "^5.2.0",
-    "motion": "14.14.0"
+    "motion": "14.14.0",
+    "pdfjs-dist": "6.5.438"
   },
   "devDependencies": {
     "esbuild": "0.28.2"

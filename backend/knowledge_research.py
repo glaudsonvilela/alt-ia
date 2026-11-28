@@ -128,9 +128,8 @@ Formule uma resposta própria ao pedido atual, usando o contexto da conversa e c
 Relacione os mecanismos, objetivos, condições, riscos e implicações que forem pertinentes à pergunta.
 Diferencie fatos documentados, sua análise/inferência e conhecimento geral. Pode raciocinar e propor
 aplicações novas, mas não as atribua à empresa sem evidência. Não transforme um catálogo de arquivos
-em resposta. Cite afirmações sobre a empresa copiando o identificador citation EXATO da fonte,
-por exemplo [F11]. Não renumere por ordem de menção: [F11] sempre representa a fonte marcada [F11].
-Os identificadores serão convertidos em links de referência pela interface.
+em resposta. Use os identificadores apenas para conferir internamente a origem das afirmações.
+A resposta deve ser autossuficiente, sem lista de referências, links ou marcadores de citação.
 Não copie a fala anterior do assistente como verdade: corrija-a se contradisser as fontes.
 Uma busca sem resultados NÃO comprova inexistência. Nunca afirme que não existem estratégias/políticas
 somente porque a recuperação falhou. Explique o alcance real da consulta e a lacuna específica.

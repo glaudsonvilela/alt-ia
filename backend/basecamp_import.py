@@ -99,13 +99,18 @@ def import_rich_content(account, item, record, store, seen, stats):
             # Remove stale extracted text if an attachment changed format.
             store.upsert({**record, "key": key, "body": ""})
             continue
-        if store.unchanged(key, record["updated_at"]):
+        is_pdf = Path(filename).suffix.lower() == ".pdf"
+        unchanged = store.unchanged(key, record["updated_at"])
+        if unchanged and (not is_pdf or store.has_pdf(key)):
             continue
         download = account.download_url(attachment["download_url"])
         if len(download.body) > MAX_ATTACHMENT_BYTES:
             unavailable.append(filename)
             stats["skipped"] += 1
             store.upsert({**record, "key": key, "body": ""})
+            continue
+        if unchanged and is_pdf:
+            store.put_pdf(key, filename, download.body)
             continue
         try:
             content = extract_upload(filename, download.body)
@@ -115,7 +120,10 @@ def import_rich_content(account, item, record, store, seen, stats):
             unavailable.append(filename)
             stats["skipped"] += 1
         stats["updated"] += int(store.upsert({**record, "key": key, "kind": "attachment",
-            "title": f"{record['title']} — {filename}", "body": content}))
+            "title": f"{record['title']} — {filename}",
+            "body": content or ("PDF disponível para leitura, sem texto extraível." if is_pdf else "")}))
+        if is_pdf:
+            store.put_pdf(key, filename, download.body)
     if unavailable:
         record["body"] += "\n[Anexos mencionados, sem conteúdo textual importado: " + "; ".join(unavailable) + "]"
     seen.add(record["key"])
@@ -146,15 +154,20 @@ def scan_project(account, account_id, project, store):
             record = source_record(item, "upload", account_id, project)
             seen.add(record["key"])
             stats["examined"] += 1
-            if store.unchanged(record["key"], record["updated_at"]):
-                continue
             filename = item.get("filename") or record["title"]
+            is_pdf = Path(filename).suffix.lower() == ".pdf"
+            unchanged = store.unchanged(record["key"], record["updated_at"])
+            if unchanged and (not is_pdf or store.has_pdf(record["key"])):
+                continue
             if Path(filename).suffix.lower() not in TEXT_SUFFIXES:
                 record["body"] = html_text(item.get("description"))
                 stats["skipped"] += 1
                 stats["updated"] += int(store.upsert(record))
                 continue
             download = account.uploads.download(upload_id=int(item["id"]))
+            if unchanged and is_pdf:
+                store.put_pdf(record["key"], filename, download.body)
+                continue
             try:
                 content = extract_upload(filename, download.body)
             except (ValueError, zipfile.BadZipFile, KeyError, PyPdfError):
@@ -162,7 +175,11 @@ def scan_project(account, account_id, project, store):
             record["body"] = (html_text(item.get("description")) + "\n\n" + content).strip()
             if not content.strip():
                 stats["skipped"] += 1
+            if is_pdf and not record["body"]:
+                record["body"] = "PDF disponível para leitura, sem texto extraível."
             stats["updated"] += int(store.upsert(record))
+            if is_pdf:
+                store.put_pdf(record["key"], filename, download.body)
     for board_id in boards:
         for item in account.messages.list(board_id=board_id):
             record = source_record(item, "message", account_id, project)

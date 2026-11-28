@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from knowledge_store import KnowledgeStore, search_terms
 from basecamp_import import html_text, source_record, scan_project
 from knowledge_research import research, evidence_prompt, render_citations
+from knowledge_delivery import deliver, delivery_format
 
 
 class FakeService:
@@ -54,6 +55,55 @@ class KnowledgeStoreTest(unittest.TestCase):
         wrong.write_bytes(os.urandom(32))
         with self.assertRaises(Exception):
             KnowledgeStore(self.path, wrong)
+
+    def test_pdf_is_encrypted_and_revoked_with_source(self):
+        self.seed_research()
+        body = b"%PDF-1.7\nprivate original PDF bytes"
+        self.store.put_pdf("7:document:4", "Entrada.pdf", body)
+        self.store.save()
+        reader = KnowledgeStore(self.path, self.key)
+        card = reader.documents_for(["7:document:4"])[0]
+        self.assertEqual(reader.get_pdf(card["id"]), ("Entrada.pdf", body))
+        self.assertIsNone(reader.get_pdf("../key"))
+        self.assertIsNone(reader.get_pdf("a" * 64))
+        encrypted = list((self.path.parent / "documents").glob("*.enc"))[0]
+        self.assertNotIn(body, encrypted.read_bytes())
+        self.assertEqual(encrypted.stat().st_mode & 0o777, 0o600)
+        self.store.prune_project("7", "42", set())
+        self.store.save()
+        self.assertIsNone(reader.get_pdf(card["id"]))
+
+    def test_delivery_filters_invented_documents_and_external_links(self):
+        import json
+        document = {"id": "a" * 64, "title": "Entrada gradual", "kind": "pdf"}
+        result = deliver(json.dumps({"answer": "Compras distribuídas [F2]. [Manual](https://app.basecamp.com/private)",
+            "follow_up": "Quer comparar os riscos?", "document_ids": ["invented", document["id"], document["id"]]}), [document])
+        self.assertEqual(result["documents"], [document])
+        self.assertNotIn("http", result["reply"])
+        self.assertNotIn("[F2]", result["reply"])
+        self.assertTrue(result["reply"].endswith("Quer comparar os riscos?"))
+        schema = delivery_format([document])["json_schema"]["schema"]
+        self.assertEqual(set(schema["required"]), {"answer", "follow_up", "document_ids"})
+        self.assertEqual(schema["properties"]["document_ids"]["items"]["enum"], ["D1"])
+        selected = deliver(json.dumps({"answer": "Explicação", "follow_up": "Quer aprofundar?", "document_ids": ["D1"]}), [document])
+        self.assertEqual(selected["documents"], [document])
+
+    def test_pdf_backfill_does_not_reextract_unchanged_text(self):
+        from unittest.mock import patch
+        self.store.select("7", {"42"})
+        self.store.upsert({"key": "7:upload:4", "account_id": "7", "project_id": "42",
+            "project_name": "Empresa", "title": "Manual.pdf", "url": "https://3.basecamp.com/file/4",
+            "kind": "upload", "updated_at": "same", "body": "Texto já indexado."})
+        class Account:
+            projects = FakeService(detail={"dock": [{"id": 3, "name": "vault", "enabled": True}]})
+            vaults = FakeService()
+            documents = FakeService()
+            uploads = FakeService(items=[{"id": 4, "filename": "Manual.pdf", "title": "Manual.pdf", "updated_at": "same"}])
+            uploads.download = lambda **kwargs: SimpleNamespace(body=b"%PDF-1.7\nexample")
+            messages = FakeService()
+        with patch("basecamp_import.extract_upload", side_effect=AssertionError("Must not reextract")):
+            scan_project(Account(), "7", {"id": 42, "name": "Empresa"}, self.store)
+        self.assertTrue(self.store.has_pdf("7:upload:4"))
 
     def seed_research(self):
         self.store.select("7", {"42"})

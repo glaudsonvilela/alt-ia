@@ -27,6 +27,7 @@ from access_auth import AuthError, AuthService, cookie_value as auth_cookie_valu
 from history_store import HistoryStore
 from knowledge_store import KnowledgeStore
 from knowledge_research import research as research_knowledge, evidence_prompt, render_citations
+from knowledge_delivery import delivery_prompt, delivery_format, deliver
 from usage_meter import configure as configure_usage, for_account as usage_for_account, record as record_usage
 
 
@@ -215,16 +216,12 @@ def knowledge_for(email, messages):
     return research_knowledge(KNOWLEDGE, messages, plan_knowledge)
 
 
-def knowledge_cards(sources):
-    return [{"title": item["title"], "url": item["url"], "source": f"Basecamp · {item['project']}"}
-            for item in sources]
-
-
 def answer_nerd(messages, topic, previous_query, internal_sources=None, knowledge_result=None, deadline=None):
     """Research with reviewed public sources, then request the model's high reasoning level."""
     user_text = messages[-1]["content"]
     research = search_web(user_text, topic, previous_query)
     internal_sources = internal_sources or []
+    documents = KNOWLEDGE.documents_for([item["key"] for item in internal_sources]) if internal_sources else []
     if not research["sources"] and not internal_sources:
         return {"reply": "🔎 Não encontrei fontes públicas suficientes para responder com segurança agora. Quer reformular a pesquisa?",
                 "mode": "nerd", "nerd_topic": topic, "nerd_query": research["query"], "research": []}
@@ -249,13 +246,15 @@ def answer_nerd(messages, topic, previous_query, internal_sources=None, knowledg
                          for index, item in enumerate(internal_sources, 1)]
     request_body = json.dumps({"model": MODEL,
         "messages": [{"role": "system", "content": instructions},
+                     *([{"role": "system", "content": delivery_prompt(documents)}] if internal_sources else []),
                      *messages[-8:-1],
                      {"role": "user", "content": json.dumps({"pedido": user_text, "modo": topic,
                                                            "fontes_publicas": evidence,
                                                            "fontes_internas": internal_evidence,
                                                            "pesquisa_interna": {"status": (knowledge_result or {}).get("status", "unavailable"),
                                                                                 "exhaustive": False}}, ensure_ascii=False)}],
-        "max_tokens": 4096, "temperature": 0.45, "top_p": 0.9,
+        **({"response_format": delivery_format(documents)} if internal_sources else {}),
+        "max_tokens": 8192 if internal_sources else 4096, "temperature": 0.45, "top_p": 0.9,
         "reasoning_effort": "high", "stream": False}).encode("utf-8")
     request = urllib.request.Request(ENDPOINT, request_body, {
         "Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json", "Accept": "application/json",
@@ -267,7 +266,9 @@ def answer_nerd(messages, topic, previous_query, internal_sources=None, knowledg
     answer = choice["message"]["content"]
     if not isinstance(answer, str) or not answer.strip() or choice.get("finish_reason") == "length":
         raise ValueError("Resposta incompleta")
-    cards = research["sources"] + knowledge_cards(internal_sources)
+    if internal_sources:
+        return {**deliver(answer, documents), "mode": "nerd", "nerd_topic": topic, "nerd_query": research["query"]}
+    cards = research["sources"]
     return {"reply": render_citations(answer.strip(), cards), "mode": "nerd", "nerd_topic": topic,
             "nerd_query": research["query"], "research": cards}
 
@@ -448,6 +449,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(503, {"error": "Login não configurado."})
             return self.respond(200, {"google_client_id": AUTH.client_id})
         if parsed.path != "/healthz" and not self.access_ok():
+            return
+        if parsed.path.startswith("/api/knowledge/documents/"):
+            if not KNOWLEDGE or self.authenticated_email.rsplit("@", 1)[-1].lower() not in KNOWLEDGE_DOMAINS:
+                return self.respond(403, {"error": "Documento indisponível para esta conta."})
+            try:
+                document = KNOWLEDGE.get_pdf(parsed.path.removeprefix("/api/knowledge/documents/"))
+            except Exception:
+                return self.respond(503, {"error": "Não foi possível abrir o documento agora."})
+            if not document:
+                return self.respond(404, {"error": "Documento não encontrado."})
+            body = document[1]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Disposition", 'inline; filename="documento.pdf"')
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if parsed.path == "/api/access-check":
             self.send_response(204)
@@ -722,11 +742,14 @@ class Handler(BaseHTTPRequestHandler):
                         simulation["scenario_token"] = issue(basis, SCENARIO_SECRET)
                 return self.respond(200, simulation)
             knowledge_prompt = evidence_prompt(knowledge_result) if knowledge_result else None
+            documents = KNOWLEDGE.documents_for([item["key"] for item in internal_sources]) if internal_sources else []
             request_body = json.dumps({
                 "model": MODEL,
                 "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                              *([{"role": "system", "content": knowledge_prompt}] if knowledge_prompt else []),
+                             *([{"role": "system", "content": delivery_prompt(documents)}] if internal_sources else []),
                              *messages],
+                **({"response_format": delivery_format(documents)} if internal_sources else {}),
                 "max_tokens": 8192 if internal_sources else 3072,
                 "temperature": 0.35 if internal_sources else 0.7,
                 "top_p": 0.9 if internal_sources else 0.95,
@@ -745,9 +768,8 @@ class Handler(BaseHTTPRequestHandler):
             answer = choice["message"]["content"]
             if not isinstance(answer, str) or not answer.strip() or choice.get("finish_reason") == "length":
                 raise ValueError("Resposta vazia")
-            answer = render_citations(answer.strip(), internal_sources)
-            self.respond(200, {"reply": answer, "model": MODEL, "mode": "general",
-                               "research": knowledge_cards(internal_sources)})
+            presentation = deliver(answer, documents) if internal_sources else {"reply": answer.strip()}
+            self.respond(200, {**presentation, "model": MODEL, "mode": "general"})
         except urllib.error.HTTPError as error:
             if error.code == 429:
                 self.respond(503, {"error": "O modelo está ocupado. Tente novamente em instantes."})

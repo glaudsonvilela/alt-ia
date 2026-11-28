@@ -143,8 +143,52 @@ function safeNews(value) {
 function safeResearch(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 24).filter((item) => item && typeof item.title === 'string' && typeof item.url === 'string'
-    && /^https:\/\/[^\s/]+/.test(item.url)).map((item) => ({ title: item.title.slice(0, 220),
+    && /^https:\/\/[^\s/]+/.test(item.url) && !/basecamp\.com/i.test(item.url)).map((item) => ({ title: item.title.slice(0, 220),
       url: item.url.slice(0, 700), summary: String(item.summary || '').slice(0, 550), source: String(item.source || '').slice(0, 80) }));
+}
+
+function safeDocuments(value) {
+  return Array.isArray(value) ? value.filter(item => item?.kind === 'pdf' && /^[a-f0-9]{64}$/.test(item.id) && typeof item.title === 'string')
+    .slice(0, 3).map(item => ({ id: item.id, title: item.title.slice(0, 240), kind: 'pdf' })) : [];
+}
+let pdfReaderModule;
+const loadPdfReader = () => pdfReaderModule ||= import(/* @vite-ignore */ '/pdf-reader.js?v=1').catch(error => { pdfReaderModule = null; throw error; });
+const pdfCoverObserver = new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    const card = entry.target;
+    pdfCoverObserver.unobserve(card);
+    loadPdfReader().then(reader => reader.renderCover(card, card.querySelector('canvas'), card.querySelector('.pdf-cover-status'), card.dataset.documentId))
+      .catch(() => { card.querySelector('.pdf-cover-status').textContent = 'PDF · Clique para ler'; });
+  }
+}, { rootMargin: '160px' });
+function createDocumentCards(documents) {
+  const group = document.createElement('div');
+  group.className = 'document-cards';
+  for (const item of safeDocuments(documents)) {
+    const card = document.createElement('button');
+    card.type = 'button'; card.className = 'document-card'; card.dataset.documentId = item.id;
+    card.setAttribute('aria-label', `Ler ${item.title} dentro da Alt-IA`);
+    const cover = document.createElement('span'); cover.className = 'pdf-cover';
+    const canvas = document.createElement('canvas'); canvas.hidden = true; canvas.setAttribute('aria-hidden', 'true');
+    const status = document.createElement('span'); status.className = 'pdf-cover-status'; status.textContent = 'Preparando capa…';
+    cover.append(canvas, status);
+    const title = document.createElement('strong'); title.textContent = item.title;
+    const hint = document.createElement('small'); hint.textContent = 'PDF · Ler aqui';
+    card.append(cover, title, hint);
+    card.addEventListener('click', async () => {
+      card.disabled = true;
+      try {
+        const reader = await loadPdfReader();
+        const dialog = document.querySelector('#pdf-dialog');
+        if (!dialog.open) reader.openReader(dialog, item, closeShortcutDialog);
+      } catch { status.textContent = 'Não foi possível abrir. Clique para tentar novamente.'; }
+      finally { card.disabled = false; }
+    });
+    group.append(card);
+    pdfCoverObserver.observe(card);
+  }
+  return group;
 }
 
 function safeVideo(value) {
@@ -357,6 +401,7 @@ function readConversations() {
             news: message.role === 'ai' && !message.text.startsWith('🗞️ Aqui está um resumo das notícias que mostrei:') ? safeNews(message.news) : [],
             newsContext: message.role === 'ai' ? safeNews(message.newsContext || message.news) : [],
             research: message.role === 'ai' ? safeResearch(message.research) : [],
+            documents: message.role === 'ai' ? safeDocuments(message.documents) : [],
             video: message.role === 'ai' ? safeVideo(message.video) : null,
             nerdQuery: message.role === 'ai' && typeof message.nerdQuery === 'string' ? message.nerdQuery.slice(0, 650) : '',
             mode: message.role === 'ai' && ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd', 'agent'].includes(message.mode) ? message.mode : '',
@@ -914,7 +959,7 @@ function renderNerdAnswer(body, text) {
   body.append(answer);
 }
 
-function createMessage(role, text, simulation = null, followUp = '', news = [], wallet = null, research = [], nerdMode = false, video = null) {
+function createMessage(role, text, simulation = null, followUp = '', news = [], wallet = null, research = [], nerdMode = false, video = null, documents = []) {
   const row = document.createElement('article');
   row.className = `message-row message-${role}${nerdMode && role === 'ai' ? ' message-nerd' : ''}`;
   if (role === 'ai') {
@@ -941,7 +986,7 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
     author.textContent = 'Alt-IA';
     body.append(author);
   }
-  if (role === 'ai' && research?.length) renderNerdAnswer(body, text);
+  if (role === 'ai') renderNerdAnswer(body, text);
   else {
     const paragraph = document.createElement('p');
     paragraph.textContent = text;
@@ -1009,6 +1054,7 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
     body.append(player);
     hint.textContent = 'Toque para assistir aqui';
   }
+  if (role === 'ai' && documents?.length) body.append(createDocumentCards(documents));
   if (role === 'ai' && research?.length) {
     const sources = document.createElement('div');
     sources.className = 'research-sources';
@@ -1043,6 +1089,7 @@ function createMessage(role, text, simulation = null, followUp = '', news = [], 
 
 function renderConversation() {
   if (!chatMessages) return;
+  pdfCoverObserver.disconnect();
   activeVideoPlayers.splice(0).forEach((player) => { try { player.destroy(); } catch { /* Player already removed. */ } });
   chatMessages.replaceChildren();
   const conversation = conversations.find((item) => item.id === activeId);
@@ -1051,7 +1098,7 @@ function renderConversation() {
     if (welcome) chatMessages.append(welcome);
   } else {
     const fragment = document.createDocumentFragment();
-  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode ? null : message.video)));
+  conversation.messages.forEach((message) => fragment.append(createMessage(message.role, message.text, message.simulation, message.followUp, message.news, message.wallet, message.research, conversation.nerdMode, conversation.agentMode ? null : message.video, message.documents)));
     chatMessages.append(fragment);
   }
   requestAnimationFrame(() => { chatMessages.scrollTop = conversation?.messages.length ? chatMessages.scrollHeight : 0; });
@@ -2462,7 +2509,7 @@ chatForm?.addEventListener('submit', async (event) => {
     if (!target) return;
     target.messages.push({ role: 'ai', text: data.reply, speech: typeof data.speech === 'string' ? data.speech.slice(0, 220) : '',
       simulation: safeSimulation(data.simulation), news: safeNews(data.news), wallet: safeWallet(data.wallet),
-      research: safeResearch(data.research), video: safeVideo(data.video), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
+      research: safeResearch(data.research), documents: safeDocuments(data.documents), video: safeVideo(data.video), nerdQuery: typeof data.nerd_query === 'string' ? data.nerd_query.slice(0, 650) : '',
       newsContext: safeNews(data.news_context || data.news),
       mode: ['news', 'pool', 'historical_pool', 'lending', 'wallet', 'general', 'nerd', 'agent'].includes(data.mode) ? data.mode : 'general',
       newsTopic: typeof data.news_topic === 'string' ? data.news_topic.slice(0, 30) : '',

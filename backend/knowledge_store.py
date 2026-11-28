@@ -144,6 +144,10 @@ class KnowledgeStore:
                     );
                 """)
             old = self.db
+            db.execute("""CREATE TABLE IF NOT EXISTS document_files (
+                id TEXT PRIMARY KEY, source_key TEXT NOT NULL UNIQUE, filename TEXT NOT NULL,
+                digest TEXT NOT NULL, mime TEXT NOT NULL
+            )""")
             self.db = db
             self.signature = signature
             if old is not None:
@@ -170,8 +174,61 @@ class KnowledgeStore:
             return {row[0] for row in self.db.execute("SELECT project_id FROM selection WHERE account_id=?", (str(account_id),))}
 
     def _delete(self, key):
+        self.db.execute("DELETE FROM document_files WHERE source_key=?", (key,))
         self.db.execute("DELETE FROM chunks WHERE source_key=?", (key,))
         self.db.execute("DELETE FROM sources WHERE source_key=?", (key,))
+
+    def has_pdf(self, key):
+        with self.lock:
+            row = self.db.execute("SELECT digest FROM document_files WHERE source_key=?", (key,)).fetchone()
+            return bool(row and (self.path.parent / "documents" / (row[0] + ".enc")).is_file())
+
+    def put_pdf(self, key, filename, body):
+        if not body.startswith(b"%PDF-") or len(body) > 32 * 1024 * 1024:
+            raise ValueError("PDF inválido ou muito grande")
+        identifier = hashlib.sha256(key.encode()).hexdigest()
+        digest = hashlib.sha256(body).hexdigest()
+        target = self.path.parent / "documents" / (digest + ".enc")
+        with self.lock, self.db:
+            if not self.db.execute("SELECT 1 FROM sources WHERE source_key=?", (key,)).fetchone():
+                return
+            if not target.exists():
+                private_write(target, encrypt(self.key, body))
+            self.db.execute("INSERT OR REPLACE INTO document_files VALUES (?,?,?,?,?)",
+                            (identifier, key, filename[:240], digest, "application/pdf"))
+
+    def documents_for(self, keys):
+        self._reload()
+        output, seen = [], set()
+        with self.lock:
+            for key in keys:
+                prefix = key + ":attachment:"
+                rows = self.db.execute("""SELECT f.id,s.title,f.filename FROM document_files f
+                    JOIN sources s ON s.source_key=f.source_key
+                    WHERE f.source_key=? OR substr(f.source_key,1,?)=? ORDER BY s.title""",
+                    (key, len(prefix), prefix)).fetchall()
+                for identifier, title, filename in rows:
+                    if identifier not in seen:
+                        seen.add(identifier)
+                        output.append({"id": identifier, "title": title, "filename": filename, "kind": "pdf"})
+        return output
+
+    def get_pdf(self, identifier):
+        if not re.fullmatch(r"[a-f0-9]{64}", identifier):
+            return None
+        self._reload()
+        with self.lock:
+            row = self.db.execute("""SELECT f.filename,f.digest FROM document_files f
+                JOIN sources s ON s.source_key=f.source_key WHERE f.id=?""", (identifier,)).fetchone()
+        if not row or not re.fullmatch(r"[a-f0-9]{64}", row[1]):
+            return None
+        try:
+            body = decrypt(self.key, (self.path.parent / "documents" / (row[1] + ".enc")).read_bytes())
+        except FileNotFoundError:
+            return None
+        if hashlib.sha256(body).hexdigest() != row[1]:
+            raise ValueError("PDF inconsistente")
+        return row[0], body
 
     def unchanged(self, key, updated_at):
         if not updated_at:

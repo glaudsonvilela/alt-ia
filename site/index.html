@@ -10,9 +10,9 @@
   <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
   <link rel="preload" href="/geist-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=4">
-  <link rel="stylesheet" href="/shell.css?v=73">
+  <link rel="stylesheet" href="/shell.css?v=74">
   <link rel="stylesheet" href="/agent.css?v=28">
-  <script defer src="/auth-bootstrap.js?v=16"></script>
+  <script defer src="/auth-bootstrap.js?v=17"></script>
   <title>Alt-IA · Agente Altside</title>
 </head>
 <body class="is-loading">
@@ -139,7 +139,18 @@
     </div>
   </dialog>
 
-  <dialog class="pool-dialog" id="pool-dialog" aria-labelledby="pool-dialog-title">
+  <dialog class="pool-dialog pdf-dialog" id="pdf-dialog" aria-labelledby="pdf-dialog-title">
+  <div class="pdf-reader-header"><div class="pool-dialog-art pdf-reader-art" aria-hidden="true"><i class="pool-orbit pool-orbit-one"></i><i class="pool-orbit pool-orbit-two"></i><span class="pool-face eye-pod"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i></span><i class="pdf-reader-diamond"></i></div><div><span class="pool-dialog-kicker">ALT-IA · BIBLIOTECA</span><h2 id="pdf-dialog-title">Documento</h2></div>
+    <button class="pool-dialog-close" type="button" aria-label="Fechar documento">×</button></div>
+  <div class="pdf-toolbar" role="group" aria-label="Controles do documento">
+    <button type="button" data-pdf="previous" aria-label="Página anterior">‹</button><span class="pdf-page-label" aria-live="polite"></span>
+    <button type="button" data-pdf="next" aria-label="Próxima página">›</button><span class="pdf-toolbar-space"></span>
+    <button type="button" data-pdf="out" aria-label="Diminuir zoom">−</button><button type="button" data-pdf="in" aria-label="Aumentar zoom">+</button>
+  </div>
+  <div class="pdf-stage"><p class="pdf-status" role="status"></p><canvas hidden aria-hidden="true"></canvas><div class="pdf-accessible-text"></div></div>
+</dialog>
+
+<dialog class="pool-dialog" id="pool-dialog" aria-labelledby="pool-dialog-title">
     <div class="pool-dialog-card">
       <div class="pool-dialog-art" aria-hidden="true"><i class="pool-orbit pool-orbit-one"></i><i class="pool-orbit pool-orbit-two"></i><span class="pool-face eye-pod"><i class="eye-ball"><i class="pupil"></i></i><i class="eye-ball"><i class="pupil"></i></i></span><i class="pool-spark">✦</i></div>
       <button class="pool-dialog-close" id="pool-dialog-close" type="button" aria-label="Fechar configuração">×</button>
